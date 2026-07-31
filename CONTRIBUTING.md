@@ -242,15 +242,32 @@ Caso haja conflito, solicite ajuda antes de continuar.
 
 ## 15. Após o merge
 
-Depois que o Pull Request for integrado:
+Depois que o Pull Request for integrado à `main`, atualize o projeto:
 
 ```bash
 git checkout main
 git pull origin main
+```
+
+Exclua a branch local:
+
+```bash
 git branch -d nome-da-branch
 ```
 
-A branch remota também poderá ser excluída pelo GitHub.
+Exclua a branch do GitHub:
+
+```bash
+git push origin --delete nome-da-branch
+```
+
+Atualize a lista de branches:
+
+```bash
+git fetch --prune
+```
+
+A branch só deve ser excluída depois do merge.
 
 ## 16. Resumo do fluxo
 
