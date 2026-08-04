@@ -9,6 +9,12 @@ Descreva brevemente as alterações.
 - [ ] Integração
 - [ ] Documentação
 
+## Issue relacionada
+
+Closes #
+
+> Exemplo: `Closes #12`
+
 ## Como testar?
 
 Informe os passos necessários.
