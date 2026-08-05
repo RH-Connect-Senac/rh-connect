@@ -8,6 +8,7 @@ O **RH Connect** utiliza tecnologia e Inteligência Artificial para aproximar o 
 
 ---
 
+
 ## Objetivo
 
 O RH Connect busca ajudar candidatos que apresentam insegurança, pouca experiência em entrevistas ou dificuldade para organizar suas respostas.
