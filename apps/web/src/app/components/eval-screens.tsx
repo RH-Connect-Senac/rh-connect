@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import {
   Home, Clock, History, BookOpen, Settings, LogOut,
   ChevronLeft, ChevronRight, Bell, CheckCircle, AlertCircle,
-  Video, Play, Star, Award, Target, TrendingUp,
+  Star, Award, Target, TrendingUp,
   Filter, Eye, FileText,
   Edit2, Send, Download, BarChart2, Layers, RefreshCw,
   MessageSquare, Info, Users, ArrowRight, Zap, Lock,
@@ -204,7 +204,7 @@ function EvalSidebarContent({
             <div className="w-8 h-8 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">CA</div>
             <div className="flex-1 min-w-0">
               <p className="text-white text-sm font-semibold truncate">Carlos Andrade</p>
-              <p className="text-white/40 text-xs truncate">Avaliador Sênior</p>
+              <p className="text-white/40 text-xs truncate">Avaliador humano</p>
             </div>
             <button onClick={() => setShowLogout(true)} className="text-white/30 hover:text-white/60 transition-colors shrink-0" title="Sair">
               <LogOut className="w-4 h-4" />
@@ -269,27 +269,27 @@ const CRITERIA_GUIDE = [
   { name: "Clareza", desc: "Avalie se o candidato se expressa de forma clara e objetiva, sem ambiguidades.", weight: "15%", tip: "Score ≥ 8: linguagem direta e fácil de seguir. Score < 6: respostas vagas ou confusas." },
   { name: "Coerência", desc: "Verifique se as ideias apresentadas têm relação lógica e consistência interna.", weight: "15%", tip: "Score ≥ 8: boa relação entre argumentos. Score < 6: contradições ou incoerências." },
   { name: "Objetividade", desc: "O candidato manteve o foco na pergunta sem se desviar para temas irrelevantes?", weight: "10%", tip: "Score ≥ 8: resposta direta ao ponto. Score < 6: muitas digressões." },
-  { name: "Comunicação", desc: "Qualidade da comunicação verbal: tom, ritmo, vocabulário e adequação ao contexto.", weight: "20%", tip: "Score ≥ 8: comunicação profissional e fluente. Score < 6: dificuldade de articulação." },
-  { name: "Domínio", desc: "Demonstração de conhecimento técnico ou experiência na área da vaga.", weight: "25%", tip: "Score ≥ 8: domínio evidente com exemplos concretos. Score < 6: conhecimento superficial." },
-  { name: "Organização", desc: "A resposta teve estrutura bem definida: introdução, desenvolvimento e conclusão?", weight: "10%", tip: "Score ≥ 8: resposta bem estruturada. Score < 6: resposta sem organização aparente." },
-  { name: "Segurança", desc: "O candidato demonstrou confiança ao responder, sem hesitações excessivas?", weight: "5%", tip: "Score ≥ 8: tom confiante e postura segura. Score < 6: muita hesitação ou insegurança." },
+  { name: "Domínio", desc: "Demonstração de conhecimento técnico ou experiência na área da vaga.", weight: "20%", tip: "Score ≥ 8: domínio evidente com exemplos concretos. Score < 6: conhecimento superficial." },
+  { name: "Organização", desc: "A resposta teve estrutura bem definida: introdução, desenvolvimento e conclusão?", weight: "15%", tip: "Score ≥ 8: resposta bem estruturada. Score < 6: resposta sem organização aparente." },
+  { name: "Aderência aos requisitos", desc: "A resposta dialoga com os requisitos extraídos da vaga e com o contexto profissional apresentado?", weight: "15%", tip: "Score ≥ 8: forte relação com a vaga. Score < 6: pouca conexão com os requisitos." },
+  { name: "Capacidade de exemplificar", desc: "O candidato sustentou a resposta com exemplos, evidências ou situações concretas?", weight: "10%", tip: "Score ≥ 8: exemplos específicos e relevantes. Score < 6: ausência de exemplos." },
 ];
 
 const QUEUE_ITEMS = [
-  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Analista de Marketing Digital", submitted: "11/08/2026 09:14", priority: "high" as const, questions: 5 },
+  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedora Front-end", submitted: "11/08/2026 09:14", priority: "high" as const, questions: 5 },
   { id: "#E-0040", candidate: "Rafael Mendes",     job: "Desenvolvedor Full Stack",      submitted: "11/08/2026 08:52", priority: "normal" as const, questions: 5 },
-  { id: "#E-0039", candidate: "Isabela Costa",     job: "Gestora de Projetos",           submitted: "10/08/2026 17:30", priority: "normal" as const, questions: 5 },
+  { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", submitted: "10/08/2026 17:30", priority: "normal" as const, questions: 5 },
   { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",                submitted: "10/08/2026 16:45", priority: "low" as const, questions: 5 },
   { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",               submitted: "10/08/2026 14:20", priority: "low" as const, questions: 5 },
 ];
 
 const HISTORY_ITEMS = [
   { id: "#E-0036", candidate: "Lucas Ferreira",   job: "Analista de TI",               date: "09/08/2026", score: 8.4, time: "22 min", status: "completed" as const },
-  { id: "#E-0035", candidate: "Ana Rodrigues",    job: "Coordenadora Pedagógica",       date: "08/08/2026", score: 7.1, time: "19 min", status: "completed" as const },
+  { id: "#E-0035", candidate: "Ana Rodrigues",    job: "Analista de Recrutamento e Seleção", date: "08/08/2026", score: 7.1, time: "19 min", status: "completed" as const },
   { id: "#E-0034", candidate: "Diego Santos",     job: "Técnico em Informática",        date: "08/08/2026", score: 6.8, time: "24 min", status: "completed" as const },
-  { id: "#E-0033", candidate: "Camila Nunes",     job: "Assistente Administrativo",    date: "07/08/2026", score: 9.1, time: "17 min", status: "completed" as const },
+  { id: "#E-0033", candidate: "Camila Nunes",     job: "Secretária Executiva",          date: "07/08/2026", score: 9.1, time: "17 min", status: "completed" as const },
   { id: "#E-0032", candidate: "Thiago Barbosa",   job: "Desenvolvedor Full Stack",     date: "07/08/2026", score: 7.9, time: "21 min", status: "completed" as const },
-  { id: "#E-0031", candidate: "Juliana Pires",    job: "Analista Financeiro",          date: "06/08/2026", score: 8.6, time: "20 min", status: "completed" as const },
+  { id: "#E-0031", candidate: "Juliana Pires",    job: "Assessora Executiva",           date: "06/08/2026", score: 8.6, time: "20 min", status: "completed" as const },
 ];
 
 // ─── Gráfico Interativo — Esta Semana ────────────────────────────────────────
@@ -682,10 +682,15 @@ export function EvalActiveScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
   const [scores, setScores] = useState<Record<string, number>>({
-    Clareza: 0, Coerência: 0, Objetividade: 0, Comunicação: 0, Domínio: 0, Organização: 0, Segurança: 0,
+    Clareza: 0,
+    Coerência: 0,
+    Objetividade: 0,
+    Domínio: 0,
+    Organização: 0,
+    "Aderência aos requisitos": 0,
+    "Capacidade de exemplificar": 0,
   });
   const [currentQ, setCurrentQ] = useState(0);
-  const [playing, setPlaying] = useState(false);
 
   const questions = [
     "Fale sobre você e o que te motivou a se candidatar para esta vaga.",
@@ -693,6 +698,19 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
     "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?",
     "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.",
     "Onde você se vê profissionalmente daqui a três anos?",
+  ];
+  const answers = [
+    "Candidatei-me porque a vaga combina minha experiência com interfaces web e meu interesse em atuar em times que constroem produtos digitais com foco em qualidade e usabilidade.",
+    "Em uma entrega recente, tivemos poucos dias para corrigir fluxos responsivos. Organizei as tarefas por impacto, alinhei prioridades com o time e acompanhei os ajustes até a validação final.",
+    "Meu maior ponto forte é transformar requisitos em interfaces claras. Em uma experiência recente, revisei componentes reutilizáveis e reduzi inconsistências visuais entre telas.",
+    "Participei de um projeto com produto, design e back-end. Minha contribuição foi organizar as demandas de front, registrar decisões e manter o time alinhado sobre prazos e critérios de aceite.",
+    "Quero consolidar minha atuação em desenvolvimento front-end, assumir projetos com mais autonomia e aprofundar qualidade, acessibilidade e testes.",
+  ];
+  const requirements = [
+    "Experiência com desenvolvimento de interfaces web.",
+    "Conhecimento em componentes React.",
+    "Comunicação objetiva com equipes multidisciplinares.",
+    "Organização de prioridades e prazos.",
   ];
 
   const totalScore = () => {
@@ -705,42 +723,33 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
   return (
     <EvalLayout current="eval-screen" onNavigate={onNavigate}
       title="Avaliando: Fernanda Oliveira"
-      subtitle="Analista de Marketing Digital · #E-0041"
+      subtitle="Desenvolvedora Front-end · #E-0041"
       actions={<Badge variant="warning">Questão {currentQ + 1} de {questions.length}</Badge>}>
       <div className="w-full grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-5">
 
-        {/* Left: video + question */}
+        {/* Left: context + textual answer */}
         <div className="space-y-4">
-          {/* Video player mock */}
-          <Card className="overflow-hidden">
-            <div className="relative bg-slate-900 aspect-video flex items-center justify-center">
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-800 to-slate-950" />
-              <div className="relative flex flex-col items-center gap-4">
-                <div className="w-16 h-16 rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center">
-                  <span className="text-white text-xl font-bold">FO</span>
+          <Card className="p-5">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Contexto da vaga</p>
+            <h3 className="font-bold text-foreground">Desenvolvedora Front-end</h3>
+            <p className="text-sm text-muted-foreground mb-4">Tech Labs</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {requirements.map((requirement) => (
+                <div key={requirement} className="flex items-start gap-2 text-xs text-foreground bg-muted/50 rounded-xl p-3">
+                  <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" />
+                  <span>{requirement}</span>
                 </div>
-                <button onClick={() => setPlaying(!playing)}
-                  className="w-14 h-14 rounded-full bg-white/20 hover:bg-white/30 border border-white/30 flex items-center justify-center transition-all">
-                  {playing ? <span className="w-4 h-4 border-l-2 border-r-2 border-white" /> : <Play className="w-6 h-6 text-white ml-1" fill="white" />}
-                </button>
-                <p className="text-white/60 text-sm">{playing ? "Reproduzindo..." : "Clique para reproduzir"}</p>
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 p-4">
-                <div className="w-full bg-white/20 rounded-full h-1">
-                  <div className="bg-white h-1 rounded-full w-1/3" />
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-white/60 text-xs">0:42</span>
-                  <span className="text-white/60 text-xs">2:15</span>
-                </div>
-              </div>
+              ))}
             </div>
           </Card>
 
-          {/* Question navigation */}
           <Card className="p-5">
             <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Questão {currentQ + 1}</p>
             <p className="text-base font-semibold text-foreground leading-relaxed mb-4">{questions[currentQ]}</p>
+            <div className="rounded-2xl bg-blue-50 border border-blue-100 p-4 mb-5">
+              <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2">Resposta textual/transcrita</p>
+              <p className="text-sm text-foreground leading-relaxed">{answers[currentQ]}</p>
+            </div>
             <div className="flex items-center justify-between">
               <Btn variant="outline" size="sm" disabled={currentQ === 0} onClick={() => setCurrentQ(q => q - 1)}>
                 <ChevronLeft className="w-3.5 h-3.5" /> Anterior
@@ -818,10 +827,10 @@ export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
     { name: "Clareza",      score: 9, weight: "15%" },
     { name: "Coerência",    score: 8, weight: "15%" },
     { name: "Objetividade", score: 8, weight: "10%" },
-    { name: "Comunicação",  score: 7, weight: "20%" },
-    { name: "Domínio",      score: 7, weight: "25%" },
-    { name: "Organização",  score: 8, weight: "10%" },
-    { name: "Segurança",    score: 6, weight: "5%"  },
+    { name: "Domínio",      score: 7, weight: "20%" },
+    { name: "Organização",  score: 8, weight: "15%" },
+    { name: "Aderência",    score: 7, weight: "15%" },
+    { name: "Exemplos",     score: 6, weight: "10%" },
   ];
 
   const avg = (scores.reduce((s, c) => s + c.score, 0) / scores.length).toFixed(1);
@@ -829,7 +838,7 @@ export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
   return (
     <EvalLayout current="eval-review" onNavigate={onNavigate}
       title="Revisão Final"
-      subtitle="Fernanda Oliveira · Analista de Marketing Digital"
+      subtitle="Fernanda Oliveira · Desenvolvedora Front-end"
       actions={<Badge variant="warning">Revisar antes de enviar</Badge>}>
       <div className="w-full max-w-3xl space-y-5">
         {/* Score summary */}
@@ -1019,7 +1028,7 @@ export function EvalSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             <div>
               <p className="font-bold text-foreground">Carlos Andrade</p>
               <p className="text-sm text-muted-foreground">carlos.andrade@gmail.com</p>
-              <Badge variant="info" className="mt-1">Avaliador Sênior</Badge>
+              <Badge variant="info" className="mt-1">Avaliador humano</Badge>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1334,7 +1343,7 @@ const EVAL_ONBOARDING_STEPS = [
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
           Como <strong className="text-foreground">Avaliador</strong>, você é responsável por analisar as
-          entrevistas em vídeo realizadas pelos candidatos e atribuir scores com base em critérios definidos.
+          entrevistas textuais realizadas pelos candidatos e atribuir scores com base em critérios definidos.
         </p>
         <div className="flex items-start gap-3 p-3 bg-teal-50 rounded-xl border border-teal-100">
           <Zap className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
@@ -1491,10 +1500,10 @@ export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
     { name: "Clareza",      score: 9 },
     { name: "Coerência",    score: 8 },
     { name: "Objetividade", score: 8 },
-    { name: "Comunicação",  score: 7 },
     { name: "Domínio",      score: 7 },
     { name: "Organização",  score: 8 },
-    { name: "Segurança",    score: 6 },
+    { name: "Aderência",    score: 7 },
+    { name: "Exemplos",     score: 6 },
   ];
   const avg = (scores.reduce((s, c) => s + c.score, 0) / scores.length).toFixed(1);
   const numAvg = parseFloat(avg);
@@ -1554,7 +1563,7 @@ export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5">Vaga</p>
-              <p className="font-semibold text-foreground">Analista de Marketing Digital</p>
+              <p className="font-semibold text-foreground">Desenvolvedora Front-end</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5">Avaliador</p>

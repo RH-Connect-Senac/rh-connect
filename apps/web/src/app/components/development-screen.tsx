@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-  TrendingUp, Star, Video, Award, Monitor, BookOpen,
-  Clock, GraduationCap, Check, ArrowRight, ChevronRight, MessageSquare,
+  TrendingUp, Star, MessageSquare, Award, Monitor, BookOpen,
+  Clock, GraduationCap, Check, ArrowRight, ChevronRight,
 } from "lucide-react";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
@@ -112,13 +112,13 @@ const EDGES = [
 ];
 
 const MISSIONS = [
-  { id: 1, title: "Concluir uma entrevista técnica",   desc: "Realize uma entrevista focada em competências técnicas de Front-end.",                       done: true,  progress: 1,   total: 1, icon: Video },
+  { id: 1, title: "Concluir uma entrevista técnica",   desc: "Realize uma entrevista focada em competências técnicas de Front-end.",                       done: true,  progress: 1,   total: 1, icon: MessageSquare },
   { id: 2, title: "Melhorar a nota de comunicação",    desc: "Alcance pontuação 8 ou mais no critério Comunicação na próxima entrevista.",                 done: false, progress: 7.5, total: 8, icon: MessageSquare },
   { id: 3, title: "Realizar um curso recomendado",     desc: "Conclua um dos cursos sugeridos na trilha de Desenvolvimento Front-end.",                    done: false, progress: 0,   total: 1, icon: BookOpen },
 ];
 
 const ACHIEVEMENTS = [
-  { id: 1, title: "Primeira entrevista", desc: "Realizou sua primeira entrevista simulada na plataforma.", unlocked: true, icon: Video },
+  { id: 1, title: "Primeira entrevista", desc: "Realizou sua primeira entrevista simulada na plataforma.", unlocked: true, icon: MessageSquare },
   { id: 2, title: "Primeira evolução",   desc: "Avançou de nível em um talento pela primeira vez.",        unlocked: true, icon: TrendingUp },
   { id: 3, title: "Aprendiz contínuo",   desc: "Concluiu um curso recomendado pela plataforma.",            unlocked: true, icon: BookOpen },
 ];
@@ -200,7 +200,7 @@ export function DevelopmentContent({ onNavigate }: { onNavigate: NavFn }) {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:ml-auto sm:shrink-0">
-            <Badge variant="info">Trainee</Badge>
+            <Badge variant="info">Em desenvolvimento</Badge>
             <div className="w-full sm:w-52">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs text-slate-500">Progresso geral</span>
@@ -216,9 +216,9 @@ export function DevelopmentContent({ onNavigate }: { onNavigate: NavFn }) {
 
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-5">
-        <StatCard value="Trainee" label="Nível atual"              icon={TrendingUp} color="bg-blue-50 text-blue-600" />
+        <StatCard value="62%"     label="Progresso da trilha"      icon={TrendingUp} color="bg-blue-50 text-blue-600" />
         <StatCard value="6"       label="Talentos desenvolvidos"   icon={Star}       color="bg-amber-50 text-amber-600" />
-        <StatCard value="3"       label="Entrevistas concluídas"   icon={Video}      color="bg-green-50 text-green-600" />
+        <StatCard value="3"       label="Entrevistas concluídas"   icon={MessageSquare} color="bg-green-50 text-green-600" />
         <StatCard value="3"       label="Conquistas desbloqueadas" icon={Award}      color="bg-purple-50 text-purple-600" />
       </div>
 
@@ -376,7 +376,7 @@ export function DevelopmentContent({ onNavigate }: { onNavigate: NavFn }) {
             </div>
             <div className="p-3 bg-white border border-slate-200 rounded-xl">
               <div className="flex items-center gap-1.5 mb-1">
-                <Video className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <MessageSquare className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Entrevista recomendada</span>
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">{selected.interview}</p>

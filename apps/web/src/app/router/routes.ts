@@ -5,9 +5,8 @@ export type AppScreen =
   | "auth" | "email-verify" | "forgot-password" | "reset-password"
   | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
   | "dashboard" | "profile" | "settings" | "materials" | "notifications"
-  | "job-list" | "job" | "job-detail"
   | "interview-history" | "development"
-  | "interview-setup" | "consent" | "prep" | "device" | "interview" | "review" | "interview-confirm" | "interview-done"
+  | "interview-setup" | "consent" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
   | "pending" | "report"
   | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
   | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
@@ -46,16 +45,12 @@ export const APP_ROUTES = [
   { screen: "settings", path: "/candidate/settings", label: "Configuracoes", group: "candidate", priority: "P3", status: "simulado", backDependency: "sim" },
   { screen: "materials", path: "/candidate/materials", label: "Materiais", group: "candidate", priority: "P3", status: "mockado", backDependency: "talvez" },
   { screen: "notifications", path: "/candidate/notifications", label: "Notificacoes", group: "candidate", priority: "P3", status: "mockado", backDependency: "sim" },
-  { screen: "job-list", path: "/candidate/jobs", label: "Minhas vagas", group: "candidate", priority: "P2", status: "mockado", backDependency: "sim", notes: "Provisoria; depende da decisao vaga x area/subarea." },
-  { screen: "job", path: "/candidate/jobs/new", label: "Nova vaga", group: "candidate", priority: "P2", status: "simulado", backDependency: "sim", notes: "Provisoria; depende da decisao vaga x area/subarea." },
-  { screen: "job-detail", path: "/candidate/jobs/:id", label: "Detalhe de vaga", group: "candidate", priority: "P2", status: "mockado", backDependency: "sim", notes: "Rota provisoria reaproveita JobListScreen; nao ha tela propria nesta branch." },
   { screen: "interview-history", path: "/candidate/interviews", label: "Historico de entrevistas", group: "candidate", priority: "P2", status: "mockado", backDependency: "sim" },
   { screen: "development", path: "/candidate/development", label: "Desenvolvimento", group: "candidate", priority: "P1", status: "mockado", backDependency: "sim" },
-  { screen: "interview-setup", path: "/candidate/interviews/new", label: "Iniciar entrevista", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
+  { screen: "interview-setup", path: "/candidate/interviews/new", label: "Nova entrevista", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim", notes: "Recebe a URL da vaga, analisa contexto mockado e prepara as perguntas." },
   { screen: "consent", path: "/candidate/interviews/new/consent", label: "Consentimento", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "prep", path: "/candidate/interviews/new/preparation", label: "Orientacoes", group: "candidate", priority: "P0", status: "visual", backDependency: "nao imediata" },
-  { screen: "device", path: "/candidate/interviews/new/device-check", label: "Teste tecnico", group: "candidate", priority: "P0", status: "simulado", backDependency: "talvez" },
-  { screen: "interview", path: "/candidate/interviews/new/record", label: "Entrevista", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
+  { screen: "interview", path: "/candidate/interviews/new/answers", label: "Perguntas e respostas", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "review", path: "/candidate/interviews/new/review", label: "Revisao", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "interview-confirm", path: "/candidate/interviews/new/submit", label: "Confirmar envio", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "interview-done", path: "/candidate/interviews/:id/success", label: "Entrevista concluida", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
@@ -100,13 +95,10 @@ export const FLOW_STEPS = [
   { id: "admin-onboarding", label: "Intro Admin" },
   { id: "dashboard", label: "Dashboard" },
   { id: "profile", label: "Perfil" },
-  { id: "job-list", label: "Minhas Vagas" },
-  { id: "job", label: "Nova Vaga" },
-  { id: "interview-setup", label: "Selecionar Vaga" },
-  { id: "consent", label: "Consentimento" },
+  { id: "interview-setup", label: "Nova Entrevista" },
   { id: "prep", label: "Orientacoes" },
-  { id: "device", label: "Teste Tecnico" },
-  { id: "interview", label: "Entrevista" },
+  { id: "consent", label: "Consentimento" },
+  { id: "interview", label: "Respostas" },
   { id: "review", label: "Revisao" },
   { id: "interview-confirm", label: "Confirmar Envio" },
   { id: "interview-done", label: "Concluida" },
@@ -142,7 +134,6 @@ export const FLOW_STEPS = [
 ] satisfies { id: AppScreen; label: string }[];
 
 export const DEFAULT_ROUTE_PARAMS: Partial<Record<AppScreen, string>> = {
-  "job-detail": "job-demo",
   "interview-done": "interview-demo",
   pending: "interview-demo",
   report: "report-demo",

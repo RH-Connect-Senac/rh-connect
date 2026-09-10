@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  User, Video, MessageSquare, TrendingUp, Target, Award,
+  User, MessageSquare, TrendingUp, Target, Award,
   X, Menu, ArrowRight, CheckCircle, Zap, Lightbulb,
   AlertCircle, Check, GraduationCap,
 } from "lucide-react";
@@ -63,7 +63,7 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
 export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
   const HOW_CARDS = [
     { n: "01", icon: User,          title: "Configure seu objetivo",   desc: "Complete seu perfil e informe a vaga ou o cargo para o qual deseja se preparar." },
-    { n: "02", icon: Video,         title: "Faça sua entrevista",      desc: "Responda perguntas relacionadas ao seu objetivo em uma simulação por vídeo." },
+    { n: "02", icon: MessageSquare, title: "Faça sua entrevista",      desc: "Responda perguntas relacionadas à vaga em uma simulação textual com opção de ditado por voz." },
     { n: "03", icon: MessageSquare, title: "Receba seu feedback",      desc: "Veja uma avaliação estruturada sobre suas respostas e seu desempenho." },
     { n: "04", icon: TrendingUp,    title: "Evolua a cada tentativa",  desc: "Consulte seu relatório, identifique melhorias e pratique novamente." },
   ];
@@ -88,9 +88,9 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
     { name: "Clareza",      score: 9, color: "bg-green-500" },
     { name: "Coerência",    score: 9, color: "bg-green-500" },
     { name: "Objetividade", score: 8, color: "bg-green-500" },
-    { name: "Comunicação",  score: 8, color: "bg-green-500" },
+    { name: "Domínio",      score: 8, color: "bg-green-500" },
     { name: "Organização",  score: 7, color: "bg-blue-500"  },
-    { name: "Segurança",    score: 6, color: "bg-amber-500" },
+    { name: "Exemplos",     score: 6, color: "bg-amber-500" },
   ];
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -294,7 +294,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
               <div className="px-5 py-4 border-b border-border flex items-center justify-between">
                 <div>
                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Resultado da entrevista</p>
-                  <p className="text-sm font-semibold text-foreground mt-0.5">Analista de Marketing Digital</p>
+                  <p className="text-sm font-semibold text-foreground mt-0.5">Desenvolvedor Full Stack</p>
                 </div>
                 <Badge variant="info">Boa</Badge>
               </div>
