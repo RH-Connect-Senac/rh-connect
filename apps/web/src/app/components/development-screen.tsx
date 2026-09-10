@@ -4,6 +4,8 @@ import {
   TrendingUp, Star, Video, Award, Monitor, BookOpen,
   Clock, GraduationCap, Check, ArrowRight, ChevronRight, MessageSquare,
 } from "lucide-react";
+import { Button as UIButton } from "./ui/button";
+import { Card as UICard } from "./ui/card";
 
 type NavFn = (s: string) => void;
 type BadgeVariant = "default" | "success" | "warning" | "error" | "info" | "purple";
@@ -18,19 +20,19 @@ function Btn({
   disabled?: boolean;
   className?: string;
 }) {
-  const base = "inline-flex items-center justify-center gap-2 font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:ring-offset-2 cursor-pointer shrink-0";
-  const sizes = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2.5 text-sm", lg: "px-6 py-3.5 text-base" };
-  const vars = {
-    primary:   "bg-blue-700 text-white hover:bg-blue-800 hover:shadow-md active:bg-blue-900",
-    secondary: "bg-blue-50 text-blue-700 hover:bg-blue-100 hover:shadow-sm",
-    outline:   "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 hover:shadow-sm",
-    ghost:     "text-slate-800 hover:bg-slate-100",
-    danger:    "bg-red-600 text-white hover:bg-red-700 hover:shadow-md",
-  };
+  const buttonVariant = variant === "danger" ? "destructive" : variant;
+  const buttonClassName = `${size === "sm" ? "text-xs" : ""} font-semibold cursor-pointer ${className}`;
+
   return (
-    <button className={`${base} ${sizes[size]} ${vars[variant]} ${className}`} onClick={onClick} disabled={disabled}>
+    <UIButton
+      variant={buttonVariant}
+      size={size}
+      className={buttonClassName}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
-    </button>
+    </UIButton>
   );
 }
 
@@ -52,9 +54,9 @@ function Badge({ variant = "default", children }: { variant?: BadgeVariant; chil
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm ${className}`}>
+    <UICard padding="none" className={className}>
       {children}
-    </div>
+    </UICard>
   );
 }
 
