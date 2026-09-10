@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rhconnect-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rhconnect
+      POSTGRES_PASSWORD: rhconnect
+      POSTGRES_DB: rhconnect
+    ports:
+      - "5432:5432"
+    volumes:
+      - rhconnect-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rhconnect -d rhconnect"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  rhconnect-pgdata:
