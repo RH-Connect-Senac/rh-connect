@@ -10,7 +10,12 @@
     "format:check:web": "cd apps/web && pnpm run format:check",
     "lint:web": "cd apps/web && pnpm run lint",
     "test:web": "cd apps/web && pnpm run test:run",
-    "typecheck:web": "cd apps/web && pnpm run typecheck"
+    "typecheck:web": "cd apps/web && pnpm run typecheck",
+    "start:dev": "cd apps/api && npm run start:dev",
+    "start:prod": "cd apps/api && npm run start:prod",
+    "build:api": "cd apps/api && npm run build",
+    "lint:api": "cd apps/api && npm run lint",
+    "test:api": "cd apps/api && npm run test"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",
