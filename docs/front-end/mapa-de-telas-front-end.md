@@ -1,10 +1,10 @@
 # Mapa de Telas do Front-end — RH Connect
-## Versão atualizada para a entrega testável de 10/09/2026
+## Versão atualizada para rotas reais do Front
 
-**Projeto:** RH Connect  
-**Versão:** v2.0  
-**Data de atualização:** 20/08/2026  
-**Referência principal:** Escopo da Entrega Testável 10/09 — v1.2  
+**Projeto:** RH Connect
+**Versão:** v2.1
+**Data de atualização:** 10/09/2026
+**Referência principal:** Front real em `apps/web/src/app/App.tsx` e implantação inicial de React Router
 
 ---
 
@@ -29,6 +29,14 @@ O mapa deve ser usado em conjunto com:
 - Plano Operacional Back-end — Preparação para Integração;
 - Design System.
 
+## Resultado desta branch
+
+A branch `work/mapa-telas-e-rotas` implementa rotas reais no Front usando `react-router`, sem integração de Auth real e sem bloqueio de perfil nesta fase.
+
+O `App.tsx` deixou de renderizar a tela principal por `screenMap` e `useState<Screen>`. A navegação visual existente foi preservada por um adaptador temporário `onNavigate(screen) -> path`, permitindo que layouts, sidebars, headers, popovers e telas continuem funcionando enquanto a migração estrutural avança.
+
+O Vite continua com `base: '/rhconnect/'`, e o roteador usa `basename="/rhconnect"` para funcionar sob o subpath publicado.
+
 ---
 
 # 2. Status utilizados
@@ -46,6 +54,79 @@ O mapa deve ser usado em conjunto com:
 - **P1**: necessária para suportar o fluxo principal.
 - **P2**: importante, mas pode ser migrada depois das telas críticas.
 - **P3**: futura ou fora do recorte obrigatório.
+
+---
+
+# 2.1 Rotas implementadas nesta branch
+
+Estas são as rotas reais disponíveis no Front após a migração inicial para React Router. As telas continuam visuais, mockadas ou simuladas conforme indicado; nenhuma rota aplica autenticação ou autorização real nesta fase.
+
+| Rota final | Tela/componente | Perfil | Prioridade | Status atual | Dependência Back | Observações |
+|---|---|---|---|---|---|---|
+| `/` | `LandingScreen` | Público | P1 | Visual | Não imediata | Entrada pública do produto. |
+| `/login` | `AuthScreen` | Público | P0 | Simulado | Sim | Usa a aba inicial de login. |
+| `/register` | `AuthScreen` | Público | P0 | Simulado | Sim | Usa a aba inicial de cadastro. |
+| `/verify-email` | `EmailVerifyScreen` | Público | P2 | Simulado | Sim | Visual existente; validação real futura. |
+| `/forgot-password` | `ForgotPasswordScreen` | Público | P3 | Simulado | Sim | Existe visualmente, fora do foco atual. |
+| `/reset-password` | `ResetPasswordScreen` | Público | P3 | Simulado | Sim | Existe visualmente, fora do foco atual. |
+| `/terms` | `TermsScreen` | Público | P2 | Visual | Talvez | Conteúdo deve seguir decisões legais/privacidade. |
+| `/privacy` | `PrivacyScreen` | Público | P2 | Visual | Talvez | Conteúdo deve seguir decisões de consentimento e dados. |
+| `/candidate/onboarding` | `CandidateOnboardingScreen` | Candidato | P0 | Simulado | Sim | Onboarding visual do candidato. |
+| `/candidate/dashboard` | `DashboardScreen` | Candidato | P0 | Mockado | Sim | Dashboard com dados fictícios. |
+| `/candidate/profile` | `ProfileScreen` | Candidato | P0 | Mockado | Sim | Perfil profissional mockado/simulado. |
+| `/candidate/settings` | `SettingsScreen` | Candidato | P3 | Simulado | Sim | Preservada para o protótipo; fora do caminho crítico. |
+| `/candidate/materials` | `MaterialsScreen` | Candidato | P3 | Mockado | Talvez | Preservada para o protótipo; fora do caminho crítico. |
+| `/candidate/notifications` | `NotificationsScreen` | Candidato | P3 | Mockado | Sim | Preservada para o protótipo; notificações reais futuras. |
+| `/candidate/jobs` | `JobListScreen` | Candidato | P2 | Mockado | Sim | Provisória; depende da decisão vaga x área/subárea. |
+| `/candidate/jobs/new` | `JobScreen` | Candidato | P2 | Simulado | Sim | Provisória; depende da decisão vaga x área/subárea. |
+| `/candidate/jobs/:id` | `JobListScreen` | Candidato | P2 | Mockado | Sim | Rota preservada, mas `job-detail` ainda não tem tela própria. |
+| `/candidate/interviews` | `InterviewHistoryScreen` | Candidato | P2 | Mockado | Sim | Histórico preservado. |
+| `/candidate/development` | `DevelopmentScreen` | Candidato | P1 | Mockado | Sim/parcial | Desenvolvimento, gamificação base e árvore visual. |
+| `/candidate/interviews/new` | `InterviewSetupScreen` | Candidato | P0 | Simulado | Sim | Seleção de contexto antes da entrevista. |
+| `/candidate/interviews/new/consent` | `ConsentScreen` | Candidato | P0 | Simulado | Sim | Consentimento visual; registro real futuro. |
+| `/candidate/interviews/new/preparation` | `PrepScreen` | Candidato | P0 | Visual | Não imediata | Orientações pré-entrevista. |
+| `/candidate/interviews/new/device-check` | `DeviceScreen` | Candidato | P0 | Simulado | Talvez | Teste de câmera/microfone ainda simulado. |
+| `/candidate/interviews/new/record` | `InterviewScreen` | Candidato | P0 | Simulado | Sim | Gravação ainda simulada. |
+| `/candidate/interviews/new/review` | `ReviewScreen` | Candidato | P0 | Simulado | Sim | Revisão/envio ainda simulados. |
+| `/candidate/interviews/new/submit` | `InterviewConfirmScreen` | Candidato | P0 | Simulado | Sim | Confirmação de envio visual. |
+| `/candidate/interviews/:id/success` | `InterviewDoneScreen` | Candidato | P0 | Simulado | Sim | Sucesso após envio simulado. |
+| `/candidate/interviews/:id/status` | `PendingScreen` | Candidato | P0 | Mockado | Sim | Acompanhamento de avaliação mockado. |
+| `/candidate/reports/:id` | `ReportScreen` | Candidato | P0 | Mockado | Sim | Relatório mockado. |
+| `/evaluator/activate` | `EvalActivateScreen` | Avaliador | P1 | Simulado | Sim | Visual preservado; token real fica para Auth futura. |
+| `/evaluator/onboarding` | `EvalOnboardingScreen` | Avaliador | P1 | Simulado | Sim | Onboarding visual. |
+| `/evaluator/dashboard` | `EvalDashboardScreen` | Avaliador | P0 | Mockado | Sim | Dashboard do avaliador. |
+| `/evaluator/evaluations` | `EvalQueueScreen` | Avaliador | P0 | Mockado | Sim | Fila de avaliações mockada. |
+| `/evaluator/evaluations/active` | `EvalActiveScreen` | Avaliador | P2 | Mockado | Sim | Preservada para o protótipo. |
+| `/evaluator/evaluations/:id` | `EvalScreenView` | Avaliador | P0 | Simulado | Sim | Tela de avaliação com vídeo/critério simulados. |
+| `/evaluator/evaluations/:id/review` | `EvalReviewScreen` | Avaliador | P0 | Simulado | Sim | Revisão antes de concluir. |
+| `/evaluator/evaluations/:id/success` | `EvalDoneScreen` | Avaliador | P0 | Simulado | Sim | Sucesso após avaliação simulada. |
+| `/evaluator/history` | `EvalHistoryScreen` | Avaliador | P3 | Mockado | Sim | Histórico fora do caminho crítico. |
+| `/evaluator/criteria` | `EvalCriteriaScreen` | Avaliador | P2 | Mockado | Sim | Guia de critérios. |
+| `/evaluator/settings` | `EvalSettingsScreen` | Avaliador | P3 | Simulado | Sim | Configurações fora do caminho crítico. |
+| `/admin/onboarding` | `AdminOnboardingScreen` | Admin | P2 | Simulado | Sim | Onboarding visual. |
+| `/admin/dashboard` | `AdminDashboardScreen` | Admin | P0 | Mockado | Sim | Dashboard operacional mínimo. |
+| `/admin/candidates` | `AdminCandidatesScreen` | Admin | P2 | Mockado | Sim | Gestão/listagem preservada. |
+| `/admin/candidates/:id` | `AdminCandidateDetailScreen` | Admin | P2 | Mockado | Sim | Detalhe mockado. |
+| `/admin/evaluators` | `AdminEvaluatorsScreen` | Admin | P0 | Mockado | Sim | Gestão de avaliadores com convite local visual. |
+| `/admin/evaluators/new` | `AdminEvaluatorFormScreen` | Admin | P1 | Simulado | Sim | Formulário visual. |
+| `/admin/interviews` | `AdminInterviewsScreen` | Admin | P0 | Mockado | Sim | Acompanhamento de entrevistas. |
+| `/admin/assignments` | `AdminAssignScreen` | Admin | P0 | Simulado | Sim | Atribuição ainda local/simulada. |
+| `/admin/questions` | `AdminQuestionsScreen` | Admin | P1 | Mockado | Sim | Banco de perguntas mockado. |
+| `/admin/questions/new` | `AdminQuestionFormScreen` | Admin | P3 | Simulado | Sim | Formulário fora do caminho crítico. |
+| `/admin/roles` | `AdminRolesScreen` | Admin | P3 | Mockado | Sim | Cargos/áreas fora do caminho crítico. |
+| `/admin/criteria` | `AdminCriteriaScreen` | Admin | P1 | Mockado | Sim | Critérios administrativos. |
+| `/admin/consents` | `AdminConsentScreen` | Admin | P3 | Mockado | Sim | Tela preservada; operação real futura. |
+| `/admin/audit` | `AdminAuditScreen` | Admin | P3 | Mockado | Sim | Auditoria avançada futura. |
+| `/admin/settings` | `AdminSettingsScreen` | Admin | P3 | Simulado | Sim | Configurações fora do caminho crítico. |
+
+Redirecionamentos implementados:
+
+```text
+/candidate -> /candidate/dashboard
+/evaluator -> /evaluator/dashboard
+/admin -> /admin/dashboard
+* -> /
+```
 
 ---
 
