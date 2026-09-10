@@ -1610,9 +1610,94 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ─── Screen 11: Resultado e Relatório ─────────────────────────────────────────
 
 function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const radarData = CRITERIA.map(c => ({ name: c.name, score: c.score }));
+  const [resultView, setResultView] = useState<"Atual" | "Anterior" | "Melhor resultado">("Atual");
+  const [isReportFading, setIsReportFading] = useState(false);
+  const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
 
-  const scoreColor = (s: number) => s >= 9 ? "#16A34A" : s >= 7 ? "#1D4ED8" : "#D97706";
+  const reportResults = {
+    Atual: {
+      summary:
+        "Você demonstrou clareza e coerência nas respostas, com boa aderência ao contexto da vaga. Continue aprimorando exemplos práticos e organização para alcançar excelência.",
+      criteria: CRITERIA,
+    },
+    Anterior: {
+      summary:
+        "Nesta tentativa, suas respostas tiveram base compreensível, mas ainda precisavam de mais objetividade, domínio e exemplos concretos para sustentar melhor os argumentos.",
+      criteria: [
+        { name: "Clareza",      score: 7 },
+        { name: "Coerência",    score: 7 },
+        { name: "Objetividade", score: 6 },
+        { name: "Domínio",      score: 6 },
+        { name: "Organização",  score: 6 },
+        { name: "Aderência",    score: 7 },
+        { name: "Exemplos",     score: 5 },
+      ],
+    },
+    "Melhor resultado": {
+      summary:
+        "Seu melhor resultado combinou respostas claras, boa organização e forte conexão com os requisitos da vaga. O próximo passo é manter consistência nos exemplos e no domínio técnico.",
+      criteria: [
+        { name: "Clareza",      score: 10 },
+        { name: "Coerência",    score: 9 },
+        { name: "Objetividade", score: 9 },
+        { name: "Domínio",      score: 8 },
+        { name: "Organização",  score: 9 },
+        { name: "Aderência",    score: 9 },
+        { name: "Exemplos",     score: 8 },
+      ],
+    },
+  };
+
+  const currentReport = reportResults[resultView];
+  const radarData = currentReport.criteria;
+  const averageScoreValue = radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length;
+  const averageScore = averageScoreValue.toFixed(1);
+
+  const scoreState = (score: number) => {
+    if (score >= 9) return { label: "Excelente", color: "#16A34A", bg: "bg-green-50", text: "text-green-700", border: "border-green-200", badge: "success" as const };
+    if (score >= 7) return { label: "Bom", color: "#1D4ED8", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", badge: "info" as const };
+    return { label: "Atenção", color: "#D97706", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", badge: "warning" as const };
+  };
+
+  const formatScore = (score: number) => score.toFixed(1).replace(".", ",");
+  const generalState = scoreState(averageScoreValue);
+  const strongestCriteria = [...radarData].sort((a, b) => b.score - a.score).slice(0, 3);
+  const strongestNames = new Set(strongestCriteria.map(item => item.name));
+  const improvementCriteria = [...radarData]
+    .filter(item => item.score < 9 && !strongestNames.has(item.name))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 3);
+  const resultOptions = ["Atual", "Anterior", "Melhor resultado"] as const;
+
+  const selectResultView = (option: typeof resultOptions[number]) => {
+    if (option === resultView) return;
+    setIsReportFading(true);
+    window.setTimeout(() => {
+      setResultView(option);
+      setIsReportFading(false);
+    }, 180);
+  };
+
+  const criterionInsight = (criterion: string, score: number, kind: "strength" | "improvement") => {
+    const state = scoreState(score).label.toLowerCase();
+    if (kind === "strength") {
+      return `${criterion} aparece como um dos pontos mais consistentes deste relatório, com desempenho ${state} para esta tentativa.`;
+    }
+    return `${criterion} é um dos critérios que mais merecem atenção nesta comparação. Reforce exemplos, estrutura e conexão com a vaga.`;
+  };
+
+  const renderRadarTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const item = payload[0].payload;
+    const state = scoreState(item.score);
+    return (
+      <div className="rounded-xl border border-border bg-white px-3 py-2 shadow-lg">
+        <p className="text-xs font-bold text-foreground">{item.name}</p>
+        <p className="text-lg font-extrabold leading-tight" style={{ color: state.color }}>{formatScore(item.score)}</p>
+        <p className={`text-[11px] font-semibold ${state.text}`}>{state.label}</p>
+      </div>
+    );
+  };
 
   return (
     <AuthLayout
@@ -1631,18 +1716,20 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <p className="text-[11px] font-bold uppercase tracking-widest text-blue-700 mb-5 flex items-center gap-2">
                 <TrendingUp className="w-3.5 h-3.5" /> Desempenho Geral
               </p>
-              <div className="flex items-end gap-2 mb-4">
-                <span className="text-[72px] sm:text-[80px] font-extrabold text-foreground leading-none">7.7</span>
-                <span className="text-2xl font-bold text-muted-foreground mb-3">/ 10</span>
+              <div style={{ opacity: isReportFading ? 0 : 1, transition: "opacity 180ms ease" }}>
+                <div className="flex items-end gap-2 mb-4">
+                  <span className="text-[72px] sm:text-[80px] font-extrabold text-foreground leading-none">{averageScore}</span>
+                  <span className="text-2xl font-bold text-muted-foreground mb-3">/ 10</span>
+                </div>
+                <div className="mb-5">
+                  <span className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 ${generalState.bg} ${generalState.text} text-sm font-bold rounded-full border ${generalState.border}`}>
+                    <CheckCircle className="w-3.5 h-3.5" /> {generalState.label}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed mb-6">
+                  {currentReport.summary}
+                </p>
               </div>
-              <div className="mb-5">
-                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-green-100 text-green-700 text-sm font-bold rounded-full border border-green-200">
-                  <CheckCircle className="w-3.5 h-3.5" /> Bom desempenho
-                </span>
-              </div>
-              <p className="text-sm text-muted-foreground leading-relaxed mb-6">
-                Você demonstrou uma comunicação clara e objetiva, com boa coerência nas ideias e domínio adequado do assunto. Continue aprimorando exemplos práticos e organizando ainda mais suas respostas para alcançar excelência.
-              </p>
               <div className="flex items-start gap-3 p-4 bg-white/70 rounded-xl border border-blue-100">
                 <Target className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                 <div>
@@ -1654,33 +1741,61 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
             {/* Right: Radar chart */}
             <div className="p-6 sm:p-8 bg-card">
-              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2">
-                <p className="text-sm font-bold text-foreground">Desempenho por critério</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#16A34A" }} /><span className="text-[11px] text-muted-foreground">Excelente (≥ 9)</span></div>
-                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#1D4ED8" }} /><span className="text-[11px] text-muted-foreground">Bom (7–8)</span></div>
-                  <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#D97706" }} /><span className="text-[11px] text-muted-foreground">Atenção (&lt; 7)</span></div>
+              <div className="flex flex-col gap-4 mb-3">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                  <p className="text-sm font-bold text-foreground">Desempenho por critério</p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                    <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#16A34A" }} /><span className="text-[11px] text-muted-foreground">Excelente (≥ 9)</span></div>
+                    <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#1D4ED8" }} /><span className="text-[11px] text-muted-foreground">Bom (7–8)</span></div>
+                    <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#D97706" }} /><span className="text-[11px] text-muted-foreground">Atenção (&lt; 7)</span></div>
+                  </div>
+                </div>
+                <div className="flex w-fit max-w-full flex-wrap gap-0.5 rounded-lg border border-blue-100 bg-white/70 p-0.5 shadow-sm sm:flex-nowrap">
+                  {resultOptions.map(option => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => selectResultView(option)}
+                      className={`min-w-0 rounded-md px-2 py-1 text-[10px] font-bold leading-tight transition-all duration-150 sm:px-3 sm:text-xs ${
+                        resultView === option
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : "text-blue-700/60 hover:text-blue-700"
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={300}>
-                <RadarChart data={radarData} margin={{ top: 16, right: 36, bottom: 16, left: 36 }}>
+              <ResponsiveContainer width="100%" height={268}>
+                <RadarChart data={radarData} outerRadius="68%" margin={{ top: 14, right: 34, bottom: 14, left: 34 }}>
                   <PolarGrid stroke="#E2E8F0" />
                   <PolarAngleAxis
                     dataKey="name"
-                    tick={({ payload, x, y, textAnchor, ...rest }) => (
-                      <text
-                        x={x} y={y}
-                        textAnchor={textAnchor}
-                        fontSize={10}
-                        fontWeight={600}
-                        fill="#0F1B2D"
-                        {...rest}
-                      >
-                        {payload.value}
-                      </text>
-                    )}
+                    tick={({ payload, x, y, cx, cy, textAnchor, ...rest }: any) => {
+                      const dx = x - (cx ?? 0);
+                      const dy = y - (cy ?? 0);
+                      const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+                      const labelOffset = 16;
+                      const labelX = x + (dx / distance) * labelOffset;
+                      const labelY = y + (dy / distance) * labelOffset + (dy > 0 ? 4 : -2);
+                      return (
+                        <text
+                          x={labelX}
+                          y={labelY}
+                          textAnchor={textAnchor}
+                          fontSize={10}
+                          fontWeight={600}
+                          fill="#0F1B2D"
+                          {...rest}
+                        >
+                          {payload.value}
+                        </text>
+                      );
+                    }}
                   />
                   <PolarRadiusAxis domain={[0, 10]} tick={false} axisLine={false} />
+                  <Tooltip content={renderRadarTooltip} cursor={false} />
                   <Radar
                     name="Desempenho"
                     dataKey="score"
@@ -1688,23 +1803,65 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                     fill="#1D4ED8"
                     fillOpacity={0.12}
                     strokeWidth={2}
-                    isAnimationActive={false}
+                    isAnimationActive
+                    animationBegin={0}
+                    animationDuration={420}
+                    animationEasing="ease-out"
+                    activeDot={false}
                     dot={(props: any) => {
-                      const { cx, cy, payload } = props;
-                      const col = scoreColor(payload.score);
+                      const { cx, cy, payload, key } = props;
+                      if (cx == null || cy == null) return <circle key={key} cx={0} cy={0} r={0} fill="transparent" />;
+                      const score = payload?.score ?? payload?.payload?.score ?? props.value ?? 0;
+                      const name = payload?.name ?? payload?.payload?.name ?? "";
+                      const state = scoreState(score);
+                      const isHovered = hoveredCriterion === name;
                       return (
-                        <g>
-                          <circle cx={cx} cy={cy} r={15} fill={col} fillOpacity={0.18} />
-                          <circle cx={cx} cy={cy} r={11} fill={col} />
-                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight="bold" fill="white">
-                            {payload.score}
-                          </text>
+                        <g
+                          key={key ?? `radar-dot-${name || cx}-${cy}`}
+                          onMouseEnter={() => setHoveredCriterion(name)}
+                          onMouseLeave={() => setHoveredCriterion(null)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <g
+                            key={`${resultView}-${name}`}
+                            style={{
+                              transformBox: "fill-box",
+                              transformOrigin: "center",
+                              transform: isHovered ? "scale(1.28)" : "scale(1)",
+                              transition: "transform 150ms ease-out",
+                              animation: "reportRadarDotIn 500ms ease-out",
+                            }}
+                          >
+                            <circle cx={cx} cy={cy} r={17} fill={state.color} fillOpacity={isHovered ? 0.28 : 0.14} style={{ transition: "fill-opacity 150ms ease-out" }} />
+                            <circle cx={cx} cy={cy} r={10} fill={state.color} fillOpacity={1} />
+                          </g>
                         </g>
                       );
                     }}
                   />
                 </RadarChart>
               </ResponsiveContainer>
+              <div
+                key={resultView}
+                className="mt-3 grid grid-cols-1 gap-x-3 gap-y-1.5 border-t border-border pt-3 sm:grid-cols-2"
+                style={{ animation: "reportCriteriaIn 350ms ease-out" }}
+              >
+                {radarData.map(item => {
+                  const state = scoreState(item.score);
+                  const isHovered = hoveredCriterion === item.name;
+                  return (
+                    <div
+                      key={item.name}
+                      className={`flex items-center justify-between gap-2 rounded-md px-1 py-1 transition-colors ${isHovered ? "bg-blue-50" : ""}`}
+                    >
+                      <span className="min-w-0 truncate text-xs font-medium text-foreground">{item.name}</span>
+                      <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${state.bg} ${state.text}`}>
+                        {formatScore(item.score)} · {state.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </Card>
@@ -1716,22 +1873,21 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <Award className="w-5 h-5 text-green-600" /> Pontos fortes
             </h3>
             <div className="space-y-3">
-              {[
-                { crit: "Clareza",      nota: 9, obs: "Suas respostas foram diretas e fáceis de acompanhar. A mensagem chegou de forma organizada." },
-                { crit: "Coerência",    nota: 9, obs: "Houve boa relação lógica entre as perguntas e os exemplos que você utilizou." },
-                { crit: "Objetividade", nota: 8, obs: "Você soube responder sem desviar do tema principal. Ótima capacidade de síntese." },
-              ].map(p => (
-                <div key={p.crit} className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
+              {strongestCriteria.map(p => {
+                const state = scoreState(p.score);
+                return (
+                <div key={p.name} className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
                   <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-bold text-foreground">{p.crit}</p>
-                      <Badge variant="success">{p.nota}/10</Badge>
+                      <p className="text-sm font-bold text-foreground">{p.name}</p>
+                      <Badge variant={state.badge}>{formatScore(p.score)}/10</Badge>
                     </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{p.obs}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{criterionInsight(p.name, p.score, "strength")}</p>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
 
@@ -1741,22 +1897,29 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <TrendingUp className="w-5 h-5 text-amber-500" /> Oportunidades de melhoria
             </h3>
             <div className="space-y-3">
-              {[
-                { crit: "Organização", nota: 7, obs: "Em algumas respostas o raciocínio perdeu o fio condutor. Use o método STAR como guia." },
-                { crit: "Domínio",     nota: 7, obs: "Traga exemplos mais específicos e dados concretos para demonstrar sua experiência." },
-                { crit: "Exemplos",    nota: 6, obs: "Inclua situações concretas, resultados e evidências para sustentar melhor suas respostas." },
-              ].map(p => (
-                <div key={p.crit} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
+              {improvementCriteria.map(p => {
+                const state = scoreState(p.score);
+                return (
+                <div key={p.name} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-bold text-foreground">{p.crit}</p>
-                      <Badge variant="warning">{p.nota}/10</Badge>
+                      <p className="text-sm font-bold text-foreground">{p.name}</p>
+                      <Badge variant={state.badge}>{formatScore(p.score)}/10</Badge>
                     </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{p.obs}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{criterionInsight(p.name, p.score, "improvement")}</p>
                   </div>
                 </div>
-              ))}
+                );
+              })}
+              {improvementCriteria.length === 0 && (
+                <div className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
+                  <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Nenhum critério ficou abaixo de Excelente neste resultado.
+                  </p>
+                </div>
+              )}
             </div>
           </Card>
         </div>
@@ -1803,6 +1966,17 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </Btn>
         </div>
       </div>
+      <style>{`
+        @keyframes reportRadarDotIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes reportCriteriaIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </AuthLayout>
   );
 }
