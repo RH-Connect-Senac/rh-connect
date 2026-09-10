@@ -1,6 +1,7 @@
 /** RH Connect — Exploração Visual | Fluxo Principal do Candidato */
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase, Video,
@@ -49,83 +50,15 @@ import { FilterChip } from "./components/ui/filter-chip";
 import { EmptyState } from "./components/ui/empty-state";
 import { Spinner } from "./components/ui/spinner";
 import { Toaster } from "./components/ui/sonner";
+import {
+  APP_ROUTES,
+  FLOW_STEPS,
+  ROUTER_BASENAME,
+  getPathForScreen,
+  type AppScreen as Screen,
+} from "./router/routes";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
-
-type Screen =
-  // Público
-  | "landing" | "terms" | "privacy"
-  // Auth + Ativação
-  | "auth" | "email-verify" | "forgot-password" | "reset-password"
-  // Onboarding / Primeiro acesso
-  | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
-  // Candidato
-  | "dashboard" | "profile" | "settings" | "materials" | "notifications"
-  | "job-list" | "job" | "job-detail"
-  | "interview-history" | "development"
-  // Fluxo entrevista
-  | "interview-setup" | "consent" | "prep" | "device" | "interview" | "review" | "interview-confirm" | "interview-done"
-  // Aguardando / relatório
-  | "pending" | "report"
-  // Avaliador
-  | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
-  // Administrador
-  | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
-  | "admin-interviews" | "admin-assign"
-  | "admin-questions" | "admin-question-form" | "admin-roles" | "admin-criteria"
-  | "admin-consent" | "admin-audit" | "admin-settings";
-
-const STEPS: { id: Screen; label: string }[] = [
-  { id: "landing",              label: "Início" },
-  { id: "auth",                 label: "Cadastro" },
-  { id: "candidate-onboarding", label: "Onboarding" },
-  { id: "eval-activate",        label: "Ativar Conta Aval." },
-  { id: "eval-onboarding",      label: "Onboarding Aval." },
-  { id: "admin-onboarding",     label: "Intro Admin" },
-  { id: "dashboard",            label: "Dashboard" },
-  { id: "profile",           label: "Perfil" },
-  { id: "job-list",          label: "Minhas Vagas" },
-  { id: "job",               label: "Nova Vaga" },
-  { id: "interview-setup",   label: "Selecionar Vaga" },
-  { id: "consent",           label: "Consentimento" },
-  { id: "prep",              label: "Orientações" },
-  { id: "device",            label: "Teste Técnico" },
-  { id: "interview",         label: "Entrevista" },
-  { id: "review",            label: "Revisão" },
-  { id: "interview-confirm", label: "Confirmar Envio" },
-  { id: "interview-done",    label: "Concluída" },
-  { id: "pending",           label: "Aguardando" },
-  { id: "report",            label: "Relatório" },
-  { id: "interview-history", label: "Histórico" },
-  { id: "development",       label: "Desenvolvimento" },
-  { id: "materials",         label: "Materiais" },
-  { id: "notifications",     label: "Notificações" },
-  // Avaliador
-  { id: "eval-dashboard",    label: "Avaliador" },
-  { id: "eval-queue",        label: "Fila" },
-  { id: "eval-active",       label: "Em Andamento" },
-  { id: "eval-screen",       label: "Avaliar" },
-  { id: "eval-review",       label: "Revisão Eval" },
-  { id: "eval-done",         label: "Concluída Eval" },
-  { id: "eval-history",      label: "Histórico Eval" },
-  { id: "eval-criteria",     label: "Critérios Eval" },
-  { id: "eval-settings",     label: "Config. Eval" },
-  // Administrador
-  { id: "admin-dashboard",   label: "Admin" },
-  { id: "admin-candidates",  label: "Candidatos" },
-  { id: "admin-candidate-detail", label: "Detalhe Candidato" },
-  { id: "admin-evaluators",  label: "Avaliadores" },
-  { id: "admin-evaluator-form", label: "Form. Avaliador" },
-  { id: "admin-interviews",  label: "Entrevistas" },
-  { id: "admin-assign",      label: "Atribuições" },
-  { id: "admin-questions",   label: "Perguntas" },
-  { id: "admin-question-form", label: "Nova Pergunta" },
-  { id: "admin-roles",       label: "Cargos" },
-  { id: "admin-criteria",    label: "Critérios Admin" },
-  { id: "admin-consent",     label: "Consentimentos" },
-  { id: "admin-audit",       label: "Auditoria" },
-  { id: "admin-settings",    label: "Config. Admin" },
-];
 
 const AUTH_SCREENS: Screen[] = [
   "dashboard","profile","settings","materials","notifications",
@@ -309,7 +242,7 @@ function StatCard({ value, label, icon: Icon, color }: {
 // ─── Flow Navigator ───────────────────────────────────────────────────────────
 
 function FlowNav({ current, onNavigate }: { current: Screen; onNavigate: (s: Screen) => void }) {
-  const idx = STEPS.findIndex(s => s.id === current);
+  const idx = FLOW_STEPS.findIndex(s => s.id === current);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -387,7 +320,7 @@ function FlowNav({ current, onNavigate }: { current: Screen; onNavigate: (s: Scr
             {/* Left padding when arrow is shown */}
             {canScrollLeft && <span className="shrink-0 w-5" />}
 
-            {STEPS.map((step, i) => {
+            {FLOW_STEPS.map((step, i) => {
               const done = i < idx;
               const active = i === idx;
               return (
@@ -653,8 +586,25 @@ function LandingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 2: Auth ───────────────────────────────────────────────────────────
 
-function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const [tab, setTab] = useState<"login" | "register">("register");
+function AuthScreen({
+  onNavigate,
+  initialTab = "register",
+}: {
+  onNavigate: (s: Screen) => void;
+  initialTab?: "login" | "register";
+}) {
+  const [tab, setTab] = useState<"login" | "register">(initialTab);
+  const authNavigate = useNavigate();
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
+
+  const selectAuthTab = (nextTab: "login" | "register") => {
+    setTab(nextTab);
+    authNavigate(nextTab === "login" ? "/login" : "/register");
+  };
+
   return (
     <div className="min-h-[calc(100vh-44px)] bg-background flex items-center justify-center p-4 sm:p-8 py-8">
       <div className="w-full max-w-md">
@@ -668,7 +618,7 @@ function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             {(["login","register"] as const).map(t => (
               <button
                 key={t}
-                onClick={() => setTab(t)}
+                onClick={() => selectAuthTab(t)}
                 aria-pressed={tab === t}
                 className={`py-4 text-sm font-semibold transition-all ${tab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
               >
@@ -719,7 +669,7 @@ function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
             <p className="text-center text-xs text-muted-foreground mt-5">
               {tab === "login" ? "Não tem uma conta? " : "Já tem uma conta? "}
-              <button onClick={() => setTab(tab === "login" ? "register" : "login")} className="text-primary font-semibold hover:underline">
+              <button onClick={() => selectAuthTab(tab === "login" ? "register" : "login")} className="text-primary font-semibold hover:underline">
                 {tab === "login" ? "Criar conta" : "Entrar"}
               </button>
             </p>
@@ -3422,82 +3372,96 @@ function DevelopmentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) 
 
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
-export default function App() {
-  const [screen, setScreen] = useState<Screen>("landing");
-  const navigate = (s: Screen) => setScreen(s);
+function getCurrentScreen(pathname: string): Screen {
+  const route = APP_ROUTES.find((item) => matchPath({ path: item.path, end: true }, pathname));
+  return route?.screen ?? "landing";
+}
 
-  const screenMap: Record<Screen, React.ReactNode> = {
-    // Público
-    landing:            <LandingScreen          onNavigate={navigate} />,
-    terms:              <TermsScreen            onNavigate={navigate} />,
-    privacy:            <PrivacyScreen          onNavigate={navigate} />,
-    // Auth
-    auth:               <AuthScreen             onNavigate={navigate} />,
-    "email-verify":     <EmailVerifyScreen      onNavigate={navigate} />,
-    "forgot-password":  <ForgotPasswordScreen   onNavigate={navigate} />,
-    "reset-password":   <ResetPasswordScreen    onNavigate={navigate} />,
-    // Onboarding / Primeiro acesso
-    "candidate-onboarding": <CandidateOnboardingScreen onNavigate={navigate} />,
-    "eval-activate":    <EvalActivateScreen     onNavigate={navigate} />,
-    "eval-onboarding":  <EvalOnboardingScreen   onNavigate={navigate} />,
-    "admin-onboarding": <AdminOnboardingScreen  onNavigate={navigate} />,
-    // Candidato
-    dashboard:          <DashboardScreen        onNavigate={navigate} />,
-    profile:            <ProfileScreen          onNavigate={navigate} />,
-    settings:           <SettingsScreen         onNavigate={navigate} />,
-    materials:          <MaterialsScreen        onNavigate={navigate} />,
-    notifications:      <NotificationsScreen    onNavigate={navigate} />,
-    "job-list":         <JobListScreen          onNavigate={navigate} />,
-    job:                <JobScreen              onNavigate={navigate} />,
-    "job-detail":       <JobListScreen          onNavigate={navigate} />,
-    "interview-history":<InterviewHistoryScreen onNavigate={navigate} />,
-    development:        <DevelopmentScreen      onNavigate={navigate} />,
-    // Fluxo entrevista
-    "interview-setup":  <InterviewSetupScreen   onNavigate={navigate} />,
-    consent:            <ConsentScreen          onNavigate={navigate} />,
-    prep:               <PrepScreen             onNavigate={navigate} />,
-    device:             <DeviceScreen           onNavigate={navigate} />,
-    interview:          <InterviewScreen        onNavigate={navigate} />,
-    review:             <ReviewScreen           onNavigate={navigate} />,
-    "interview-confirm":<InterviewConfirmScreen onNavigate={navigate} />,
-    "interview-done":   <InterviewDoneScreen    onNavigate={navigate} />,
-    // Resultado
-    pending:            <PendingScreen          onNavigate={navigate} />,
-    report:             <ReportScreen           onNavigate={navigate} />,
-    // Avaliador
-    "eval-dashboard":   <EvalDashboardScreen    onNavigate={navigate} />,
-    "eval-queue":       <EvalQueueScreen        onNavigate={navigate} />,
-    "eval-active":      <EvalActiveScreen       onNavigate={navigate} />,
-    "eval-screen":      <EvalScreenView         onNavigate={navigate} />,
-    "eval-review":      <EvalReviewScreen       onNavigate={navigate} />,
-    "eval-done":        <EvalDoneScreen         onNavigate={navigate} />,
-    "eval-history":     <EvalHistoryScreen      onNavigate={navigate} />,
-    "eval-criteria":    <EvalCriteriaScreen     onNavigate={navigate} />,
-    "eval-settings":    <EvalSettingsScreen     onNavigate={navigate} />,
-    // Administrador
-    "admin-dashboard":  <AdminDashboardScreen   onNavigate={navigate} />,
-    "admin-candidates": <AdminCandidatesScreen        onNavigate={navigate} />,
-    "admin-candidate-detail": <AdminCandidateDetailScreen onNavigate={navigate} />,
-    "admin-evaluators": <AdminEvaluatorsScreen        onNavigate={navigate} />,
-    "admin-evaluator-form": <AdminEvaluatorFormScreen   onNavigate={navigate} />,
-    "admin-interviews": <AdminInterviewsScreen  onNavigate={navigate} />,
-    "admin-assign":     <AdminAssignScreen      onNavigate={navigate} />,
-    "admin-questions":  <AdminQuestionsScreen   onNavigate={navigate} />,
-    "admin-question-form": <AdminQuestionFormScreen onNavigate={navigate} />,
-    "admin-roles":      <AdminRolesScreen       onNavigate={navigate} />,
-    "admin-criteria":   <AdminCriteriaScreen    onNavigate={navigate} />,
-    "admin-consent":    <AdminConsentScreen     onNavigate={navigate} />,
-    "admin-audit":      <AdminAuditScreen       onNavigate={navigate} />,
-    "admin-settings":   <AdminSettingsScreen    onNavigate={navigate} />,
-  };
+function AppRoutes() {
+  const routerNavigate = useNavigate();
+  const location = useLocation();
+  const currentScreen = getCurrentScreen(location.pathname);
+  const navigate = (screen: Screen) => routerNavigate(getPathForScreen(screen));
 
   return (
     <div className="flex flex-col min-h-screen">
       <Toaster position="top-center" richColors />
-      <FlowNav current={screen} onNavigate={navigate} />
+      <FlowNav current={currentScreen} onNavigate={navigate} />
       <div className="flex-1 flex flex-col">
-        {screenMap[screen]}
+        <Routes>
+          <Route path="/" element={<LandingScreen onNavigate={navigate} />} />
+          <Route path="/login" element={<AuthScreen onNavigate={navigate} initialTab="login" />} />
+          <Route path="/register" element={<AuthScreen onNavigate={navigate} initialTab="register" />} />
+          <Route path="/terms" element={<TermsScreen onNavigate={navigate} />} />
+          <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} />} />
+          <Route path="/verify-email" element={<EmailVerifyScreen onNavigate={navigate} />} />
+          <Route path="/forgot-password" element={<ForgotPasswordScreen onNavigate={navigate} />} />
+          <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
+
+          <Route path="/candidate/onboarding" element={<CandidateOnboardingScreen onNavigate={navigate} />} />
+          <Route path="/candidate/dashboard" element={<DashboardScreen onNavigate={navigate} />} />
+          <Route path="/candidate/profile" element={<ProfileScreen onNavigate={navigate} />} />
+          <Route path="/candidate/settings" element={<SettingsScreen onNavigate={navigate} />} />
+          <Route path="/candidate/materials" element={<MaterialsScreen onNavigate={navigate} />} />
+          <Route path="/candidate/notifications" element={<NotificationsScreen onNavigate={navigate} />} />
+          <Route path="/candidate/jobs" element={<JobListScreen onNavigate={navigate} />} />
+          <Route path="/candidate/jobs/new" element={<JobScreen onNavigate={navigate} />} />
+          <Route path="/candidate/jobs/:id" element={<JobListScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews" element={<InterviewHistoryScreen onNavigate={navigate} />} />
+          <Route path="/candidate/development" element={<DevelopmentScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new" element={<InterviewSetupScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new/consent" element={<ConsentScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new/preparation" element={<PrepScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new/device-check" element={<DeviceScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new/record" element={<InterviewScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new/review" element={<ReviewScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new/submit" element={<InterviewConfirmScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/:id/success" element={<InterviewDoneScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/:id/status" element={<PendingScreen onNavigate={navigate} />} />
+          <Route path="/candidate/reports/:id" element={<ReportScreen onNavigate={navigate} />} />
+
+          <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/onboarding" element={<EvalOnboardingScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/dashboard" element={<EvalDashboardScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/evaluations" element={<EvalQueueScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/evaluations/active" element={<EvalActiveScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/evaluations/:id" element={<EvalScreenView onNavigate={navigate} />} />
+          <Route path="/evaluator/evaluations/:id/review" element={<EvalReviewScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/evaluations/:id/success" element={<EvalDoneScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/history" element={<EvalHistoryScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/criteria" element={<EvalCriteriaScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/settings" element={<EvalSettingsScreen onNavigate={navigate} />} />
+
+          <Route path="/admin/onboarding" element={<AdminOnboardingScreen onNavigate={navigate} />} />
+          <Route path="/admin/dashboard" element={<AdminDashboardScreen onNavigate={navigate} />} />
+          <Route path="/admin/candidates" element={<AdminCandidatesScreen onNavigate={navigate} />} />
+          <Route path="/admin/candidates/:id" element={<AdminCandidateDetailScreen onNavigate={navigate} />} />
+          <Route path="/admin/evaluators" element={<AdminEvaluatorsScreen onNavigate={navigate} />} />
+          <Route path="/admin/evaluators/new" element={<AdminEvaluatorFormScreen onNavigate={navigate} />} />
+          <Route path="/admin/interviews" element={<AdminInterviewsScreen onNavigate={navigate} />} />
+          <Route path="/admin/assignments" element={<AdminAssignScreen onNavigate={navigate} />} />
+          <Route path="/admin/questions" element={<AdminQuestionsScreen onNavigate={navigate} />} />
+          <Route path="/admin/questions/new" element={<AdminQuestionFormScreen onNavigate={navigate} />} />
+          <Route path="/admin/roles" element={<AdminRolesScreen onNavigate={navigate} />} />
+          <Route path="/admin/criteria" element={<AdminCriteriaScreen onNavigate={navigate} />} />
+          <Route path="/admin/consents" element={<AdminConsentScreen onNavigate={navigate} />} />
+          <Route path="/admin/audit" element={<AdminAuditScreen onNavigate={navigate} />} />
+          <Route path="/admin/settings" element={<AdminSettingsScreen onNavigate={navigate} />} />
+
+          <Route path="/candidate" element={<Navigate to="/candidate/dashboard" replace />} />
+          <Route path="/evaluator" element={<Navigate to="/evaluator/dashboard" replace />} />
+          <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter basename={ROUTER_BASENAME}>
+      <AppRoutes />
+    </BrowserRouter>
   );
 }
