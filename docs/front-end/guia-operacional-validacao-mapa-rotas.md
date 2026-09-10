@@ -209,8 +209,7 @@ Exemplo de fluxo atual proposto:
 ```text
 /candidate/interviews/new/consent
 /candidate/interviews/new/preparation
-/candidate/interviews/new/device-check
-/candidate/interviews/new/record
+/candidate/interviews/new/answers
 /candidate/interviews/new/review
 ```
 
@@ -363,11 +362,11 @@ Não alterar prioridade sem registrar motivo.
 
 # 12. Áreas que exigem atenção especial
 
-## 12.1 Vaga x Área/Subárea
+## 12.1 Vaga como contexto da entrevista
 
-As rotas relacionadas ao contexto de treinamento continuam pendentes de decisão de produto.
+As rotas independentes de gerenciamento de vagas foram removidas da primeira entrega. A vaga permanece como contexto informado no inicio da Nova entrevista.
 
-Exemplos:
+Rotas removidas:
 
 ```text
 /candidate/jobs
@@ -375,21 +374,14 @@ Exemplos:
 /candidate/jobs/:id
 ```
 
-ou alternativas como:
-
-```text
-/candidate/explore
-/candidate/areas
-```
-
 Regra:
 
-> Não consolidar essas rotas enquanto a decisão de produto não estiver fechada.
+> Nao recriar essas rotas sem nova decisao de produto.
 
 Classificação recomendada:
 
 ```text
-PENDENTE DE PRODUTO
+REMOVIDA DA PRIMEIRA ENTREGA
 ```
 
 ---
@@ -400,10 +392,9 @@ Validar especialmente:
 
 ```text
 /candidate/interviews/new
-/candidate/interviews/new/consent
 /candidate/interviews/new/preparation
-/candidate/interviews/new/device-check
-/candidate/interviews/new/record
+/candidate/interviews/new/consent
+/candidate/interviews/new/answers
 /candidate/interviews/new/review
 /candidate/interviews/:id/status
 ```

@@ -6,7 +6,7 @@ import {
   ADMIN_ACCOUNT, ADMIN_NOTIFS,
 } from "./header-popovers";
 import {
-  Home, Users, Video, Settings, LogOut, ChevronLeft, ChevronRight,
+  Home, Users, Settings, LogOut, ChevronLeft, ChevronRight,
   Bell, CheckCircle, AlertCircle, Target, FileText, Shield,
   Plus, Eye, Edit2, Trash2, X, Check, Filter,
   TrendingUp, Award, Clock, Star, BarChart2, Download,
@@ -23,6 +23,12 @@ import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
 import { Alert } from "./ui/alert";
 import { FilterChip } from "./ui/filter-chip";
+import {
+  PROFESSIONAL_AREAS,
+  PROFESSIONAL_AREA_OPTIONS,
+  type ProfessionalAreaId,
+  getProfessionalSubareasByArea,
+} from "../domain/professional-catalog";
 
 type NavFn = (s: string) => void;
 type PendingEvaluatorInvite = {
@@ -100,7 +106,7 @@ const ADMIN_NAV = [
   { icon: Home,        label: "Dashboard",       screen: "admin-dashboard" },
   { icon: Users,       label: "Candidatos",      screen: "admin-candidates" },
   { icon: UserCheck,   label: "Avaliadores",      screen: "admin-evaluators" },
-  { icon: Video,       label: "Entrevistas",      screen: "admin-interviews" },
+  { icon: MessageSquare, label: "Entrevistas",      screen: "admin-interviews" },
   { icon: Link2,       label: "Atribuições",      screen: "admin-assign" },
   { icon: MessageSquare, label: "Banco de Perguntas", screen: "admin-questions" },
   { icon: Briefcase,   label: "Cargos e Áreas",  screen: "admin-roles" },
@@ -256,25 +262,25 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 // ─── Shared mock data ─────────────────────────────────────────────────────────
 
 const CANDIDATES = [
-  { id: "#C-001", name: "Fernanda Oliveira", email: "fernanda.o@gmail.com", job: "Analista de Marketing", date: "11/08/2026", status: "Aguardando" as const, score: null },
+  { id: "#C-001", name: "Fernanda Oliveira", email: "fernanda.o@gmail.com", job: "Desenvolvedora Front-end", date: "11/08/2026", status: "Aguardando" as const, score: null },
   { id: "#C-002", name: "Rafael Mendes",     email: "rafael.m@gmail.com",   job: "Dev Full Stack",       date: "11/08/2026", status: "Em avaliação" as const, score: null },
-  { id: "#C-003", name: "Isabela Costa",     email: "isabela.c@gmail.com",  job: "Gestora de Projetos",  date: "10/08/2026", status: "Concluído" as const, score: 8.4 },
+  { id: "#C-003", name: "Isabela Costa",     email: "isabela.c@gmail.com",  job: "Analista de Recrutamento e Seleção", date: "10/08/2026", status: "Concluído" as const, score: 8.4 },
   { id: "#C-004", name: "Paulo Carvalho",    email: "paulo.c@gmail.com",    job: "Designer UX/UI",       date: "10/08/2026", status: "Concluído" as const, score: 7.1 },
   { id: "#C-005", name: "Mariana Souza",     email: "mariana.s@gmail.com",  job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, score: 9.0 },
   { id: "#C-006", name: "Lucas Ferreira",    email: "lucas.f@gmail.com",    job: "Analista de TI",       date: "09/08/2026", status: "Concluído" as const, score: 6.8 },
 ];
 
 const EVALUATORS = [
-  { id: "#AV-01", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "RH Sênior",          pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
-  { id: "#AV-02", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Desenvolvimento",    pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
-  { id: "#AV-03", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Gestão de Projetos", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
-  { id: "#AV-04", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Design & UX",        pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
+  { id: "#AV-01", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
+  { id: "#AV-02", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
+  { id: "#AV-03", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
+  { id: "#AV-04", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
 ];
 
 const INTERVIEWS = [
-  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Analista de Marketing", date: "11/08/2026", status: "Aguardando" as const, evaluator: "—",              score: null },
+  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedora Front-end", date: "11/08/2026", status: "Aguardando" as const, evaluator: "—",              score: null },
   { id: "#E-0040", candidate: "Rafael Mendes",     job: "Dev Full Stack",        date: "11/08/2026", status: "Em avaliação" as const, evaluator: "Carlos A.",     score: null },
-  { id: "#E-0039", candidate: "Isabela Costa",     job: "Gestora de Projetos",  date: "10/08/2026", status: "Concluído" as const, evaluator: "Beatriz L.",     score: 8.4 },
+  { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", date: "10/08/2026", status: "Concluído" as const, evaluator: "Beatriz L.",     score: 8.4 },
   { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",        date: "10/08/2026", status: "Concluído" as const, evaluator: "Carlos A.",     score: 7.1 },
   { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, evaluator: "Camila D.",     score: 9.0 },
 ];
@@ -661,7 +667,10 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
               <div><label className="block text-sm font-semibold text-foreground mb-1.5">E-mail *</label>
                 <Input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="nome@gmail.com" type="email" className="bg-white" /></div>
               <div><label className="block text-sm font-semibold text-foreground mb-1.5">Área de especialização</label>
-                <Input value={inviteArea} onChange={e => setInviteArea(e.target.value)} placeholder="Ex: Recursos Humanos" className="bg-white" /></div>
+                <NativeSelect value={inviteArea} onChange={e => setInviteArea(e.target.value)} className="bg-white">
+                  <option value="">Selecione...</option>
+                  {PROFESSIONAL_AREA_OPTIONS.map(area => <option key={area}>{area}</option>)}
+                </NativeSelect></div>
             </div>
             <div className="flex gap-3">
               <Btn variant="outline" onClick={() => setShowAdd(false)}>Cancelar</Btn>
@@ -752,7 +761,7 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
       <div className="w-full space-y-4">
         <div className="grid grid-cols-3 gap-3">
           <StatCard value="2"  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
-          <StatCard value="1"  label="Em avaliação"          icon={Video}        color="bg-blue-50 text-blue-600" />
+          <StatCard value="1"  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
           <StatCard value="15" label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
         </div>
 
@@ -1006,14 +1015,16 @@ export function AdminQuestionFormScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [newRoleAreaId, setNewRoleAreaId] = useState<ProfessionalAreaId | "">("information-technology");
+  const [newRoleSubareaId, setNewRoleSubareaId] = useState("");
+  const newRoleSubareas = newRoleAreaId ? getProfessionalSubareasByArea(newRoleAreaId) : [];
   const roles = [
-    { title: "Analista de Marketing Digital", area: "Marketing",     active: 12, status: "Ativo" },
-    { title: "Desenvolvedor Full Stack",       area: "Tecnologia",    active: 8,  status: "Ativo" },
-    { title: "Gestora de Projetos",            area: "Gestão",        active: 5,  status: "Ativo" },
-    { title: "Designer UX/UI",                area: "Design",        active: 4,  status: "Ativo" },
-    { title: "Analista de RH",                area: "RH",            active: 7,  status: "Ativo" },
-    { title: "Assistente Administrativo",      area: "Administrativo",active: 11, status: "Ativo" },
-    { title: "Técnico em Informática",        area: "Tecnologia",    active: 3,  status: "Inativo" },
+    { title: "Desenvolvedor Full Stack", area: "Tecnologia da Informação", subarea: "Desenvolvimento Full Stack", active: 8, status: "Ativo" },
+    { title: "Designer UX/UI",           area: "Tecnologia da Informação", subarea: "UX/UI Design", active: 4, status: "Ativo" },
+    { title: "Analista de RH",           area: "Gestão de RH", subarea: "Gestão de Pessoas", active: 7, status: "Ativo" },
+    { title: "Tech Recruiter",           area: "Gestão de RH", subarea: "Recrutamento e Seleção", active: 5, status: "Ativo" },
+    { title: "Secretária Executiva",     area: "Secretariado", subarea: "Secretariado Executivo", active: 6, status: "Ativo" },
+    { title: "Assessor Executivo",       area: "Secretariado", subarea: "Assessoria Executiva", active: 3, status: "Inativo" },
   ];
 
   return (
@@ -1031,8 +1042,28 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div><label className="block text-sm font-semibold text-foreground mb-1.5">Título do cargo *</label>
                 <Input placeholder="Ex: Analista de Dados" className="bg-white" /></div>
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Área / Departamento *</label>
-                <Input placeholder="Ex: Tecnologia" className="bg-white" /></div>
+              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Área *</label>
+                <NativeSelect
+                  value={newRoleAreaId}
+                  onChange={event => {
+                    setNewRoleAreaId(event.target.value as ProfessionalAreaId | "");
+                    setNewRoleSubareaId("");
+                  }}
+                  className="bg-white"
+                >
+                  <option value="">Selecione...</option>
+                  {PROFESSIONAL_AREAS.map(area => <option key={area.id} value={area.id}>{area.name}</option>)}
+                </NativeSelect></div>
+              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Subárea *</label>
+                <NativeSelect
+                  value={newRoleSubareaId}
+                  onChange={event => setNewRoleSubareaId(event.target.value)}
+                  disabled={!newRoleAreaId}
+                  className="bg-white"
+                >
+                  <option value="">Selecione...</option>
+                  {newRoleSubareas.map(subarea => <option key={subarea.id} value={subarea.id}>{subarea.name}</option>)}
+                </NativeSelect></div>
             </div>
             <div className="flex gap-3">
               <Btn variant="outline" onClick={() => setShowAdd(false)}>Cancelar</Btn>
@@ -1048,6 +1079,7 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
                 <tr className="border-b border-border">
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">Cargo</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Área</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Subárea</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Entrevistas ativas</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
                   <th className="py-3 px-5" />
@@ -1058,6 +1090,7 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
                   <tr key={r.title} className="hover:bg-muted/30 transition-colors">
                     <td className="py-3.5 px-5 font-semibold text-foreground">{r.title}</td>
                     <td className="py-3.5 px-4 text-muted-foreground">{r.area}</td>
+                    <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{r.subarea}</td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{r.active}</td>
                     <td className="py-3.5 px-4"><Badge variant={r.status === "Ativo" ? "success" : "default"}>{r.status}</Badge></td>
                     <td className="py-3.5 px-5">
@@ -1084,10 +1117,10 @@ export function AdminCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
     { name: "Clareza",      weight: "15%", desc: "Expressão clara e objetiva", active: true },
     { name: "Coerência",    weight: "15%", desc: "Lógica e consistência interna", active: true },
     { name: "Objetividade", weight: "10%", desc: "Foco na resposta, sem digressões", active: true },
-    { name: "Comunicação",  weight: "20%", desc: "Qualidade verbal e vocabulário", active: true },
-    { name: "Domínio",      weight: "25%", desc: "Conhecimento técnico da área", active: true },
-    { name: "Organização",  weight: "10%", desc: "Estrutura da resposta", active: true },
-    { name: "Segurança",    weight: "5%",  desc: "Confiança e postura", active: true },
+    { name: "Domínio",      weight: "20%", desc: "Conhecimento técnico da área", active: true },
+    { name: "Organização",  weight: "15%", desc: "Estrutura da resposta", active: true },
+    { name: "Aderência aos requisitos", weight: "15%", desc: "Relação com os requisitos da vaga", active: true },
+    { name: "Capacidade de exemplificar", weight: "10%", desc: "Uso de exemplos e evidências", active: true },
   ];
 
   return (
@@ -1183,7 +1216,7 @@ export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
           <h3 className="font-bold text-foreground mb-3 flex items-center gap-2"><Shield className="w-4 h-4 text-purple-500" /> Configurações de Consentimento</h3>
           <div className="space-y-4">
             {[
-              { label: "Exigir consentimento para gravação de vídeo",   on: true },
+              { label: "Exigir consentimento para uso de respostas textuais", on: true },
               { label: "Exigir consentimento para uso em IA/ML",        on: true },
               { label: "Permitir exportação de dados pelo candidato",   on: true },
               { label: "Notificar candidato em caso de incidente",      on: true },
@@ -1314,8 +1347,8 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
                 <Input defaultValue="Ana Machado" className="bg-white" /></div>
               <div><label className="block text-sm font-semibold text-foreground mb-1.5">Limite de entrevistas/mês</label>
                 <Input defaultValue="200" type="number" className="bg-white" /></div>
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Tempo máximo de vídeo (min)</label>
-                <Input defaultValue="3" type="number" className="bg-white" /></div>
+              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Tempo estimado da entrevista (min)</label>
+                <Input defaultValue="20" type="number" className="bg-white" /></div>
             </div>
           </Card>
         )}
@@ -1327,7 +1360,7 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
               { label: "Autenticação em dois fatores (2FA)",      on: true },
               { label: "Bloqueio após 5 tentativas de login",     on: true },
               { label: "Sessão expira após 8 horas de inatividade", on: false },
-              { label: "Criptografia de gravações em repouso",    on: true },
+              { label: "Proteção de respostas em repouso",        on: true },
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
@@ -1345,7 +1378,7 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             {[
               { name: "Sistema Acadêmico SENAC", status: "Conectado",     color: "text-green-600" },
               { name: "Serviço de e-mail",       status: "Conectado",     color: "text-green-600" },
-              { name: "Armazenamento em nuvem",  status: "Conectado",     color: "text-green-600" },
+              { name: "API Python/Flask de extração e perguntas", status: "Pendente", color: "text-amber-600" },
               { name: "API de IA/Transcrição",   status: "Não configurado", color: "text-amber-600" },
             ].map(i => (
               <div key={i.name} className="flex items-center justify-between gap-4">
@@ -1397,15 +1430,15 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
     { name: "Clareza",      score: 9 },
     { name: "Coerência",    score: 8 },
     { name: "Objetividade", score: 8 },
-    { name: "Comunicação",  score: 7 },
     { name: "Domínio",      score: 7 },
     { name: "Organização",  score: 8 },
-    { name: "Segurança",    score: 6 },
+    { name: "Aderência",    score: 7 },
+    { name: "Exemplos",     score: 6 },
   ];
 
   const timeline = [
     { date: "09/08/2026", label: "Candidatura recebida", icon: FileText },
-    { date: "10/08/2026", label: "Entrevista realizada",  icon: Video },
+    { date: "10/08/2026", label: "Entrevista enviada",    icon: MessageSquare },
     { date: "11/08/2026", label: "Em avaliação",          icon: Clock },
   ];
 
@@ -1581,7 +1614,17 @@ export function AdminEvaluatorFormScreen({ onNavigate }: { onNavigate: NavFn }) 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {field("name",  "Nome completo",        "text",  "Ex: João Pereira")}
             {field("email", "E-mail", "email", "nome@gmail.com")}
-            {field("area",  "Área de especialização", "text", "Ex: Recursos Humanos")}
+            <div>
+              <label className="block text-sm font-semibold text-foreground mb-1.5">Área de especialização *</label>
+              <NativeSelect
+                value={form.area}
+                onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
+                className="bg-white"
+              >
+                <option value="">Selecione...</option>
+                {PROFESSIONAL_AREA_OPTIONS.map(area => <option key={area}>{area}</option>)}
+              </NativeSelect>
+            </div>
             <div>
               <label className="block text-sm font-semibold text-foreground mb-1.5">Status</label>
               <NativeSelect
@@ -1664,12 +1707,12 @@ const ADMIN_ONBOARDING_STEPS = [
   },
   {
     id: 1,
-    icon: Video,
+    icon: MessageSquare,
     color: "bg-blue-100 text-blue-600",
     title: "Entrevistas e atribuições",
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
-        <p>Controle as <strong className="text-foreground">entrevistas em vídeo</strong> realizadas pelos candidatos e distribua as avaliações para os avaliadores disponíveis.</p>
+        <p>Controle as <strong className="text-foreground">entrevistas textuais</strong> realizadas pelos candidatos e distribua as avaliações para os avaliadores disponíveis.</p>
         <div className="space-y-2">
           {[
             { label: "Gestão de entrevistas", desc: "Veja todas as entrevistas e seus status" },

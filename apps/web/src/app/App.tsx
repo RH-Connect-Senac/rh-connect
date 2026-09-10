@@ -1,15 +1,15 @@
 /** RH Connect — Exploração Visual | Fluxo Principal do Candidato */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
-  ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase, Video,
-  Clock, Camera, Mic, Home, History, Settings, LogOut, Bell,
-  Eye, Plus, Edit2, Square, AlertCircle, ArrowRight,
+  ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase,
+  Clock, Mic, Home, History, Settings, LogOut, Bell,
+  Eye, Plus, Edit2, RotateCcw, AlertCircle, ArrowRight,
   Award, TrendingUp, X, Shield, GraduationCap, Zap, BookOpen,
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
-  Volume2, Target, Send, RotateCcw, Play, Upload, Menu,
+  Target, Send, Upload, Menu,
   Heart, Bookmark, FileText, Trash2, Lock, Database,
   ToggleLeft, ToggleRight, ChevronUp, Filter
 } from "lucide-react";
@@ -57,14 +57,25 @@ import {
   getPathForScreen,
   type AppScreen as Screen,
 } from "./router/routes";
+import {
+  analyzeJobUrl,
+  generateInterviewQuestions,
+  type InterviewQuestion,
+  type JobInterviewContext,
+} from "./services/interview-context-service";
+import {
+  PROFESSIONAL_AREAS,
+  type ProfessionalAreaId,
+  SENIORITY_LEVEL_OPTIONS,
+  getProfessionalSubareasByArea,
+} from "./domain/professional-catalog";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
 const AUTH_SCREENS: Screen[] = [
   "dashboard","profile","settings","materials","notifications",
-  "job-list","job","job-detail",
   "interview-history","development",
-  "interview-setup","consent","prep","device","interview","review","interview-confirm","interview-done",
+  "interview-setup","consent","prep","interview","review","interview-confirm","interview-done",
   "pending","report",
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
   "admin-dashboard","admin-candidates","admin-candidate-detail","admin-evaluators","admin-evaluator-form",
@@ -72,23 +83,45 @@ const AUTH_SCREENS: Screen[] = [
   "admin-questions","admin-question-form","admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
 ];
 
-const QUESTIONS = [
-  { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga." },
-  { id: 2, text: "Descreva uma situação em que você precisou lidar com um prazo apertado. Como você se organizou?" },
-  { id: 3, text: "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?" },
-  { id: 4, text: "Conte sobre uma experiência em que você teve que trabalhar em equipe para resolver um problema." },
-  { id: 5, text: "Onde você se vê profissionalmente daqui a três anos?" },
-];
-
 const CRITERIA = [
   { name: "Clareza",         score: 9 },
   { name: "Coerência",       score: 9 },
   { name: "Objetividade",    score: 8 },
-  { name: "Comunicação",     score: 8 },
   { name: "Domínio",         score: 7 },
   { name: "Organização",     score: 7 },
-  { name: "Segurança",       score: 6 },
+  { name: "Aderência",       score: 8 },
+  { name: "Exemplos",        score: 7 },
 ];
+
+type InterviewDraft = {
+  context: JobInterviewContext | null;
+  questions: InterviewQuestion[];
+  answers: Record<number, string>;
+};
+
+const createEmptyInterviewDraft = (): InterviewDraft => ({
+  context: null,
+  questions: [],
+  answers: {},
+});
+
+type SpeechRecognitionConstructor = new () => {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
 
 // ─── Shared UI Components ─────────────────────────────────────────────────────
 
@@ -371,7 +404,6 @@ function FlowNav({ current, onNavigate }: { current: Screen; onNavigate: (s: Scr
 const NAV_ITEMS = [
   { icon: Home,      label: "Dashboard",    screen: "dashboard" as Screen },
   { icon: User,      label: "Meu Perfil",   screen: "profile" as Screen },
-  { icon: Briefcase, label: "Minhas Vagas", screen: "job-list" as Screen },
   { icon: History,   label: "Histórico",       screen: "interview-history" as Screen },
   { icon: TrendingUp,label: "Desenvolvimento", screen: "development" as Screen },
   { icon: BookOpen,  label: "Materiais",       screen: "materials" as Screen },
@@ -707,9 +739,9 @@ function AuthScreen({
 
 function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const RECENT = [
-    { vaga: "Analista de Marketing Digital", empresa: "Agência XYZ", data: "18/07/2026", status: "Resultado disponível", badge: "success" as const },
-    { vaga: "Assistente de Comunicação",     empresa: "Grupo Mídia Sul", data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const },
-    { vaga: "Estágio em Gestão de Redes",    empresa: "Connect Mkt",    data: "02/07/2026", status: "Concluída",            badge: "default" as const },
+    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const },
+    { vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const },
+    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const },
   ];
 
   return (
@@ -735,7 +767,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value="3"   label="Entrevistas realizadas" icon={Video}       color="bg-blue-50 text-blue-600" />
+        <StatCard value="3"   label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
         <StatCard value="1"   label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
         <StatCard value="1"   label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
         <StatCard value="7,8" label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
@@ -747,10 +779,10 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <div className="rounded-2xl p-5 sm:p-6 text-white h-full flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
             <div>
               <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center mb-4">
-                <Video className="w-5 h-5 text-white" />
+                <MessageSquare className="w-5 h-5 text-white" />
               </div>
               <h3 className="text-lg font-bold mb-2">Nova entrevista</h3>
-              <p className="text-blue-200 text-sm leading-relaxed mb-4">Selecione uma vaga e pratique sua entrevista agora mesmo.</p>
+              <p className="text-blue-200 text-sm leading-relaxed mb-4">Cole a URL da vaga e pratique com perguntas contextualizadas.</p>
             </div>
             <Btn size="md" onClick={() => onNavigate("interview-setup")} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold w-full">
               Iniciar prática <ArrowRight className="w-4 h-4" />
@@ -798,7 +830,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { icon: User,      label: "Completar perfil",    desc: "Formação, experiência e habilidades",      screen: "profile" as Screen, color: "text-blue-600 bg-blue-50" },
-          { icon: Briefcase, label: "Minhas vagas",        desc: "Gerencie suas oportunidades cadastradas",  screen: "job-list" as Screen, color: "text-green-600 bg-green-50" },
+          { icon: MessageSquare, label: "Nova entrevista", desc: "Use o link da vaga para contextualizar sua prática", screen: "interview-setup" as Screen, color: "text-green-600 bg-green-50" },
           { icon: BookOpen,  label: "Materiais de apoio",  desc: "Dicas e conteúdos de preparação",          screen: "materials" as Screen, color: "text-purple-600 bg-purple-50" },
         ].map(q => (
           <button key={q.label} onClick={() => q.screen && onNavigate(q.screen)} className="text-left w-full">
@@ -820,6 +852,9 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [openSection, setOpenSection] = useState<string | null>("objetivo");
+  const [selectedAreaId, setSelectedAreaId] = useState<ProfessionalAreaId | "">("information-technology");
+  const [selectedSubareaId, setSelectedSubareaId] = useState("");
+  const availableSubareas = selectedAreaId ? getProfessionalSubareasByArea(selectedAreaId) : [];
 
   const sections = [
     { id: "objetivo",    label: "Objetivo profissional",     icon: Target,       filled: true },
@@ -854,7 +889,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <div className="flex-1 min-w-0">
               <h2 className="font-bold text-foreground text-lg">João Lima</h2>
               <p className="text-muted-foreground text-sm">joao.lima@gmail.com · São Paulo, SP</p>
-              <p className="text-xs text-muted-foreground mt-1 italic">"Profissional em busca da primeira oportunidade na área de Marketing Digital."</p>
+              <p className="text-xs text-muted-foreground mt-1 italic">"Profissional em busca da primeira oportunidade na área de Tecnologia da Informação."</p>
             </div>
             <Btn variant="outline" size="sm" className="self-start sm:self-auto shrink-0">
               <Edit2 className="w-3.5 h-3.5" /> Editar
@@ -891,9 +926,44 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 {sec.id === "objetivo" && (
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                      <FieldSelect label="Área de interesse" options={["Marketing", "Comunicação", "Tecnologia", "Administração"]} required />
-                      <FieldSelect label="Cargo desejado" options={["Analista de Marketing", "Social Media", "Designer", "Estagiário"]} required />
-                      <FieldSelect label="Nível profissional" options={["Aprendiz", "Estagiário", "Júnior", "Pleno", "Sênior"]} required />
+                      <div>
+                        <label className="block text-sm font-semibold text-foreground mb-1.5">
+                          Área de interesse<span className="text-red-500 ml-0.5">*</span>
+                        </label>
+                        <div className="relative">
+                          <NativeSelect
+                            value={selectedAreaId}
+                            onChange={event => {
+                              setSelectedAreaId(event.target.value as ProfessionalAreaId | "");
+                              setSelectedSubareaId("");
+                            }}
+                            required
+                          >
+                            <option value="">Selecione...</option>
+                            {PROFESSIONAL_AREAS.map(area => <option key={area.id} value={area.id}>{area.name}</option>)}
+                          </NativeSelect>
+                          <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-foreground mb-1.5">
+                          Subárea de interesse<span className="text-red-500 ml-0.5">*</span>
+                        </label>
+                        <div className="relative">
+                          <NativeSelect
+                            value={selectedSubareaId}
+                            onChange={event => setSelectedSubareaId(event.target.value)}
+                            disabled={!selectedAreaId}
+                            required
+                          >
+                            <option value="">Selecione...</option>
+                            {availableSubareas.map(subarea => <option key={subarea.id} value={subarea.id}>{subarea.name}</option>)}
+                          </NativeSelect>
+                          <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                        </div>
+                      </div>
+                      <Field label="Cargo desejado" placeholder="Ex: Desenvolvedor Front-end" required />
+                      <FieldSelect label="Senioridade profissional" options={SENIORITY_LEVEL_OPTIONS} required />
                       <FieldSelect label="Tipo de contrato" options={["CLT", "Estágio", "PJ", "Temporário"]} />
                     </div>
                     <FieldArea label="Resumo profissional" placeholder="Escreva um breve texto sobre sua trajetória, objetivos e diferenciais..." rows={3} required />
@@ -904,7 +974,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                     <div className="bg-muted/50 rounded-xl p-4 border border-border">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="font-semibold text-foreground text-sm">Gestão de Marketing</p>
+                          <p className="font-semibold text-foreground text-sm">Análise e Desenvolvimento de Sistemas</p>
                           <p className="text-xs text-muted-foreground">SENAC-DF · Tecnólogo · Em andamento</p>
                           <p className="text-xs text-muted-foreground">2025 – 2026</p>
                         </div>
@@ -924,7 +994,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Habilidades técnicas</p>
                       <div className="flex flex-wrap gap-2">
-                        {["Google Analytics", "Meta Ads", "Canva", "Excel", "SEO", "Copywriting"].map(s => (
+                        {["JavaScript", "React", "Git", "Testes", "SQL", "Comunicação técnica"].map(s => (
                           <UIBadge key={s} variant="primary" className="px-3 py-1 font-medium">{s}</UIBadge>
                         ))}
                         <button className="bg-muted text-muted-foreground text-xs font-medium px-3 py-1 rounded-full border border-border hover:bg-muted/80 flex items-center gap-1">
@@ -977,9 +1047,9 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
           <Btn variant="outline" onClick={() => onNavigate("dashboard")}>← Dashboard</Btn>
-          <Btn variant="primary" onClick={() => onNavigate("job")}>
-            <span className="hidden sm:inline">Próximo: Cadastrar vaga</span>
-            <span className="sm:hidden">Cadastrar vaga</span>
+          <Btn variant="primary" onClick={() => onNavigate("interview-setup")}>
+            <span className="hidden sm:inline">Próximo: Nova entrevista</span>
+            <span className="sm:hidden">Nova entrevista</span>
             <ChevronRight className="w-4 h-4" />
           </Btn>
         </div>
@@ -988,119 +1058,38 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   );
 }
 
-// ─── Screen 5: Cadastro de Vaga ───────────────────────────────────────────────
+// ─── Screen 6: Preparação ─────────────────────────────────────────────────────
 
-function JobScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const SAVED_JOBS = [
-    { cargo: "Analista de Marketing Digital", empresa: "Agência XYZ",   tipo: "CLT",    status: "Ativa" },
-    { cargo: "Assistente de Comunicação",     empresa: "Grupo Mídia Sul",tipo: "Estágio",status: "Ativa" },
-  ];
-
+function DraftWizardGuard({ current, onNavigate }: { current: Screen; onNavigate: (s: Screen) => void }) {
   return (
-    <AuthLayout
-      current="job"
-      onNavigate={onNavigate}
-      title="Minhas Vagas"
-      subtitle="Cadastre e gerencie as oportunidades que você está buscando"
-      actions={<Btn variant="primary" size="sm"><Plus className="w-4 h-4" /> Nova vaga</Btn>}
-    >
-      <div className="w-full">
-        {/* Saved jobs */}
-        {SAVED_JOBS.length > 0 && (
-          <div className="mb-8">
-            <h3 className="font-bold text-foreground mb-4">Vagas cadastradas</h3>
-            <div className="space-y-3">
-              {SAVED_JOBS.map(j => (
-                <Card key={j.cargo} className="p-4 sm:p-5 hover:shadow-md transition-all">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
-                        <Briefcase className="w-5 h-5 text-blue-600" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-foreground truncate">{j.cargo}</p>
-                        <p className="text-sm text-muted-foreground truncate">{j.empresa} · <UIBadge variant="neutral" className="px-2 py-0.5">{j.tipo}</UIBadge></p>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
-                      <StatusBadge tone="success">{j.status}</StatusBadge>
-                      <Btn size="sm" variant="primary" onClick={() => onNavigate("interview-setup")}>
-                        Iniciar entrevista <ChevronRight className="w-3.5 h-3.5" />
-                      </Btn>
-                      <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* New job form */}
-        <Card className="p-5 sm:p-7">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
-              <Plus className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="font-bold text-foreground">Cadastrar nova vaga</h3>
-              <p className="text-xs text-muted-foreground">Informe os dados da oportunidade que você está buscando</p>
-            </div>
-          </div>
-
-          <div className="space-y-4 sm:space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              <div className="lg:col-span-2"><Field label="Cargo pretendido" placeholder="Ex.: Analista de Marketing Digital" required /></div>
-              <div className="lg:col-span-2"><Field label="Empresa" placeholder="Ex.: Agência Creative XYZ" required /></div>
-              <div><FieldSelect label="Nível" options={["Aprendiz", "Estágio", "Júnior", "Pleno", "Sênior"]} required /></div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <FieldSelect label="Área" options={["Marketing", "Comunicação", "Tecnologia", "Administração", "Vendas", "Outra"]} required />
-              <FieldSelect label="Tipo de vaga" options={["CLT", "Estágio", "Jovem Aprendiz", "Trainee", "Temporário", "PJ"]} required />
-              <FieldSelect label="Modalidade" options={["Presencial", "Remoto", "Híbrido"]} />
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <FieldArea label="Descrição da vaga" placeholder="Cole aqui a descrição da vaga ou descreva o que você sabe sobre ela..." rows={4} required />
-              <FieldArea label="Principais requisitos" placeholder="Liste os conhecimentos, habilidades e experiências solicitadas..." rows={4} />
-            </div>
-
-            <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100">
-              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-              <p className="text-xs text-blue-700">
-                Quanto mais completa for a descrição da vaga, mais relevantes serão as perguntas geradas para a sua entrevista simulada.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-6 pt-6 border-t border-border">
-            <Btn variant="outline" className="sm:self-auto" onClick={() => onNavigate("profile")}>Voltar</Btn>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Btn variant="outline">Salvar vaga</Btn>
-              <Btn variant="primary" onClick={() => onNavigate("interview-setup")}>
-                Salvar e iniciar <ArrowRight className="w-4 h-4" />
-              </Btn>
-            </div>
-          </div>
-        </Card>
-      </div>
+    <AuthLayout current={current} onNavigate={onNavigate} title="Nova entrevista" subtitle="Contexto da vaga necessário">
+      <Card className="w-full max-w-2xl p-6 text-center">
+        <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+        <h3 className="font-bold text-foreground mb-2">Configure a entrevista antes de continuar</h3>
+        <p className="text-sm text-muted-foreground mb-5">
+          Cole a URL da vaga, confirme o contexto e gere as perguntas antes de continuar.
+        </p>
+        <Btn variant="primary" onClick={() => onNavigate("interview-setup")}>Ir para Nova entrevista</Btn>
+      </Card>
     </AuthLayout>
   );
 }
 
-// ─── Screen 6: Preparação ─────────────────────────────────────────────────────
-
-function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
   const TIPS = [
-    { icon: Monitor,   title: "Ambiente",  desc: "Escolha um local silencioso e bem iluminado. Prefira iluminação natural ou frontal." },
-    { icon: Camera,    title: "Câmera",    desc: "Mantenha a câmera na altura dos olhos. Olhe diretamente para a câmera ao falar." },
-    { icon: Mic,       title: "Áudio",     desc: "Use fones de ouvido se possível. Verifique se não há ruídos de fundo." },
+    { icon: Monitor,   title: "Ambiente",  desc: "Escolha um local tranquilo para se concentrar nas respostas." },
+    { icon: MessageSquare, title: "Texto", desc: "Responda com clareza, exemplos concretos e frases completas." },
+    { icon: Mic,       title: "Ditado",     desc: "Se o navegador suportar, use voz apenas para preencher o texto. O áudio não será armazenado." },
     { icon: Lightbulb, title: "Conteúdo",  desc: "Revise a descrição da vaga e pense em exemplos reais das suas experiências. Use o método STAR." },
   ];
+  const context = draft.context;
+
+  if (!context || draft.questions.length === 0) {
+    return <DraftWizardGuard current="prep" onNavigate={onNavigate} />;
+  }
 
   return (
-    <AuthLayout current="prep" onNavigate={onNavigate} title="Preparação para Entrevista" subtitle="Leia as orientações antes de começar">
+    <AuthLayout current="prep" onNavigate={onNavigate} title="Orientações da Entrevista" subtitle="Leia as orientações antes de responder">
       <div className="w-full">
         {/* Context card */}
         <Card className="p-4 sm:p-5 mb-6">
@@ -1109,9 +1098,9 @@ function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <Briefcase className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground font-medium">Vaga selecionada</p>
-              <p className="font-bold text-foreground">Analista de Marketing Digital</p>
-              <p className="text-sm text-muted-foreground">Agência Creative XYZ · CLT</p>
+              <p className="text-xs text-muted-foreground font-medium">Contexto confirmado</p>
+              <p className="font-bold text-foreground">{context?.title ?? "Vaga em análise"}</p>
+              <p className="text-sm text-muted-foreground">{context?.company ?? "Empresa não informada"}</p>
             </div>
           </div>
         </Card>
@@ -1119,9 +1108,9 @@ function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         {/* Interview info */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-7">
           {[
-            { icon: MessageSquare, label: "5 perguntas",    desc: "Comportamentais e técnicas" },
-            { icon: Clock,         label: "~20 minutos",    desc: "Duração estimada" },
-            { icon: Video,         label: "Respostas em vídeo", desc: "Câmera e microfone necessários" },
+            { icon: MessageSquare, label: "5 perguntas",    desc: "Contextualizadas pela vaga" },
+            { icon: Clock,         label: "~15 minutos",    desc: "Duração estimada" },
+            { icon: FileText,      label: "Respostas textuais", desc: "Digite ou dite sem armazenar áudio" },
           ].map(i => (
             <Card key={i.label} className="p-4 flex gap-3 items-center">
               <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
@@ -1176,138 +1165,19 @@ function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
         </Card>
 
-        <Alert variant="warning" className="mb-7 flex gap-3 rounded-2xl p-4">
+        <Alert variant="info" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-700">
-            <strong>Importante:</strong> Ao iniciar a entrevista, você será solicitado a autorizar o uso da câmera e do microfone.
+          <p className="text-sm text-blue-700">
+            <strong>Importante:</strong> a próxima etapa apresenta o consentimento. O texto jurídico ainda está sujeito à validação da equipe.
           </p>
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("consent")}>Voltar</Btn>
-          <Btn variant="primary" size="lg" onClick={() => onNavigate("device")}>
-            <span className="hidden sm:inline">Continuar para o teste técnico</span>
-            <span className="sm:hidden">Teste técnico</span>
+          <Btn variant="outline" onClick={() => onNavigate("interview-setup")}>Voltar</Btn>
+          <Btn variant="primary" size="lg" onClick={() => onNavigate("consent")}>
+            <span className="hidden sm:inline">Continuar para consentimento</span>
+            <span className="sm:hidden">Consentimento</span>
             <ChevronRight className="w-5 h-5" />
-          </Btn>
-        </div>
-      </div>
-    </AuthLayout>
-  );
-}
-
-// ─── Screen 7: Teste de Câmera e Microfone ────────────────────────────────────
-
-function DeviceScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const [camOk, setCamOk] = useState(true);
-  const [micOk, setMicOk] = useState(true);
-  const [wifiOk] = useState(true);
-  const canContinue = camOk && micOk;
-
-  const STATUS = [
-    { label: "Câmera",                ok: camOk,  toggle: () => setCamOk(!camOk) },
-    { label: "Microfone",             ok: micOk,  toggle: () => setMicOk(!micOk) },
-    { label: "Conexão com a internet",ok: wifiOk, toggle: null },
-  ];
-
-  return (
-    <AuthLayout current="device" onNavigate={onNavigate} title="Teste de Câmera e Microfone" subtitle="Verifique seus dispositivos antes de começar">
-      <div className="w-full">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
-          {/* Camera preview */}
-          <Card className="p-5">
-            <p className="text-sm font-bold text-foreground mb-3 flex items-center gap-2">
-              <Camera className="w-4 h-4 text-blue-600" /> Pré-visualização da câmera
-            </p>
-            <div className="aspect-video bg-slate-800 rounded-xl flex flex-col items-center justify-center mb-4 relative overflow-hidden">
-              {camOk ? (
-                <>
-                  <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900" />
-                  <div className="relative z-10 flex flex-col items-center">
-                    <div className="w-14 h-14 bg-slate-600 rounded-full flex items-center justify-center mb-2">
-                      <User className="w-7 h-7 text-slate-400" />
-                    </div>
-                    <p className="text-slate-400 text-xs">Câmera ativa</p>
-                  </div>
-                  <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-green-500/20 border border-green-500/30 rounded-full px-2 py-1">
-                    <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                    <span className="text-green-400 text-[10px] font-medium">AO VIVO</span>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center p-4">
-                  <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-2" />
-                  <p className="text-slate-400 text-sm">Câmera não disponível</p>
-                  <p className="text-slate-500 text-xs mt-1">Verifique as permissões do navegador</p>
-                </div>
-              )}
-            </div>
-            <FieldSelect label="Câmera selecionada" options={["Câmera integrada (padrão)", "Webcam USB – Logitech"]} />
-          </Card>
-
-          {/* Mic test */}
-          <Card className="p-5">
-            <p className="text-sm font-bold text-foreground mb-3 flex items-center gap-2">
-              <Mic className="w-4 h-4 text-blue-600" /> Teste de microfone
-            </p>
-            <div className="bg-slate-800 rounded-xl p-5 mb-4">
-              <p className="text-slate-400 text-xs mb-3 text-center">Nível de entrada de áudio</p>
-              <div className="flex items-end justify-center gap-1 h-12">
-                {[3,6,9,7,11,8,5,9,12,7,4,8,10,6,9].map((h, i) => (
-                  <div key={i} className={`w-2 rounded-full transition-all ${micOk ? "bg-green-400" : "bg-slate-600"}`}
-                    style={{ height: micOk ? `${h * 4}px` : "8px" }} />
-                ))}
-              </div>
-              <p className={`text-xs text-center mt-3 ${micOk ? "text-green-400" : "text-red-400"}`}>
-                {micOk ? "Sinal detectado — microfone funcionando" : "Nenhum sinal detectado"}
-              </p>
-            </div>
-            <FieldSelect label="Microfone selecionado" options={["Microfone integrado (padrão)", "Fone USB"]} />
-            <button className="mt-3 w-full border border-dashed border-border rounded-xl py-2.5 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
-              <Volume2 className="w-3.5 h-3.5" /> Repetir teste de áudio
-            </button>
-          </Card>
-        </div>
-
-        {/* Status indicators */}
-        <Card className="p-5 xl:row-span-1">
-          <p className="text-sm font-bold text-foreground mb-4">Status dos dispositivos</p>
-          <div className="space-y-3">
-            {STATUS.map(s => (
-              <div key={s.label} className="flex items-center justify-between gap-2 p-3 bg-muted/40 rounded-xl">
-                <div className="flex items-center gap-3">
-                  {s.ok ? <CheckCircle className="w-5 h-5 text-green-500 shrink-0" /> : <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />}
-                  <span className="text-sm font-medium text-foreground">{s.label}</span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant={s.ok ? "success" : "error"}>{s.ok ? "Pronto" : "Com problema"}</Badge>
-                  {s.toggle && (
-                    <button onClick={s.toggle} className="text-xs text-primary font-semibold hover:underline">
-                      {s.ok ? "Simular erro" : "Resolver"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {!canContinue && (
-          <Alert variant="destructive" role="alert" className="mt-5 mb-6 flex gap-3 rounded-2xl p-4">
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-bold text-red-700 mb-1">Resolva os problemas antes de continuar</p>
-              <p className="text-xs text-red-600">Você precisa de câmera e microfone funcionando para gravar a entrevista.</p>
-            </div>
-          </Alert>
-        )}
-
-        <div className="flex flex-wrap items-center justify-between gap-3 mt-5">
-          <Btn variant="outline" onClick={() => onNavigate("prep")}>Voltar</Btn>
-          <Btn variant="primary" size="lg" onClick={() => onNavigate("interview")} disabled={!canContinue}>
-            {canContinue
-              ? <><span className="hidden sm:inline">Tudo pronto — iniciar entrevista</span><span className="sm:hidden">Iniciar entrevista</span><ChevronRight className="w-5 h-5" /></>
-              : <span>Resolva os problemas acima</span>}
           </Btn>
         </div>
       </div>
@@ -1317,143 +1187,175 @@ function DeviceScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 8: Entrevista Simulada ────────────────────────────────────────────
 
-function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function InterviewScreen({
+  onNavigate,
+  draft,
+  setDraft,
+}: {
+  onNavigate: (s: Screen) => void;
+  draft: InterviewDraft;
+  setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+}) {
   const [qIdx, setQIdx] = useState(0);
-  const [recording, setRecording] = useState<"idle" | "recording" | "done">("idle");
-  const q = QUESTIONS[qIdx];
+  const [speechError, setSpeechError] = useState("");
+  const [dictating, setDictating] = useState(false);
+  const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
+  const questions = draft.questions;
+  const question = questions[qIdx];
+  const answer = question ? draft.answers[question.id] ?? "" : "";
+  const progress = questions.length ? ((qIdx + 1) / questions.length) * 100 : 0;
+  const supportsSpeech = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 
-  const handleNext = () => {
-    if (qIdx < QUESTIONS.length - 1) { setQIdx(qIdx + 1); setRecording("idle"); }
+  useEffect(() => {
+    return () => recognitionRef.current?.stop();
+  }, []);
+
+  const updateAnswer = (value: string) => {
+    if (!question) return;
+    setDraft((current) => ({
+      ...current,
+      answers: { ...current.answers, [question.id]: value },
+    }));
+  };
+
+  const stopDictation = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setDictating(false);
+  };
+
+  const toggleDictation = () => {
+    if (!question) return;
+    if (!supportsSpeech) {
+      setSpeechError("Este navegador não oferece ditado por voz. Você pode responder digitando normalmente.");
+      return;
+    }
+    if (dictating) {
+      stopDictation();
+      return;
+    }
+
+    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    if (!Recognition) return;
+    const recognition = new Recognition();
+    recognition.lang = "pt-BR";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ")
+        .trim();
+      if (transcript) {
+        updateAnswer(`${answer}${answer ? " " : ""}${transcript}`.trim());
+      }
+    };
+    recognition.onerror = () => {
+      setSpeechError("Não foi possível usar o ditado por voz agora. Nenhum áudio é armazenado.");
+      setDictating(false);
+    };
+    recognition.onend = () => setDictating(false);
+    recognitionRef.current = recognition;
+    setSpeechError("");
+    setDictating(true);
+    recognition.start();
+  };
+
+  const goNext = () => {
+    if (!answer.trim()) {
+      toast.error("Responda a pergunta atual antes de avançar.");
+      return;
+    }
+    stopDictation();
+    if (qIdx < questions.length - 1) setQIdx(qIdx + 1);
     else onNavigate("review");
   };
 
+  if (!draft.context || !question) {
+    return <DraftWizardGuard current="interview" onNavigate={onNavigate} />;
+  }
+
   return (
-    <AuthLayout current="interview" onNavigate={onNavigate} title="Entrevista Simulada" subtitle="Analista de Marketing Digital · Agência Creative XYZ">
-      {/* Progress */}
+    <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
       <div className="w-full bg-muted rounded-full h-1 mb-5">
-        <div className="bg-primary h-1 rounded-full transition-all" style={{ width: `${((qIdx + 1) / QUESTIONS.length) * 100}%` }} />
+        <div className="bg-primary h-1 rounded-full transition-all" style={{ width: `${progress}%` }} />
       </div>
 
-      {/* Layout: stacked on mobile/tablet, side-by-side on desktop */}
-      <div className="flex flex-col md:grid md:grid-cols-5 gap-5">
-
-        {/* Camera panel — top on mobile, right on desktop */}
-        <div className="md:col-span-3 flex flex-col gap-4 md:order-2">
-          <Card className="p-4 sm:p-5">
-            <div className="aspect-video bg-slate-800 rounded-xl mb-4 flex items-center justify-center relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900" />
-              <div className="relative z-10 flex flex-col items-center">
-                <div className="w-16 h-16 bg-slate-600 rounded-full flex items-center justify-center mb-2">
-                  <User className="w-8 h-8 text-slate-400" />
-                </div>
-                {recording === "idle" && <p className="text-slate-400 text-sm">Pronto para gravar</p>}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-3 space-y-4">
+          <Card className="p-5 sm:p-6">
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <UIBadge variant="primary">{question.type}</UIBadge>
+              <span className="text-xs text-muted-foreground">Pergunta {qIdx + 1} de {questions.length}</span>
+            </div>
+            <h3 className="text-lg font-bold text-foreground leading-relaxed mb-5">{question.text}</h3>
+            <Textarea
+              value={answer}
+              onChange={(event) => updateAnswer(event.target.value)}
+              placeholder="Digite sua resposta. Se preferir, use o ditado por voz para preencher este campo."
+              className="min-h-56"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
+              <div className="text-xs text-muted-foreground">
+                {answer.trim().split(/\s+/).filter(Boolean).length} palavras
               </div>
-              {recording === "recording" && (
-                <>
-                  <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-red-500/20 border border-red-400/30 rounded-full px-3 py-1">
-                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-red-400 text-xs font-bold">GRAVANDO</span>
-                  </div>
-                  <div className="absolute top-3 right-3 bg-black/60 rounded-lg px-3 py-1">
-                    <span className="text-white text-sm font-mono font-bold">0:32</span>
-                    <span className="text-slate-400 text-xs font-mono"> / 2:00</span>
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-700">
-                    <div className="bg-red-500 h-full" style={{ width: "26.7%" }} />
-                  </div>
-                </>
-              )}
-              {recording === "done" && (
-                <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-green-500/20 border border-green-400/30 rounded-full px-3 py-1">
-                  <CheckCircle className="w-3.5 h-3.5 text-green-400" />
-                  <span className="text-green-400 text-xs font-bold">GRAVADO</span>
-                </div>
-              )}
+              <Btn variant={dictating ? "secondary" : "outline"} size="sm" onClick={toggleDictation}>
+                <Mic className="w-4 h-4" /> {dictating ? "Parar ditado" : "Ditado por voz"}
+              </Btn>
             </div>
-
-            {/* Controls */}
-            <div className="flex items-center justify-center gap-4 mb-4">
-              {recording === "idle" && (
-                <Btn variant="primary" size="lg" onClick={() => setRecording("recording")}>
-                  <div className="w-3 h-3 bg-red-400 rounded-full" /> Iniciar gravação
-                </Btn>
-              )}
-              {recording === "recording" && (
-                <>
-                  <button onClick={() => setRecording("done")}
-                    className="w-12 h-12 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors">
-                    <Square className="w-5 h-5 text-white fill-white" />
-                  </button>
-                  <p className="text-xs text-muted-foreground">Toque para encerrar · <span className="font-mono text-foreground">0:32</span></p>
-                </>
-              )}
-              {recording === "done" && (
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <Btn variant="outline" size="sm" onClick={() => setRecording("idle")}>
-                    <RotateCcw className="w-3.5 h-3.5" /> Regravar
-                  </Btn>
-                  <Btn variant="primary" size="md" onClick={handleNext}>
-                    <CheckCircle className="w-4 h-4" />
-                    <span className="hidden sm:inline">{qIdx < QUESTIONS.length - 1 ? "Confirmar e próxima pergunta" : "Confirmar e revisar"}</span>
-                    <span className="sm:hidden">{qIdx < QUESTIONS.length - 1 ? "Próxima" : "Revisar"}</span>
-                  </Btn>
-                </div>
-              )}
-            </div>
-
-            {/* Mic level */}
-            <div className="pt-3 border-t border-border flex items-center gap-2">
-              <Mic className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <div className="flex gap-0.5 flex-1">
-                {Array.from({ length: 24 }).map((_, i) => (
-                  <div key={i}
-                    className={`flex-1 rounded-full ${recording === "recording" ? (i < 16 ? "bg-green-400" : i < 20 ? "bg-amber-400" : "bg-red-400") : "bg-muted"}`}
-                    style={{ height: recording === "recording" ? `${Math.random() * 12 + 4}px` : "4px" }} />
-                ))}
-              </div>
-              <span className="text-[10px] text-muted-foreground shrink-0">boa</span>
-            </div>
+            {speechError && (
+              <Alert variant="warning" className="mt-4 flex gap-3 rounded-2xl p-4">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">{speechError}</p>
+              </Alert>
+            )}
+            <p className="text-xs text-muted-foreground mt-3">
+              O ditado usa o recurso do navegador para inserir texto no campo. O RH Connect não cria, envia ou armazena arquivo de áudio nesta etapa.
+            </p>
           </Card>
         </div>
 
-        {/* Question panel — below on mobile, left on desktop */}
-        <div className="md:col-span-2 flex flex-col gap-4 md:order-1">
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1.5">
-              {QUESTIONS.map((_, i) => (
-                <div key={i}
-                  className={`h-1.5 rounded-full transition-all ${i === qIdx ? "w-6 bg-primary" : i < qIdx ? "w-1.5 bg-green-500" : "w-1.5 bg-muted-foreground/30"}`} />
-              ))}
-            </div>
-            <span className="text-xs text-muted-foreground ml-1 whitespace-nowrap">Pergunta {qIdx + 1} de {QUESTIONS.length}</span>
-          </div>
-
-          <Card className="flex-1 p-5 sm:p-6 flex flex-col">
-            <div className="mb-4"><UIBadge variant="primary">Comportamental</UIBadge></div>
-            <blockquote className="text-foreground font-semibold text-base leading-relaxed flex-1 mb-5">
-              "{q.text}"
-            </blockquote>
-            <div className="border-t border-border pt-4 space-y-2.5">
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Orientações</p>
-              {[
-                { icon: Clock,     text: <>Tempo máximo: <strong className="text-foreground">2 minutos</strong></> },
-                { icon: Lightbulb, text: <>Método <strong className="text-foreground">STAR</strong>: Situação → Tarefa → Ação → Resultado</> },
-                { icon: Info,      text: "Olhe diretamente para a câmera ao responder" },
-              ].map((tip, i) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <tip.icon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground">{tip.text}</p>
+        <div className="lg:col-span-2 space-y-4">
+          <Card className="p-5">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Contexto da vaga</p>
+            <h3 className="font-bold text-foreground">{draft.context.title}</h3>
+            <p className="text-sm text-muted-foreground mb-3">{draft.context.company}</p>
+            <p className="text-xs text-muted-foreground leading-relaxed mb-4">{draft.context.summary}</p>
+            <div className="space-y-2">
+              {draft.context.requirements.slice(0, 4).map((requirement) => (
+                <div key={requirement} className="flex items-start gap-2 text-xs text-foreground">
+                  <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" />
+                  <span>{requirement}</span>
                 </div>
               ))}
             </div>
           </Card>
 
-          <div className="flex items-center gap-3">
-            <Btn variant="outline" size="sm" onClick={() => { setQIdx(Math.max(0, qIdx - 1)); setRecording("idle"); }} disabled={qIdx === 0}>
-              ← Anterior
+          <Card className="p-5">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Progresso</p>
+            <div className="space-y-2">
+              {questions.map((item, index) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => { stopDictation(); setQIdx(index); }}
+                  className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${index === qIdx ? "bg-blue-50 text-blue-700" : "hover:bg-muted"}`}
+                >
+                  <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${draft.answers[item.id]?.trim() ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}>
+                    {index + 1}
+                  </span>
+                  <span className="text-xs font-medium truncate">{draft.answers[item.id]?.trim() ? "Respondida" : "Pendente"}</span>
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          <div className="flex gap-3">
+            <Btn variant="outline" onClick={() => { stopDictation(); setQIdx(Math.max(0, qIdx - 1)); }} disabled={qIdx === 0}>
+              Anterior
             </Btn>
-            <Btn variant="outline" size="sm" className="ml-auto" onClick={handleNext}>
-              {qIdx < QUESTIONS.length - 1 ? "Próxima →" : "Revisar →"}
+            <Btn variant="primary" className="flex-1" onClick={goNext}>
+              {qIdx < questions.length - 1 ? "Próxima" : "Revisar"} <ArrowRight className="w-4 h-4" />
             </Btn>
           </div>
         </div>
@@ -1464,9 +1366,14 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 9: Revisão e Envio ────────────────────────────────────────────────
 
-function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const answeredCount = draft.questions.filter((question) => draft.answers[question.id]?.trim()).length;
+
+  if (!draft.context || draft.questions.length === 0) {
+    return <DraftWizardGuard current="review" onNavigate={onNavigate} />;
+  }
 
   const handleSend = () => {
     setSending(true);
@@ -1474,17 +1381,16 @@ function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   };
 
   return (
-    <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confirme suas gravações antes de enviar para avaliação">
+    <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de enviar para avaliação humana">
       <div className="w-full">
-        {/* Summary */}
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
           <Card className="p-3 sm:p-4 text-center">
-            <p className="text-lg sm:text-2xl font-bold text-green-600 leading-tight">5</p>
-            <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug mt-0.5">respostas<br className="sm:hidden" /> gravadas</p>
+            <p className="text-lg sm:text-2xl font-bold text-green-600 leading-tight">{answeredCount}</p>
+            <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug mt-0.5">respostas<br className="sm:hidden" /> preenchidas</p>
           </Card>
           <Card className="p-3 sm:p-4 text-center">
-            <p className="text-lg sm:text-2xl font-bold text-foreground leading-tight">~18<span className="hidden sm:inline"> min</span></p>
-            <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug mt-0.5"><span className="sm:hidden">min · </span>duração</p>
+            <p className="text-lg sm:text-2xl font-bold text-foreground leading-tight">{draft.questions.length}</p>
+            <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug mt-0.5">perguntas</p>
           </Card>
           <Card className="p-3 sm:p-4 text-center">
             <p className="text-lg sm:text-2xl font-bold text-blue-600 leading-tight">OK</p>
@@ -1492,13 +1398,12 @@ function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </Card>
         </div>
 
-        {/* Question list */}
         <Card className="mb-6">
           <div className="p-4 sm:p-5 border-b border-border">
-            <h3 className="font-bold text-foreground">Suas respostas gravadas</h3>
+            <h3 className="font-bold text-foreground">Suas respostas</h3>
           </div>
           <div className="divide-y divide-border">
-            {QUESTIONS.map((q, i) => (
+            {draft.questions.map((q, i) => (
               <div key={q.id} className="p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4">
                 <div className="w-7 h-7 bg-green-50 border border-green-200 rounded-full flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
                   <Check className="w-3.5 h-3.5 text-green-600" />
@@ -1506,11 +1411,7 @@ function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Pergunta {i + 1}</p>
                   <p className="text-sm text-foreground line-clamp-2 sm:truncate">{q.text}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs text-muted-foreground hidden sm:inline">{["1:48","1:32","1:55","2:00","1:21"][i]}</span>
-                  <button className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Play className="w-4 h-4" /></button>
-                  <button className="p-2 text-muted-foreground hover:bg-muted rounded-lg transition-colors" onClick={() => onNavigate("interview")}><RotateCcw className="w-4 h-4" /></button>
+                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
                 </div>
               </div>
             ))}
@@ -1522,7 +1423,7 @@ function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <label className="flex items-start gap-3 cursor-pointer">
             <input type="checkbox" className="mt-0.5 rounded shrink-0" checked={confirm} onChange={e => setConfirm(e.target.checked)} />
             <span className="text-sm text-foreground leading-relaxed">
-              Confirmo que li e concordo com o uso das gravações para fins de avaliação por um avaliador humano autorizado. Entendo que o envio é uma ação de difícil reversão.
+              Confirmo que revisei minhas respostas textuais e concordo com o envio para avaliação por um avaliador humano autorizado. Entendo que o envio é uma ação de difícil reversão.
             </span>
           </label>
         </Card>
@@ -1535,7 +1436,9 @@ function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("interview")}>Voltar</Btn>
+          <Btn variant="outline" onClick={() => onNavigate("interview")}>
+            <Edit2 className="w-4 h-4" /> Editar respostas
+          </Btn>
           <Btn variant="primary" size="lg" disabled={!confirm || sending} onClick={handleSend}>
             {sending ? (
               <><Spinner />Enviando...</>
@@ -1562,7 +1465,7 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   ];
 
   return (
-    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle="Analista de Marketing Digital · Agência Creative XYZ">
+    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle="Desenvolvedor Full Stack Júnior · Tech Labs">
       <div className="w-full">
         {/* Status hero */}
         <Card className="p-6 sm:p-8 mb-6 text-center">
@@ -1618,7 +1521,7 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 { q: "Quem avalia?",             a: "Um avaliador treinado com critérios padronizados de RH." },
                 { q: "Quanto tempo leva?",        a: "Em geral, de 1 a 3 dias úteis após o envio." },
                 { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
-                { q: "Quem vê meu vídeo?",        a: "Apenas o avaliador atribuído e o administrador da plataforma." },
+                { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
               ].map(({ q, a }) => (
                 <div key={q} className="p-3 bg-muted/40 rounded-xl">
                   <p className="text-xs font-bold text-foreground mb-1">{q}</p>
@@ -1633,7 +1536,7 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <Card className="p-5 bg-blue-50 border-blue-100">
               <p className="text-sm font-bold text-foreground mb-3">Enquanto aguarda...</p>
               <ul className="space-y-2">
-                {["Revise materiais de preparação","Complete seu perfil profissional","Cadastre outras vagas de interesse","Pratique uma nova entrevista"].map(s => (
+                {["Revise materiais de preparação","Complete seu perfil profissional","Analise outra URL de vaga","Pratique uma nova entrevista"].map(s => (
                   <li key={s} className="flex items-center gap-2 text-xs text-foreground">
                     <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0" /> {s}
                   </li>
@@ -1662,7 +1565,7 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       current="report"
       onNavigate={onNavigate}
       title="Resultado e Relatório"
-      subtitle="Analista de Marketing Digital · Agência Creative XYZ · 18/07/2026"
+      subtitle="Desenvolvedor Full Stack Júnior · Tech Labs · 18/07/2026"
       actions={<Btn variant="outline" size="sm" onClick={() => toast.success("PDF gerado! O download iniciará em instantes.")}><Upload className="w-3.5 h-3.5" /> Exportar PDF</Btn>}
     >
       <div className="w-full">
@@ -1785,9 +1688,9 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             </h3>
             <div className="space-y-3">
               {[
-                { crit: "Segurança",            nota: 6, obs: "Houve momentos de hesitação perceptível. Pratique suas respostas em voz alta antes da próxima entrevista." },
-                { crit: "Organização das ideias",nota: 7, obs: "Em algumas respostas o raciocínio perdeu o fio condutor. Use o método STAR como guia." },
-                { crit: "Domínio do assunto",   nota: 7, obs: "Traga exemplos mais específicos e dados concretos para demonstrar sua experiência." },
+                { crit: "Organização", nota: 7, obs: "Em algumas respostas o raciocínio perdeu o fio condutor. Use o método STAR como guia." },
+                { crit: "Domínio",     nota: 7, obs: "Traga exemplos mais específicos e dados concretos para demonstrar sua experiência." },
+                { crit: "Exemplos",    nota: 6, obs: "Inclua situações concretas, resultados e evidências para sustentar melhor suas respostas." },
               ].map(p => (
                 <div key={p.crit} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1812,9 +1715,9 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             {[
               { icon: BookOpen,      title: "Estude sobre a empresa",     desc: "Antes de uma entrevista real, pesquise a missão, valores e projetos recentes da organização." },
-              { icon: Video,         title: "Grave-se praticando",        desc: "Assista às próprias gravações para identificar maneirismos, hesitações e postura." },
+              { icon: MessageSquare, title: "Pratique por escrito",       desc: "Releia suas respostas para identificar pontos vagos, excesso de texto e exemplos que podem ficar mais concretos." },
               { icon: MessageSquare, title: "Aprofunde os exemplos",      desc: "Use números e resultados concretos: 'aumentei o engajamento em 30%' é mais forte que 'melhorei o engajamento'." },
-              { icon: Target,        title: "Foque nos critérios mais baixos", desc: "Segurança e Organização das ideias são as maiores oportunidades. Use o método STAR." },
+              { icon: Target,        title: "Foque nos critérios mais baixos", desc: "Organização, domínio e exemplos são as maiores oportunidades. Use o método STAR." },
             ].map(r => (
               <div key={r.title} className="flex gap-3">
                 <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
@@ -1841,94 +1744,8 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         <div className="rounded-2xl p-6 sm:p-7 text-center" style={{ background: "linear-gradient(135deg, #0F2652, #1D4ED8)" }}>
           <p className="text-white font-bold text-lg mb-2">Pronto para a próxima prática?</p>
           <p className="text-blue-200 text-sm mb-5">A melhora vem com a repetição. Cada entrevista é uma oportunidade de avançar mais um passo.</p>
-          <Btn onClick={() => onNavigate("job")} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold" size="lg">
+          <Btn onClick={() => onNavigate("interview-setup")} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold" size="lg">
             Iniciar nova entrevista <ArrowRight className="w-5 h-5" />
-          </Btn>
-        </div>
-      </div>
-    </AuthLayout>
-  );
-}
-
-// ─── Fase A: CAN-004 Minhas Vagas ────────────────────────────────────────────
-
-function JobListScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const VAGAS = [
-    { cargo: "Analista de Marketing Digital", empresa: "Agência Creative XYZ", area: "Marketing", tipo: "CLT", data: "15/07/2026", entrevistas: 1, status: "Resultado disponível", badge: "success" as const },
-    { cargo: "Assistente de Comunicação",     empresa: "Grupo Mídia Sul",      area: "Comunicação", tipo: "CLT", data: "10/07/2026", entrevistas: 1, status: "Aguardando avaliação", badge: "warning" as const },
-    { cargo: "Estágio em Gestão de Redes",    empresa: "Connect Mkt",          area: "Marketing",   tipo: "Estágio", data: "02/07/2026", entrevistas: 1, status: "Concluída",          badge: "default" as const },
-  ];
-
-  return (
-    <AuthLayout
-      current="job-list"
-      onNavigate={onNavigate}
-      title="Minhas Vagas"
-      subtitle="Vagas cadastradas para praticar entrevistas"
-      actions={
-        <Btn variant="primary" size="sm" onClick={() => onNavigate("job")}>
-          <Plus className="w-3.5 h-3.5" /> Nova vaga
-        </Btn>
-      }
-    >
-      <div className="w-full space-y-4">
-        {VAGAS.length === 0 ? (
-          <EmptyState
-            icon={Briefcase}
-            title="Nenhuma vaga cadastrada"
-            description="Cadastre a vaga que você quer praticar para iniciar sua entrevista simulada."
-            action={
-              <Btn variant="primary" onClick={() => onNavigate("job")}>
-                <Plus className="w-4 h-4" /> Cadastrar primeira vaga
-              </Btn>
-            }
-          />
-        ) : (
-          <div className="space-y-3">
-            {VAGAS.map((v) => (
-              <Card key={v.cargo} className="p-4 sm:p-5 hover:shadow-md transition-all">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                  <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
-                    <Briefcase className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <p className="font-bold text-foreground text-sm">{v.cargo}</p>
-                      <UIBadge variant="neutral">{v.tipo}</UIBadge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{v.empresa} · {v.area} · Cadastrada em {v.data}</p>
-                    <div className="flex flex-wrap items-center gap-2 mt-2">
-                      <StatusBadge tone={statusToneFromBadge(v.badge)}>{v.status}</StatusBadge>
-                      <span className="text-xs text-muted-foreground">{v.entrevistas} entrevista{v.entrevistas !== 1 ? "s" : ""}</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2 shrink-0">
-                    <Btn variant="primary" size="sm" onClick={() => onNavigate("interview-setup")}>
-                      Praticar <ArrowRight className="w-3.5 h-3.5" />
-                    </Btn>
-                    {v.badge === "success" && (
-                      <Btn variant="outline" size="sm" onClick={() => onNavigate("report")}>Ver resultado</Btn>
-                    )}
-                    <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
-
-        <div className="rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" style={{ background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)" }}>
-          <div>
-            <p className="font-bold text-foreground text-sm mb-1">Pronto para praticar?</p>
-            <p className="text-xs text-muted-foreground">Cadastre a vaga dos seus sonhos e simule uma entrevista real.</p>
-          </div>
-          <Btn variant="primary" size="sm" onClick={() => onNavigate("job")} className="shrink-0">
-            <Plus className="w-3.5 h-3.5" /> Adicionar vaga
           </Btn>
         </div>
       </div>
@@ -1940,9 +1757,9 @@ function JobListScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const HISTORICO = [
-    { id: "E003", vaga: "Analista de Marketing Digital", empresa: "Agência Creative XYZ", data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const },
-    { id: "E002", vaga: "Assistente de Comunicação",     empresa: "Grupo Mídia Sul",      data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const },
-    { id: "E001", vaga: "Estágio em Gestão de Redes",    empresa: "Connect Mkt",          data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const },
+    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const },
+    { id: "E002", vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const },
+    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const },
   ];
 
   const [filtro, setFiltro] = useState("Todos");
@@ -2019,83 +1836,130 @@ function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
   );
 }
 
-// ─── Fase A: ENT-001 Seleção de Vaga ─────────────────────────────────────────
+// ─── Fase A: ENT-001 Nova entrevista ─────────────────────────────────────────
 
-function InterviewSetupScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const VAGAS = [
-    { cargo: "Analista de Marketing Digital", empresa: "Agência Creative XYZ", tipo: "CLT",    area: "Marketing" },
-    { cargo: "Assistente de Comunicação",     empresa: "Grupo Mídia Sul",      tipo: "CLT",    area: "Comunicação" },
-    { cargo: "Estágio em Gestão de Redes",    empresa: "Connect Mkt",          tipo: "Estágio",area: "Marketing" },
-  ];
-  const [selected, setSelected] = useState(0);
+function InterviewSetupScreen({
+  onNavigate,
+  draft,
+  setDraft,
+}: {
+  onNavigate: (s: Screen) => void;
+  draft: InterviewDraft;
+  setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+}) {
+  const [url, setUrl] = useState(draft.context?.sourceUrl ?? "");
+  const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
+  const [error, setError] = useState("");
+  const [confirmed, setConfirmed] = useState(Boolean(draft.context));
+  const [generating, setGenerating] = useState(false);
+
+  const handleAnalyze = async () => {
+    setStatus("loading");
+    setError("");
+    setConfirmed(false);
+    try {
+      const context = await analyzeJobUrl(url);
+      setDraft((current) => ({ ...current, context, questions: [], answers: {} }));
+      setStatus("success");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Não foi possível analisar a URL informada.");
+    }
+  };
+
+  const handleContinue = async () => {
+    if (!draft.context || !confirmed) {
+      toast.error("Confirme o contexto da vaga antes de continuar.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const questions = await generateInterviewQuestions(draft.context);
+      setDraft((current) => ({ ...current, questions, answers: {} }));
+      onNavigate("prep");
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   return (
     <AuthLayout
       current="interview-setup"
       onNavigate={onNavigate}
-      title="Iniciar Entrevista"
-      subtitle="Selecione a vaga para contextualizar suas perguntas"
+      title="Nova entrevista"
+      subtitle="Cole a URL da vaga para contextualizar as perguntas"
     >
       <div className="w-full max-w-2xl space-y-5">
-        {/* Selecionar vaga */}
         <Card className="p-5 sm:p-6">
-          <h3 className="font-bold text-foreground mb-1">Selecione uma vaga</h3>
-          <p className="text-sm text-muted-foreground mb-4">As perguntas serão adaptadas ao cargo e à área selecionada.</p>
-          <div className="space-y-3">
-            {VAGAS.map((v, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setSelected(i)}
-                aria-pressed={selected === i}
-                className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i ? "border-primary bg-blue-50" : "border-border hover:border-primary/40 hover:bg-muted/30"}`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${selected === i ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}>
-                    {selected === i ? <Check className="w-4 h-4" /> : <Briefcase className="w-4 h-4" />}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold text-foreground text-sm">{v.cargo}</p>
-                    <p className="text-xs text-muted-foreground">{v.empresa} · {v.area} · {v.tipo}</p>
-                  </div>
-                </div>
-              </button>
-            ))}
-            <button
-              onClick={() => onNavigate("job")}
-              className="w-full text-left p-4 rounded-xl border-2 border-dashed border-border hover:border-primary/40 hover:bg-muted/30 transition-all flex items-center gap-3 text-muted-foreground"
-            >
-              <div className="w-8 h-8 bg-muted rounded-lg flex items-center justify-center shrink-0">
-                <Plus className="w-4 h-4" />
-              </div>
-              <span className="text-sm font-medium">Cadastrar nova vaga</span>
-            </button>
+          <h3 className="font-bold text-foreground mb-1">URL da vaga</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            A integração Python/Flask ainda não está conectada. Nesta etapa, a análise abaixo é um mock explícito usando o contrato temporário do Front.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Input
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://www.empregare.com/pt-br/vaga/..."
+              aria-label="URL da vaga"
+            />
+            <Btn variant="primary" onClick={handleAnalyze} disabled={status === "loading" || !url.trim()}>
+              {status === "loading" ? <><Spinner /> Analisando</> : <>Analisar</>}
+            </Btn>
           </div>
+          {status === "error" && (
+            <Alert variant="error" className="mt-4 flex gap-3 rounded-2xl p-4">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700">{error}</p>
+            </Alert>
+          )}
         </Card>
 
-        {/* Resumo */}
-        <Card className="p-5 sm:p-6 bg-blue-50 border-blue-100">
-          <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3">Resumo da entrevista</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <div>
-              <p className="text-[11px] text-muted-foreground mb-0.5">Vaga selecionada</p>
-              <p className="text-sm font-semibold text-foreground">{VAGAS[selected].cargo}</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-muted-foreground mb-0.5">Perguntas</p>
-              <p className="text-sm font-semibold text-foreground">5 perguntas</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-muted-foreground mb-0.5">Tempo estimado</p>
-              <p className="text-sm font-semibold text-foreground">~20 minutos</p>
-            </div>
-          </div>
-        </Card>
+        {draft.context && status === "success" && (
+          <>
+            <Card className="p-5 sm:p-6 bg-blue-50 border-blue-100">
+              <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3">Contexto extraído</p>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[11px] text-muted-foreground mb-0.5">Cargo</p>
+                  <p className="text-sm font-semibold text-foreground">{draft.context.title}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground mb-0.5">Empresa</p>
+                  <p className="text-sm font-semibold text-foreground">{draft.context.company}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground mb-0.5">Descrição resumida</p>
+                  <p className="text-sm text-foreground leading-relaxed">{draft.context.summary}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground mb-2">Requisitos</p>
+                  <div className="space-y-2">
+                    {draft.context.requirements.map((requirement) => (
+                      <div key={requirement} className="flex items-start gap-2 text-sm text-foreground">
+                        <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+                        <span>{requirement}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-5 sm:p-6">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input type="checkbox" className="mt-0.5 rounded shrink-0" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+                <span className="text-sm text-foreground leading-relaxed">
+                  Confirmo que este contexto será usado para configurar minha entrevista textual simulada. As 5 perguntas estão mockadas nesta etapa e serão substituídas pela chamada Python/Groq quando o contrato final for conectado.
+                </span>
+              </label>
+            </Card>
+          </>
+        )}
 
         <div className="flex gap-3">
           <Btn variant="outline" onClick={() => onNavigate("dashboard")}>Cancelar</Btn>
-          <Btn variant="primary" onClick={() => onNavigate("consent")} className="flex-1">
-            Continuar <ArrowRight className="w-4 h-4" />
+          <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
+            {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
           </Btn>
         </div>
       </div>
@@ -2103,17 +1967,21 @@ function InterviewSetupScreen({ onNavigate }: { onNavigate: (s: Screen) => void 
   );
 }
 
-// ─── Fase A: ENT-004 Consentimento para Gravação ──────────────────────────────
+// ─── Fase A: ENT-004 Consentimento ───────────────────────────────────────────
 
-function ConsentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
   const [consentRequired, setConsentRequired] = useState(false);
   const [consentOptional, setConsentOptional] = useState(false);
+
+  if (!draft.context || draft.questions.length === 0) {
+    return <DraftWizardGuard current="consent" onNavigate={onNavigate} />;
+  }
 
   return (
     <AuthLayout
       current="consent"
       onNavigate={onNavigate}
-      title="Consentimento para Gravação"
+      title="Consentimento"
       subtitle="Leia com atenção antes de iniciar a entrevista"
     >
       <div className="w-full max-w-2xl space-y-5">
@@ -2126,14 +1994,14 @@ function ConsentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <div>
               <h3 className="font-bold text-foreground mb-1">Privacidade e uso de dados</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Para realizar a entrevista simulada, precisamos gravar sua imagem e voz. Essas gravações serão utilizadas exclusivamente para avaliação por um avaliador humano autorizado.
+                Para realizar a entrevista simulada, usaremos suas respostas textuais e o contexto da vaga para avaliação por um avaliador humano autorizado.
               </p>
             </div>
           </div>
           <Alert variant="warning" className="flex items-start gap-3 p-4">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-800 leading-relaxed">
-              Suas gravações <strong>não serão compartilhadas publicamente</strong> e serão armazenadas em ambiente seguro. Você pode solicitar a exclusão a qualquer momento nas configurações da conta.
+              O texto jurídico/LGPD desta tela ainda está sujeito à validação. O ditado por voz, quando usado, serve apenas para preencher o texto no navegador e não gera armazenamento de áudio pelo RH Connect nesta etapa.
             </p>
           </Alert>
         </Card>
@@ -2146,9 +2014,9 @@ function ConsentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               {consentRequired && <Check className="w-3 h-3 text-white" />}
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold text-foreground mb-1">Autorizo a gravação de imagem e voz <span className="text-red-500">*</span></p>
+              <p className="text-sm font-semibold text-foreground mb-1">Autorizo o uso das respostas textuais <span className="text-red-500">*</span></p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Autorizo o RH Connect a gravar minha imagem e voz durante a entrevista simulada, e a armazenar essas gravações para avaliação por avaliador humano autorizado da plataforma. Entendo que essa autorização é necessária para utilizar o sistema e pode ser revogada a qualquer momento.
+                Autorizo o RH Connect a registrar minhas respostas textuais, associadas ao contexto da vaga de {draft.context?.title ?? "interesse"}, para avaliação por avaliador humano autorizado. Entendo que esta autorização é necessária para usar a entrevista simulada.
               </p>
             </div>
           </label>
@@ -2176,7 +2044,7 @@ function ConsentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <Btn
             variant="primary"
             disabled={!consentRequired}
-            onClick={() => onNavigate("prep")}
+            onClick={() => onNavigate("interview")}
             className="flex-1"
           >
             Concordar e continuar <ArrowRight className="w-4 h-4" />
@@ -2192,8 +2060,13 @@ function ConsentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Fase A: ENT-008 Confirmação de Envio ─────────────────────────────────────
 
-function InterviewConfirmScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
   const [sending, setSending] = useState(false);
+  const answeredCount = draft.questions.filter((question) => draft.answers[question.id]?.trim()).length;
+
+  if (!draft.context || draft.questions.length === 0) {
+    return <DraftWizardGuard current="interview-confirm" onNavigate={onNavigate} />;
+  }
 
   const handleSend = () => {
     setSending(true);
@@ -2216,17 +2089,17 @@ function InterviewConfirmScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-bold text-amber-800 mb-1">Atenção: esta ação não pode ser desfeita</p>
-            <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão encaminhadas para avaliação humana. Você não poderá editar ou regravar as respostas.</p>
+            <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão encaminhadas para avaliação humana. Você não poderá editar as respostas.</p>
           </div>
         </Alert>
 
         {/* Resumo das respostas */}
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-green-600" /> Respostas gravadas
+            <CheckCircle className="w-5 h-5 text-green-600" /> Respostas preenchidas
           </h3>
           <div className="space-y-3">
-            {QUESTIONS.map((q, i) => (
+            {draft.questions.map((q, i) => (
               <div key={q.id} className="flex items-start gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
                 <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
                   <Check className="w-3 h-3 text-white" />
@@ -2234,7 +2107,7 @@ function InterviewConfirmScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-foreground mb-0.5">Pergunta {i + 1}</p>
                   <p className="text-xs text-muted-foreground line-clamp-2">{q.text}</p>
-                  <p className="text-[11px] text-green-600 font-medium mt-1">Gravada · ~2 min</p>
+                  <p className="text-[11px] text-green-600 font-medium mt-1">Resposta textual pronta</p>
                 </div>
               </div>
             ))}
@@ -2247,15 +2120,15 @@ function InterviewConfirmScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <div>
               <p className="text-[11px] text-muted-foreground mb-0.5">Vaga</p>
-              <p className="text-sm font-semibold text-foreground">Analista de Marketing</p>
+              <p className="text-sm font-semibold text-foreground">{draft.context?.title ?? "Vaga contextualizada"}</p>
             </div>
             <div>
               <p className="text-[11px] text-muted-foreground mb-0.5">Empresa</p>
-              <p className="text-sm font-semibold text-foreground">Agência Creative XYZ</p>
+              <p className="text-sm font-semibold text-foreground">{draft.context?.company ?? "Empresa da vaga"}</p>
             </div>
             <div>
               <p className="text-[11px] text-muted-foreground mb-0.5">Respostas</p>
-              <p className="text-sm font-semibold text-foreground">5 de 5</p>
+              <p className="text-sm font-semibold text-foreground">{answeredCount} de {draft.questions.length}</p>
             </div>
           </div>
         </Card>
@@ -2310,7 +2183,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">Analista de Marketing</p>
+                <p className="text-sm font-semibold text-foreground">Desenvolvedor Full Stack Júnior</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>
@@ -2489,8 +2362,8 @@ function TermsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           {[
             { titulo: "1. Finalidade", texto: "O RH Connect é uma plataforma educacional de treinamento para entrevistas de emprego. O sistema não garante aprovação em processos seletivos reais e não substitui orientação profissional especializada." },
             { titulo: "2. Responsabilidades do usuário", texto: "O usuário deve fornecer informações verdadeiras, utilizar a plataforma de forma ética e respeitar as regras de conduta estabelecidas. É proibido compartilhar conteúdo impróprio, ofensivo ou que viole direitos de terceiros." },
-            { titulo: "3. Uso de câmera e microfone", texto: "O uso da câmera e do microfone é necessário para realizar entrevistas simuladas. A gravação ocorre somente após consentimento explícito do usuário e está sujeita à Política de Privacidade." },
-            { titulo: "4. Envio de vídeos", texto: "Os vídeos enviados ficam armazenados em ambiente seguro e são acessados exclusivamente por avaliadores autorizados. O usuário pode solicitar a exclusão a qualquer momento." },
+            { titulo: "3. Respostas textuais e ditado", texto: "As entrevistas simuladas usam respostas textuais. Quando disponível, o microfone pode ser usado pontualmente pelo navegador para transcrever fala em texto, sem armazenamento de áudio pelo RH Connect nesta etapa." },
+            { titulo: "4. Envio das respostas", texto: "As respostas enviadas são acessadas por avaliadores autorizados para fins de avaliação humana e geração do relatório de desempenho." },
             { titulo: "5. Limitações do serviço", texto: "O RH Connect é disponibilizado sem garantia de disponibilidade contínua. O sistema pode passar por manutenções programadas ou não programadas." },
             { titulo: "6. Propriedade intelectual", texto: "Todo o conteúdo da plataforma, incluindo perguntas, critérios de avaliação e materiais de apoio, pertence ao RH Connect e não pode ser reproduzido sem autorização." },
             { titulo: "7. Alteração dos termos", texto: "Estes termos podem ser atualizados a qualquer momento. Os usuários serão notificados sobre mudanças relevantes e poderão revisar os novos termos antes de continuar utilizando a plataforma." },
@@ -2524,11 +2397,11 @@ function PrivacyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
         <div className="space-y-6 text-sm text-foreground leading-relaxed">
           {[
-            { titulo: "1. Dados coletados", texto: "Coletamos nome, e-mail, dados profissionais fornecidos pelo usuário, imagem e voz durante as entrevistas simuladas, e informações técnicas de uso da plataforma." },
+            { titulo: "1. Dados coletados", texto: "Coletamos nome, e-mail, dados profissionais fornecidos pelo usuário, contexto da vaga, respostas textuais das entrevistas simuladas e informações técnicas de uso da plataforma." },
             { titulo: "2. Finalidade do uso", texto: "Os dados são utilizados exclusivamente para personalizar as perguntas de entrevista, realizar a avaliação humana das respostas e gerar o relatório de desempenho do candidato." },
-            { titulo: "3. Quem acessa", texto: "Apenas avaliadores humanos autorizados têm acesso às gravações das entrevistas. O acesso é registrado e auditado. Dados pessoais não são compartilhados com terceiros sem consentimento." },
+            { titulo: "3. Quem acessa", texto: "Apenas avaliadores humanos autorizados têm acesso às respostas das entrevistas. O acesso é registrado e auditado. Dados pessoais não são compartilhados com terceiros sem consentimento." },
             { titulo: "4. Armazenamento e retenção", texto: "Os dados são armazenados em servidores seguros. O prazo de retenção será definido pela equipe responsável e comunicado ao usuário. O usuário pode solicitar a exclusão a qualquer momento." },
-            { titulo: "5. Consentimento para IA", texto: "A autorização para gravação e avaliação NÃO representa automaticamente autorização para uso dos dados no treinamento de Inteligência Artificial. Esse consentimento é separado, opcional e pode ser revogado." },
+            { titulo: "5. Consentimento para IA", texto: "A autorização para avaliação humana NÃO representa automaticamente autorização para uso dos dados no treinamento de Inteligência Artificial. Esse consentimento é separado, opcional e pode ser revogado." },
             { titulo: "6. Direitos do usuário", texto: "O usuário tem direito a acessar seus dados, corrigir informações, solicitar cópia, revogar consentimentos e solicitar exclusão da conta e dos dados associados." },
             { titulo: "7. Contato", texto: "Para exercer seus direitos ou tirar dúvidas sobre privacidade: privacidade@rhconnect.com.br" },
           ].map(s => (
@@ -2576,7 +2449,7 @@ function ConfirmModal({
 }: {
   title: string; message: string; confirmLabel: string;
   danger?: boolean; onConfirm: () => void; onCancel: () => void;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,27,45,0.6)" }}>
@@ -2609,7 +2482,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     ["notif","Notificações"],
     ["privacidade","Privacidade"],
     ["consentimentos","Consentimentos"],
-    ["dados","Dados e vídeos"],
+    ["dados","Dados e respostas"],
     ["excluir","Excluir conta"],
   ];
 
@@ -2777,7 +2650,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 </div>
                 {[
                   { titulo: "Dados do perfil", desc: "Nome, e-mail e telefone são usados para identificação na plataforma.", badge: "Necessário" },
-                  { titulo: "Gravações de entrevista", desc: "Armazenadas com segurança e acessadas exclusivamente por avaliadores autorizados.", badge: "Necessário" },
+                  { titulo: "Respostas de entrevista", desc: "Armazenadas com segurança e acessadas exclusivamente por avaliadores autorizados.", badge: "Necessário" },
                   { titulo: "Histórico de entrevistas", desc: "Mantido na conta para consulta de relatórios e evolução.", badge: "Necessário" },
                   { titulo: "Dados analíticos", desc: "Uso interno para melhoria da plataforma. Não inclui identificação pessoal.", badge: "Opcional" },
                 ].map(d => (
@@ -2822,8 +2695,8 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                         <CheckCircle className="w-4 h-4 text-green-600" />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-foreground">Gravação de imagem e voz para avaliação</p>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para gravar e armazenar suas respostas em vídeo para avaliação humana autorizada. Este consentimento é obrigatório para usar o sistema.</p>
+                        <p className="text-sm font-bold text-foreground">Uso das respostas textuais para avaliação</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para registrar suas respostas textuais e disponibilizá-las para avaliação humana autorizada. Este consentimento é obrigatório para usar o sistema.</p>
                         <p className="text-xs text-green-600 font-semibold mt-1.5">Autorizado em 15/07/2026</p>
                       </div>
                     </div>
@@ -2873,33 +2746,33 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             </div>
           )}
 
-          {/* ── Dados e vídeos ── */}
+          {/* ── Dados e respostas ── */}
           {tab === "dados" && (
             <div className="space-y-4">
               <Card className="p-5 sm:p-6 space-y-4">
                 <div>
-                  <h3 className="font-bold text-foreground mb-0.5">Seus dados e vídeos</h3>
+                  <h3 className="font-bold text-foreground mb-0.5">Seus dados e respostas</h3>
                   <p className="text-xs text-muted-foreground">Veja o que está armazenado e exerça seus direitos.</p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="p-3 bg-muted rounded-xl text-center">
                     <p className="text-lg font-bold text-foreground">3</p>
-                    <p className="text-xs text-muted-foreground">Entrevistas gravadas</p>
+                    <p className="text-xs text-muted-foreground">Entrevistas enviadas</p>
                   </div>
                   <div className="p-3 bg-muted rounded-xl text-center">
                     <p className="text-lg font-bold text-foreground">15</p>
-                    <p className="text-xs text-muted-foreground">Vídeos armazenados</p>
+                    <p className="text-xs text-muted-foreground">Respostas textuais</p>
                   </div>
                   <div className="p-3 bg-muted rounded-xl text-center">
-                    <p className="text-lg font-bold text-foreground">~480 MB</p>
-                    <p className="text-xs text-muted-foreground">Tamanho estimado</p>
+                    <p className="text-lg font-bold text-foreground">3</p>
+                    <p className="text-xs text-muted-foreground">Relatórios</p>
                   </div>
                 </div>
               </Card>
 
               <Card className="p-5 sm:p-6 space-y-3">
                 <h3 className="font-bold text-foreground">Solicitar cópia dos dados</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">Você pode solicitar um arquivo com todos os dados cadastrais e metadados de suas entrevistas. Os vídeos não são incluídos nessa exportação por limitações de tamanho.</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">Você pode solicitar um arquivo com seus dados cadastrais, contexto das entrevistas, respostas textuais e metadados disponíveis.</p>
                 <Btn variant="outline" size="sm" onClick={() => {}}>
                   <Download className="w-3.5 h-3.5" /> Solicitar cópia dos meus dados
                 </Btn>
@@ -2907,12 +2780,12 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </Card>
 
               <Card className="p-5 sm:p-6 space-y-3">
-                <h3 className="font-bold text-foreground">Exclusão de vídeos</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">Vídeos vinculados a entrevistas com avaliação concluída podem ser excluídos. Entrevistas pendentes de avaliação não podem ter vídeos removidos.</p>
+                <h3 className="font-bold text-foreground">Exclusão de respostas</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">Respostas vinculadas a entrevistas podem exigir regras de retenção, histórico e auditoria. Esta política ainda depende de validação jurídica e operacional.</p>
                 <Btn variant="outline" size="sm" onClick={() => setModal("excluir-dados")}>
-                  <Trash2 className="w-3.5 h-3.5" /> Solicitar exclusão dos vídeos
+                  <Trash2 className="w-3.5 h-3.5" /> Solicitar exclusão das respostas
                 </Btn>
-                <p className="text-xs text-amber-600 font-medium">A exclusão de vídeos é irreversível e o relatório associado será preservado.</p>
+                <p className="text-xs text-amber-600 font-medium">A exclusão de respostas pode afetar histórico e relatórios associados.</p>
               </Card>
             </div>
           )}
@@ -2936,7 +2809,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                   {[
                     "Seus dados cadastrais (nome, e-mail, telefone) serão removidos permanentemente.",
                     "Seu histórico de entrevistas e relatórios serão excluídos.",
-                    "Todos os vídeos armazenados serão deletados.",
+                    "As respostas textuais elegíveis serão removidas conforme política de retenção.",
                     "Todos os consentimentos serão automaticamente revogados.",
                     "Você perderá acesso à plataforma imediatamente.",
                     "Dados retidos por obrigação legal permanecerão pelo prazo mínimo exigido.",
@@ -3012,8 +2885,8 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       )}
       {modal === "excluir-dados" && (
         <ConfirmModal
-          title="Solicitar exclusão dos vídeos?"
-          message="Os vídeos de entrevistas concluídas serão excluídos permanentemente. Os relatórios e o histórico serão preservados. Esta ação não pode ser desfeita."
+          title="Solicitar exclusão das respostas?"
+          message="As respostas elegíveis serão tratadas conforme política de retenção, histórico e auditoria ainda sujeita à validação jurídica. Esta ação pode afetar relatórios associados."
           confirmLabel="Solicitar exclusão"
           danger
           onConfirm={() => setModal(null)}
@@ -3023,7 +2896,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       {modal === "excluir-conta" && (
         <ConfirmModal
           title="Excluir conta permanentemente?"
-          message="Esta ação é irreversível. Todos os seus dados, entrevistas, relatórios e vídeos serão excluídos em até 30 dias."
+          message="Esta ação é irreversível. Todos os seus dados, entrevistas, respostas e relatórios serão excluídos em até 30 dias, conforme política aplicável."
           confirmLabel="Sim, excluir minha conta"
           danger
           onConfirm={() => { setModal("conta-excluida"); }}
@@ -3264,7 +3137,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 function NotificationsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const NOTIFS = [
-    { id: 1, tipo: "resultado",   titulo: "Resultado disponível",       desc: "Seu relatório da entrevista para Analista de Marketing Digital já está disponível.",       data: "Há 5 min",   lida: false, screen: "report" as Screen },
+    { id: 1, tipo: "resultado",   titulo: "Resultado disponível",       desc: "Seu relatório da entrevista para Desenvolvedor Full Stack Júnior já está disponível.",       data: "Há 5 min",   lida: false, screen: "report" as Screen },
     { id: 2, tipo: "sistema",     titulo: "Bem-vindo ao RH Connect!",   desc: "Sua conta foi criada com sucesso. Complete seu perfil para começar a praticar.",            data: "Há 2 dias",  lida: false, screen: "profile" as Screen },
     { id: 3, tipo: "material",    titulo: "Material recomendado",       desc: "Novo conteúdo disponível: \"O método STAR explicado\" — ideal para sua preparação.",        data: "Há 3 dias",  lida: true,  screen: "materials" as Screen },
     { id: 4, tipo: "entrevista",  titulo: "Entrevista enviada com sucesso",desc: "Suas respostas foram recebidas e encaminhadas para avaliação.",                          data: "Há 6 dias",  lida: true,  screen: "pending" as Screen },
@@ -3275,7 +3148,7 @@ function NotificationsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
     resultado:  { color: "text-green-600",  bg: "bg-green-50",  icon: CheckCircle },
     sistema:    { color: "text-blue-600",   bg: "bg-blue-50",   icon: Bell },
     material:   { color: "text-amber-600",  bg: "bg-amber-50",  icon: BookOpen },
-    entrevista: { color: "text-purple-600", bg: "bg-purple-50", icon: Video },
+    entrevista: { color: "text-purple-600", bg: "bg-purple-50", icon: MessageSquare },
     lembrete:   { color: "text-slate-500",  bg: "bg-slate-50",  icon: Clock },
   };
 
@@ -3380,6 +3253,7 @@ function getCurrentScreen(pathname: string): Screen {
 function AppRoutes() {
   const routerNavigate = useNavigate();
   const location = useLocation();
+  const [interviewDraft, setInterviewDraft] = useState(createEmptyInterviewDraft);
   const currentScreen = getCurrentScreen(location.pathname);
   const navigate = (screen: Screen) => routerNavigate(getPathForScreen(screen));
 
@@ -3404,18 +3278,14 @@ function AppRoutes() {
           <Route path="/candidate/settings" element={<SettingsScreen onNavigate={navigate} />} />
           <Route path="/candidate/materials" element={<MaterialsScreen onNavigate={navigate} />} />
           <Route path="/candidate/notifications" element={<NotificationsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/jobs" element={<JobListScreen onNavigate={navigate} />} />
-          <Route path="/candidate/jobs/new" element={<JobScreen onNavigate={navigate} />} />
-          <Route path="/candidate/jobs/:id" element={<JobListScreen onNavigate={navigate} />} />
           <Route path="/candidate/interviews" element={<InterviewHistoryScreen onNavigate={navigate} />} />
           <Route path="/candidate/development" element={<DevelopmentScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new" element={<InterviewSetupScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new/consent" element={<ConsentScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new/preparation" element={<PrepScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new/device-check" element={<DeviceScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new/record" element={<InterviewScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new/review" element={<ReviewScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new/submit" element={<InterviewConfirmScreen onNavigate={navigate} />} />
+          <Route path="/candidate/interviews/new" element={<InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
+          <Route path="/candidate/interviews/new/consent" element={<ConsentScreen onNavigate={navigate} draft={interviewDraft} />} />
+          <Route path="/candidate/interviews/new/preparation" element={<PrepScreen onNavigate={navigate} draft={interviewDraft} />} />
+          <Route path="/candidate/interviews/new/answers" element={<InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
+          <Route path="/candidate/interviews/new/review" element={<ReviewScreen onNavigate={navigate} draft={interviewDraft} />} />
+          <Route path="/candidate/interviews/new/submit" element={<InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} />} />
           <Route path="/candidate/interviews/:id/success" element={<InterviewDoneScreen onNavigate={navigate} />} />
           <Route path="/candidate/interviews/:id/status" element={<PendingScreen onNavigate={navigate} />} />
           <Route path="/candidate/reports/:id" element={<ReportScreen onNavigate={navigate} />} />

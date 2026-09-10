@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   CheckCircle, ChevronRight, User, Briefcase,
-  Video, Award, Star, Zap, ArrowRight, Check,
+  MessageSquare, Award, Star, Zap, ArrowRight, Check,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -38,7 +38,7 @@ const STEPS = [
           e vou te guiar pelos primeiros passos da plataforma.
         </p>
         <p>
-          Aqui você pode participar de processos seletivos por meio de entrevistas em vídeo,
+          Aqui você pode praticar entrevistas com perguntas contextualizadas pela vaga,
           acompanhar seu progresso e desenvolver suas habilidades profissionais.
         </p>
         <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
@@ -82,7 +82,7 @@ const STEPS = [
   },
   {
     id: 2,
-    icon: Video,
+    icon: MessageSquare,
     color: "bg-purple-100 text-purple-600",
     title: "Como funciona a entrevista",
     subtitle: "Simples, flexível e no seu tempo",
@@ -91,8 +91,8 @@ const STEPS = [
         <p>O processo de seleção no RH Connect funciona assim:</p>
         <div className="space-y-2">
           {[
-            { step: "1", label: "Encontre uma vaga", desc: "Navegue pelas oportunidades disponíveis" },
-            { step: "2", label: "Realize a entrevista", desc: "Responda às perguntas em vídeo no seu próprio ritmo" },
+            { step: "1", label: "Informe a vaga", desc: "Cole a URL da oportunidade para contextualizar a entrevista" },
+            { step: "2", label: "Realize a entrevista", desc: "Responda às perguntas por texto ou usando ditado por voz" },
             { step: "3", label: "Aguarde a avaliação", desc: "Nossos avaliadores analisam sua resposta com atenção" },
             { step: "4", label: "Receba seu relatório", desc: "Veja seu desempenho detalhado e dicas de melhoria" },
           ].map(s => (
@@ -125,8 +125,8 @@ const STEPS = [
         </p>
         <div className="grid grid-cols-2 gap-2 text-xs">
           {[
-            { icon: Briefcase, label: "Vagas disponíveis" },
-            { icon: Video,     label: "Iniciar entrevista" },
+            { icon: Briefcase, label: "Contexto da vaga" },
+            { icon: MessageSquare, label: "Iniciar entrevista" },
             { icon: Award,     label: "Ver meu relatório" },
             { icon: User,      label: "Completar perfil" },
           ].map(({ icon: Icon, label }) => (

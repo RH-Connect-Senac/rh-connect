@@ -64,14 +64,14 @@ export const ADMIN_ACCOUNT: AccountConfig = {
 };
 
 export const CANDIDATE_NOTIFS: NotifItem[] = [
-  { id: "n1", title: "Avaliação concluída",     desc: "Sua entrevista para Analista de Marketing foi avaliada.", time: "Agora",   unread: true,  screen: "report" },
+  { id: "n1", title: "Avaliação concluída",     desc: "Sua entrevista para Desenvolvedor Full Stack foi avaliada.", time: "Agora",   unread: true,  screen: "report" },
   { id: "n2", title: "Feedback disponível",      desc: "Confira o relatório detalhado do seu desempenho.",       time: "2h",     unread: true,  screen: "report" },
   { id: "n3", title: "Entrevista atualizada",    desc: "Status da entrevista para Dev Full Stack foi alterado.", time: "Ontem",  unread: false, screen: "pending" },
-  { id: "n4", title: "Aviso da plataforma",      desc: "Novas vagas disponíveis na área de Marketing.",         time: "2 dias", unread: false },
+  { id: "n4", title: "Aviso da plataforma",      desc: "Novas vagas disponíveis nas áreas oficiais da V1.",      time: "2 dias", unread: false },
 ];
 
 export const EVAL_NOTIFS: NotifItem[] = [
-  { id: "n1", title: "Nova avaliação atribuída", desc: "Fernanda Oliveira — Analista de Marketing Digital.",    time: "Agora",   unread: true,  screen: "eval-queue" },
+  { id: "n1", title: "Nova avaliação atribuída", desc: "Fernanda Oliveira — Desenvolvedor Full Stack.",         time: "Agora",   unread: true,  screen: "eval-queue" },
   { id: "n2", title: "Prazo se aproximando",     desc: "Avaliação #E-0040 vence em 24 horas.",                 time: "3h",     unread: true,  screen: "eval-queue" },
   { id: "n3", title: "Critérios atualizados",    desc: "Os critérios de Comunicação foram revisados.",         time: "Ontem",  unread: false, screen: "eval-criteria" },
   { id: "n4", title: "Aviso administrativo",     desc: "Manutenção programada nesta sexta às 22h.",            time: "2 dias", unread: false },

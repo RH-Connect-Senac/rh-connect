@@ -10,6 +10,10 @@
 
 ---
 
+> **Aviso de atualização em 10/09/2026:** as decisões de produto mais recentes substituem os trechos deste documento que tratam video, camera, gravacao, upload, player, regravacao, Device Check e paginas independentes de vagas como obrigatorios para a primeira entrega. O fluxo vigente esta registrado em `docs/front-end/mapa-de-telas-front-end.md`.
+
+---
+
 # 1. Objetivo do documento
 
 Este documento define o escopo oficial da entrega testável do RH Connect prevista para **10 de setembro de 2026**.
@@ -295,15 +299,15 @@ O sistema utiliza informações do perfil e dados de mercado para apresentar ár
 
 ## Regra atual
 
-Até a validação definitiva:
+Conforme decisao de 10/09/2026:
 
-- não remover oficialmente `Minhas Vagas`;
-- não assumir que `Job` será eliminado;
-- não amarrar toda a arquitetura definitivamente a `jobId`;
-- evitar modelagem rígida que dificulte a decisão futura;
-- continuar desenvolvendo as partes não dependentes dessa decisão.
+- remover `Minhas Vagas` como pagina independente da primeira entrega;
+- remover `Nova Vaga` e `Selecionar Vaga` como paginas independentes da primeira entrega;
+- manter vaga como contexto da entrevista;
+- receber a URL da vaga no inicio da Nova entrevista;
+- evitar modelagem rigida que dificulte a integracao tecnica Python/Flask e Groq.
 
-Essa pendência deve estar registrada também no Mapa de Telas e na documentação técnica relacionada ao domínio.
+Essa decisao deve estar registrada tambem no Mapa de Telas e na documentacao tecnica relacionada ao dominio.
 
 ---
 
