@@ -35,7 +35,7 @@ export type NotifConfig = {
 
 export const CANDIDATE_ACCOUNT: AccountConfig = {
   name: "João Lima",
-  email: "joao.lima@email.com",
+  email: "joao.lima@gmail.com",
   initials: "JL",
   avatarClass: "bg-gradient-to-br from-blue-500 to-blue-700",
   profileLabel: "Meu perfil",
@@ -45,7 +45,7 @@ export const CANDIDATE_ACCOUNT: AccountConfig = {
 
 export const EVAL_ACCOUNT: AccountConfig = {
   name: "Carlos Andrade",
-  email: "c.andrade@senacdf.com.br",
+  email: "carlos.andrade@gmail.com",
   initials: "CA",
   avatarClass: "bg-gradient-to-br from-teal-500 to-teal-700",
   profileLabel: "Minha conta",
@@ -55,7 +55,7 @@ export const EVAL_ACCOUNT: AccountConfig = {
 
 export const ADMIN_ACCOUNT: AccountConfig = {
   name: "Ana Martins",
-  email: "a.martins@senacdf.com.br",
+  email: "ana.martins@gmail.com",
   initials: "AM",
   avatarClass: "bg-gradient-to-br from-violet-500 to-violet-700",
   profileLabel: "Minha conta",

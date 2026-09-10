@@ -1,15 +1,15 @@
 /** RH Connect — Exploração Visual | Fluxo Principal do Candidato */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { toast, Toaster } from "sonner";
+import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase, Video,
   Clock, Camera, Mic, Home, History, Settings, LogOut, Bell,
-  Eye, EyeOff, Plus, Edit2, Square, AlertCircle, ArrowRight,
+  Eye, Plus, Edit2, Square, AlertCircle, ArrowRight,
   Award, TrendingUp, X, Shield, GraduationCap, Zap, BookOpen,
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
   Volume2, Target, Send, RotateCcw, Play, Upload, Menu,
-  Search, Heart, Bookmark, FileText, Trash2, Lock, Database,
+  Heart, Bookmark, FileText, Trash2, Lock, Database,
   ToggleLeft, ToggleRight, ChevronUp, Filter
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
@@ -18,6 +18,7 @@ import {
   AccountDropdown, NotificationDropdown,
   CANDIDATE_ACCOUNT, CANDIDATE_NOTIFS,
 } from "./components/header-popovers";
+import { RHConnectLogo } from "./components/brand/rh-connect-logo";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
 import {
   EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalScreenView,
@@ -33,6 +34,21 @@ import {
   AdminOnboardingScreen,
 } from "./components/admin-screens";
 import { CandidateOnboardingScreen } from "./components/onboarding-screens";
+import { Input } from "./components/ui/input";
+import { SearchInput } from "./components/ui/search-input";
+import { NativeSelect } from "./components/ui/native-select";
+import { PasswordInput } from "./components/ui/password-input";
+import { Textarea } from "./components/ui/textarea";
+import { Checkbox } from "./components/ui/checkbox";
+import { Button as UIButton } from "./components/ui/button";
+import { Card as UICard } from "./components/ui/card";
+import { Badge as UIBadge } from "./components/ui/badge";
+import { StatusBadge } from "./components/ui/status-badge";
+import { Alert } from "./components/ui/alert";
+import { FilterChip } from "./components/ui/filter-chip";
+import { EmptyState } from "./components/ui/empty-state";
+import { Spinner } from "./components/ui/spinner";
+import { Toaster } from "./components/ui/sonner";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
@@ -153,19 +169,19 @@ function Btn({
   disabled?: boolean;
   className?: string;
 }) {
-  const base = "inline-flex items-center justify-center gap-2 font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer shrink-0";
-  const sizes = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2.5 text-sm", lg: "px-6 py-3.5 text-base" };
-  const vars = {
-    primary:   "bg-primary text-white hover:bg-blue-800 hover:shadow-md active:bg-blue-900 active:shadow-sm",
-    secondary: "bg-secondary text-secondary-foreground hover:bg-blue-100 hover:shadow-sm active:bg-blue-200",
-    outline:   "border border-border bg-white text-foreground hover:bg-muted hover:shadow-sm active:bg-slate-100",
-    ghost:     "text-foreground hover:bg-muted active:bg-slate-100",
-    danger:    "bg-destructive text-white hover:bg-red-700 hover:shadow-md active:bg-red-800",
-  };
+  const buttonVariant = variant === "danger" ? "destructive" : variant;
+  const buttonClassName = `${size === "sm" ? "text-xs" : ""} font-semibold cursor-pointer ${className}`;
+
   return (
-    <button className={`${base} ${sizes[size]} ${vars[variant]} ${className}`} onClick={onClick} disabled={disabled}>
+    <UIButton
+      variant={buttonVariant}
+      size={size}
+      className={buttonClassName}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
-    </button>
+    </UIButton>
   );
 }
 
@@ -181,47 +197,55 @@ function Badge({ variant = "default", children }: {
     info:    "bg-blue-100 text-blue-700",
     purple:  "bg-purple-100 text-purple-700",
   };
-  return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${vars[variant]}`}>
-      {children}
-    </span>
-  );
+  return <UIBadge variant="neutral" className={`font-semibold ${vars[variant]}`}>{children}</UIBadge>;
+}
+
+function statusToneFromBadge(variant: "default" | "success" | "warning" | "error" | "info" | "purple") {
+  const tones = {
+    default: "neutral",
+    success: "success",
+    warning: "warning",
+    error: "error",
+    info: "info",
+    purple: "neutral",
+  } as const;
+  return tones[variant];
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-card rounded-2xl border border-border shadow-sm ${className}`}>
+    <UICard padding="none" className={className}>
       {children}
-    </div>
+    </UICard>
   );
 }
 
-function Field({ label, type = "text", placeholder, hint, required }: {
-  label: string; type?: string; placeholder?: string; hint?: string; required?: boolean;
-}) {
-  const [show, setShow] = useState(false);
+type FieldProps = {
+  label: string;
+  hint?: string;
+} & React.InputHTMLAttributes<HTMLInputElement>;
+
+function Field({ label, type = "text", placeholder, hint, required, ...props }: FieldProps) {
   const isPassword = type === "password";
   return (
     <div>
       <label className="block text-sm font-semibold text-foreground mb-1.5">
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
-      <div className="relative">
-        <input
-          type={isPassword && show ? "text" : type}
+      {isPassword ? (
+        <PasswordInput
           placeholder={placeholder}
-          className="w-full px-4 py-3 border border-border rounded-xl bg-input-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all text-sm"
+          required={required}
+          {...props}
         />
-        {isPassword && (
-          <button
-            type="button"
-            onClick={() => setShow(!show)}
-            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        )}
-      </div>
+      ) : (
+        <Input
+          type={type}
+          placeholder={placeholder}
+          required={required}
+          {...props}
+        />
+      )}
       {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
@@ -236,28 +260,31 @@ function FieldSelect({ label, options, required }: {
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
       <div className="relative">
-        <select className="w-full px-4 py-3 border border-border rounded-xl bg-input-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all text-sm appearance-none pr-10">
+        <NativeSelect>
           <option value="">Selecione...</option>
           {options.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
+        </NativeSelect>
         <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
       </div>
     </div>
   );
 }
 
-function FieldArea({ label, placeholder, rows = 3, required }: {
-  label: string; placeholder?: string; rows?: number; required?: boolean;
-}) {
+type FieldAreaProps = {
+  label: string;
+} & React.TextareaHTMLAttributes<HTMLTextAreaElement>;
+
+function FieldArea({ label, placeholder, rows = 3, required, ...props }: FieldAreaProps) {
   return (
     <div>
       <label className="block text-sm font-semibold text-foreground mb-1.5">
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
-      <textarea
+      <Textarea
         placeholder={placeholder}
         rows={rows}
-        className="w-full px-4 py-3 border border-border rounded-xl bg-input-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all text-sm resize-none"
+        required={required}
+        {...props}
       />
     </div>
   );
@@ -475,20 +502,7 @@ function SidebarContent({
           </svg>
         ) : (
           <div className="flex flex-col gap-0.5 min-w-0">
-            <div className="flex items-center gap-[5px]">
-              <svg viewBox="0 0 57.9158 31.8399" className="h-7 w-auto shrink-0" fill="none">
-                <path d="M1.0034 1.3239C4.19431 1.26744 7.53747 1.31544 10.7388 1.3171L13.8914 1.31592C15.0575 1.3152 16.0381 1.29485 17.1979 1.46852C18.4141 1.65309 19.5909 2.03957 20.6795 2.61198C22.3936 3.51994 23.7867 5.08479 24.4693 6.88707C26.3808 11.9338 24.3617 17.5553 18.9677 19.175C19.1319 19.4606 19.3617 19.7205 19.5774 19.9692C18.8881 20.2148 18.0855 20.5988 17.3944 20.8665C16.373 21.2621 15.2788 21.6839 14.2793 22.1223C14.1998 21.98 14.0812 21.8379 13.9862 21.7017L13.2789 20.704C12.4177 19.5076 11.5368 18.3256 10.6363 17.1584C10.3775 16.8194 9.82044 16.1522 9.62468 15.8325C9.60416 15.536 9.62367 15.1421 9.64111 14.8468L13.0637 14.8484C13.6093 14.85 14.1573 14.8542 14.7028 14.8538C16.6991 14.8523 18.5663 13.9476 19.0304 11.8736C19.1035 11.5127 19.1394 11.1454 19.1377 10.7773C19.1334 9.65289 18.8533 8.72409 18.0428 7.91988C16.471 6.3604 14.2713 6.6455 12.2439 6.64022C10.4186 6.63171 8.5933 6.6333 6.76805 6.645L6.77191 22.7675C5.8437 23.2198 5.29824 23.9889 4.86325 24.9001C4.02954 26.6465 4.92463 29.1508 6.75606 29.93L6.74287 30.5193C4.83248 30.5654 2.82778 30.5185 0.905471 30.5299C0.886613 29.7373 0.900454 28.8871 0.899898 28.0911L0.900929 23.1983L0.901946 5.99575C0.902089 5.59104 0.871983 1.45066 0.920229 1.33522L1.0034 1.3239Z" fill="white" />
-                <path d="M50.6285 13.5512C50.6892 13.5585 50.8577 13.7627 50.9153 13.8205C51.848 14.7552 53.056 15.0623 54.3359 14.8798L54.3328 30.5336C53.6704 30.5255 53.0004 30.5308 52.3371 30.5308L48.5672 30.5285L48.5663 19.139L48.568 15.9289C48.5688 15.4009 48.5932 14.6078 48.5504 14.0965C49.0848 13.9134 50.0709 13.6519 50.6285 13.5512Z" fill="#1560FE" />
-                <path d="M30.4151 1.32058C32.3018 1.28932 34.2709 1.31786 36.1634 1.32312L36.1609 13.9794C35.6975 14.1455 35.1815 14.2957 34.7078 14.4516C33.5841 14.8691 32.4519 15.263 31.3118 15.6329C31.0093 15.7336 30.7212 15.8682 30.4193 15.9575C30.4338 15.4828 30.4168 14.906 30.4168 14.4224L30.4176 11.1625L30.4151 1.32058Z" fill="#1560FE" />
-                <path d="M36.0993 17.8545L36.1281 17.8577C36.193 17.9506 36.1672 19.9964 36.167 20.2632L36.1664 24.5015L36.1647 28.2418C36.1642 28.9951 36.1765 29.7872 36.1505 30.5371L30.4908 30.5318C30.4776 30.5284 30.4528 30.5086 30.4399 30.4997C30.3955 30.3014 30.4156 29.6383 30.417 29.3959L30.4175 27.6969L30.412 19.8174C30.8737 19.6743 31.2684 19.5036 31.7184 19.3454L34.3787 18.4325C34.9849 18.2254 35.4758 18.0381 36.0993 17.8545Z" fill="#1560FE" />
-                <path d="M10.8072 24.6718C11.53 24.387 12.2869 24.0327 13.0109 23.7348C15.0809 22.867 17.164 22.0307 19.2594 21.2262L23.4165 19.6475C24.1919 19.3525 25.0403 19.0024 25.8149 18.721L28.9872 17.5691C29.4554 17.404 29.9392 17.2693 30.4037 17.0953C30.4513 17.2569 30.4348 18.4825 30.4345 18.743C28.9003 19.3456 27.3123 19.8391 25.7829 20.4528C24.5529 20.9463 23.2984 21.3842 22.0658 21.8621C20.0068 22.6514 17.9547 23.4584 15.9097 24.2829C14.4274 24.8839 12.9404 25.5146 11.4514 26.0995C11.4358 26.8248 11.2554 27.5673 10.7601 28.1209C9.72883 29.2741 8.01062 29.3171 6.87421 28.2946C6.3777 27.8486 6.08134 27.2219 6.05171 26.5553C5.94771 24.4258 8.25483 22.9148 10.109 24.0925C10.3818 24.2657 10.5706 24.4545 10.8072 24.6718Z" fill="white" />
-                <path d="M21.7371 22.941C21.9043 23.0858 22.7947 24.3675 22.9641 24.6095L24.4678 26.7166C25.3639 27.973 26.3832 29.2422 27.2286 30.5261L21.7872 30.5278L20.1057 30.5306C19.8739 30.2731 19.7375 30.0167 19.5418 29.7404C18.5666 28.3641 17.6018 26.9809 16.6268 25.6046C16.4986 25.4237 16.374 25.2546 16.2742 25.0549C16.8003 24.8744 17.3137 24.6801 17.8284 24.4691C19.122 23.9389 20.4466 23.4784 21.7371 22.941Z" fill="white" />
-                <path d="M48.6542 1.32713C50.5303 1.29183 52.4535 1.32787 54.336 1.31976L54.3313 6.75147C52.9553 6.67053 52.5013 6.84509 51.3772 7.51585C50.4883 8.10961 50.0073 8.98816 49.7158 9.98612C49.3438 10.1079 48.9404 10.1887 48.5556 10.2583C48.6246 7.44075 48.5315 4.58479 48.5558 1.7646C48.557 1.64786 48.5461 1.45345 48.5838 1.34559L48.6542 1.32713Z" fill="#1560FE" />
-                <path d="M30.4035 17.0884C30.797 16.8805 31.5279 16.666 31.9774 16.5087L35.1059 15.4309L41.0946 13.4652C43.5224 12.6933 45.9384 11.9827 48.4075 11.3523C48.8371 11.2426 49.2983 11.1574 49.7195 11.034C49.8073 11.4521 50.0284 12.1341 50.1846 12.5495C48.8726 12.9316 47.5444 13.2742 46.2277 13.6409C45.977 13.7107 45.7198 13.7645 45.4683 13.8354C43.8516 14.3026 42.2436 14.7995 40.6454 15.3259C38.3571 16.0591 36.078 16.8025 33.8031 17.5791C32.6871 17.9601 31.5626 18.4023 30.4342 18.7361C30.4345 18.4756 30.451 17.2501 30.4035 17.0884Z" fill="#1560FE" />
-                <path d="M53.2854 7.48461C55.1541 7.22913 56.8761 8.53826 57.1282 10.4075C57.38 12.2771 56.065 13.9951 54.1946 14.2424C52.3304 14.4887 50.6175 13.1811 50.3664 11.3176C50.1153 9.45383 51.4222 7.73945 53.2854 7.48461Z" fill="#1560FE" stroke="white" strokeWidth="1.51237" />
-              </svg>
-              <span style={{ fontFamily: "'Poppins', sans-serif", color: "#0075fe", fontWeight: 500, fontSize: 15, letterSpacing: "-0.01em", lineHeight: 1 }}>Connect</span>
-            </div>
+            <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
             <p className="text-white/40 text-[11px]">Candidato</p>
           </div>
         )}
@@ -544,7 +558,7 @@ function SidebarContent({
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-white text-sm font-semibold truncate">João Lima</p>
-              <p className="text-white/40 text-xs truncate">joao.lima@email.com</p>
+              <p className="text-white/40 text-xs truncate">joao.lima@gmail.com</p>
             </div>
             <button
               onClick={() => setShowLogout(true)}
@@ -645,20 +659,7 @@ function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     <div className="min-h-[calc(100vh-44px)] bg-background flex items-center justify-center p-4 sm:p-8 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-[6px] mb-3">
-            <svg viewBox="0 0 57.9158 31.8399" className="h-9 w-auto shrink-0" fill="none">
-              <path d="M1.0034 1.3239C4.19431 1.26744 7.53747 1.31544 10.7388 1.3171L13.8914 1.31592C15.0575 1.3152 16.0381 1.29485 17.1979 1.46852C18.4141 1.65309 19.5909 2.03957 20.6795 2.61198C22.3936 3.51994 23.7867 5.08479 24.4693 6.88707C26.3808 11.9338 24.3617 17.5553 18.9677 19.175C19.1319 19.4606 19.3617 19.7205 19.5774 19.9692C18.8881 20.2148 18.0855 20.5988 17.3944 20.8665C16.373 21.2621 15.2788 21.6839 14.2793 22.1223C14.1998 21.98 14.0812 21.8379 13.9862 21.7017L13.2789 20.704C12.4177 19.5076 11.5368 18.3256 10.6363 17.1584C10.3775 16.8194 9.82044 16.1522 9.62468 15.8325C9.60416 15.536 9.62367 15.1421 9.64111 14.8468L13.0637 14.8484C13.6093 14.85 14.1573 14.8542 14.7028 14.8538C16.6991 14.8523 18.5663 13.9476 19.0304 11.8736C19.1035 11.5127 19.1394 11.1454 19.1377 10.7773C19.1334 9.65289 18.8533 8.72409 18.0428 7.91988C16.471 6.3604 14.2713 6.6455 12.2439 6.64022C10.4186 6.63171 8.5933 6.6333 6.76805 6.645L6.77191 22.7675C5.8437 23.2198 5.29824 23.9889 4.86325 24.9001C4.02954 26.6465 4.92463 29.1508 6.75606 29.93L6.74287 30.5193C4.83248 30.5654 2.82778 30.5185 0.905471 30.5299C0.886613 29.7373 0.900454 28.8871 0.899898 28.0911L0.900929 23.1983L0.901946 5.99575C0.902089 5.59104 0.871983 1.45066 0.920229 1.33522L1.0034 1.3239Z" fill="#001640" />
-              <path d="M50.6285 13.5512C50.6892 13.5585 50.8577 13.7627 50.9153 13.8205C51.848 14.7552 53.056 15.0623 54.3359 14.8798L54.3328 30.5336C53.6704 30.5255 53.0004 30.5308 52.3371 30.5308L48.5672 30.5285L48.5663 19.139L48.568 15.9289C48.5688 15.4009 48.5932 14.6078 48.5504 14.0965C49.0848 13.9134 50.0709 13.6519 50.6285 13.5512Z" fill="#0075FE" />
-              <path d="M30.4151 1.32058C32.3018 1.28932 34.2709 1.31786 36.1634 1.32312L36.1609 13.9794C35.6975 14.1455 35.1815 14.2957 34.7078 14.4516C33.5841 14.8691 32.4519 15.263 31.3118 15.6329C31.0093 15.7336 30.7212 15.8682 30.4193 15.9575C30.4338 15.4828 30.4168 14.906 30.4168 14.4224L30.4176 11.1625L30.4151 1.32058Z" fill="#0075FE" />
-              <path d="M36.0993 17.8545L36.1281 17.8577C36.193 17.9506 36.1672 19.9964 36.167 20.2632L36.1664 24.5015L36.1647 28.2418C36.1642 28.9951 36.1765 29.7872 36.1505 30.5371L30.4908 30.5318C30.4776 30.5284 30.4528 30.5086 30.4399 30.4997C30.3955 30.3014 30.4156 29.6383 30.417 29.3959L30.4175 27.6969L30.412 19.8174C30.8737 19.6743 31.2684 19.5036 31.7184 19.3454L34.3787 18.4325C34.9849 18.2254 35.4758 18.0381 36.0993 17.8545Z" fill="#0075FE" />
-              <path d="M10.8072 24.6718C11.53 24.387 12.2869 24.0327 13.0109 23.7348C15.0809 22.867 17.164 22.0307 19.2594 21.2262L23.4165 19.6475C24.1919 19.3525 25.0403 19.0024 25.8149 18.721L28.9872 17.5691C29.4554 17.404 29.9392 17.2693 30.4037 17.0953C30.4513 17.2569 30.4348 18.4825 30.4345 18.743C28.9003 19.3456 27.3123 19.8391 25.7829 20.4528C24.5529 20.9463 23.2984 21.3842 22.0658 21.8621C20.0068 22.6514 17.9547 23.4584 15.9097 24.2829C14.4274 24.8839 12.9404 25.5146 11.4514 26.0995C11.4358 26.8248 11.2554 27.5673 10.7601 28.1209C9.72883 29.2741 8.01062 29.3171 6.87421 28.2946C6.3777 27.8486 6.08134 27.2219 6.05171 26.5553C5.94771 24.4258 8.25483 22.9148 10.109 24.0925C10.3818 24.2657 10.5706 24.4545 10.8072 24.6718Z" fill="#001640" />
-              <path d="M21.7371 22.941C21.9043 23.0858 22.7947 24.3675 22.9641 24.6095L24.4678 26.7166C25.3639 27.973 26.3832 29.2422 27.2286 30.5261L21.7872 30.5278L20.1057 30.5306C19.8739 30.2731 19.7375 30.0167 19.5418 29.7404C18.5666 28.3641 17.6018 26.9809 16.6268 25.6046C16.4986 25.4237 16.374 25.2546 16.2742 25.0549C16.8003 24.8744 17.3137 24.6801 17.8284 24.4691C19.122 23.9389 20.4466 23.4784 21.7371 22.941Z" fill="#001640" />
-              <path d="M48.6542 1.32713C50.5303 1.29183 52.4535 1.32787 54.336 1.31976L54.3313 6.75147C52.9553 6.67053 52.5013 6.84509 51.3772 7.51585C50.4883 8.10961 50.0073 8.98816 49.7158 9.98612C49.3438 10.1079 48.9404 10.1887 48.5556 10.2583C48.6246 7.44075 48.5315 4.58479 48.5558 1.7646C48.557 1.64786 48.5461 1.45345 48.5838 1.34559L48.6542 1.32713Z" fill="#0075FE" />
-              <path d="M30.4035 17.0884C30.797 16.8805 31.5279 16.666 31.9774 16.5087L35.1059 15.4309L41.0946 13.4652C43.5224 12.6933 45.9384 11.9827 48.4075 11.3523C48.8371 11.2426 49.2983 11.1574 49.7195 11.034C49.8073 11.4521 50.0284 12.1341 50.1846 12.5495C48.8726 12.9316 47.5444 13.2742 46.2277 13.6409C45.977 13.7107 45.7198 13.7645 45.4683 13.8354C43.8516 14.3026 42.2436 14.7995 40.6454 15.3259C38.3571 16.0591 36.078 16.8025 33.8031 17.5791C32.6871 17.9601 31.5626 18.4023 30.4342 18.7361C30.4345 18.4756 30.451 17.2501 30.4035 17.0884Z" fill="#0075FE" />
-              <path d="M53.2854 7.48461C55.1541 7.22913 56.8761 8.53826 57.1282 10.4075C57.38 12.2771 56.065 13.9951 54.1946 14.2424C52.3304 14.4887 50.6175 13.1811 50.3664 11.3176C50.1153 9.45383 51.4222 7.73945 53.2854 7.48461Z" fill="#0075FE" stroke="white" strokeWidth="1.51237" />
-            </svg>
-            <span style={{ fontFamily: "'Poppins', sans-serif", color: "#0075fe", fontWeight: 500, fontSize: 22, letterSpacing: "-0.01em", lineHeight: 1 }}>Connect</span>
-          </div>
+          <RHConnectLogo className="h-10 w-auto mx-auto mb-3" />
           <p className="text-muted-foreground text-sm">Seu treinamento inteligente para entrevistas</p>
         </div>
 
@@ -668,6 +669,7 @@ function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <button
                 key={t}
                 onClick={() => setTab(t)}
+                aria-pressed={tab === t}
                 className={`py-4 text-sm font-semibold transition-all ${tab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {t === "login" ? "Entrar" : "Criar conta"}
@@ -678,13 +680,15 @@ function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           <div className="p-5 sm:p-7">
             {tab === "login" ? (
               <div className="space-y-4">
-                <Field label="E-mail" type="email" placeholder="seu@email.com" required />
+                <Field label="E-mail" type="email" placeholder="seuemail@gmail.com" required />
                 <Field label="Senha" type="password" placeholder="Sua senha" required />
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" className="rounded" />
-                    <span className="text-muted-foreground">Lembrar acesso</span>
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="remember-access" />
+                    <label htmlFor="remember-access" className="text-muted-foreground cursor-pointer">
+                      Lembrar acesso
+                    </label>
+                  </div>
                   <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
                 </div>
                 <Btn variant="primary" className="w-full !py-3" onClick={() => onNavigate("dashboard")}>
@@ -694,7 +698,7 @@ function AuthScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             ) : (
               <div className="space-y-4">
                 <Field label="Nome completo" placeholder="João da Silva Lima" required />
-                <Field label="E-mail" type="email" placeholder="seu@email.com" required />
+                <Field label="E-mail" type="email" placeholder="nome@gmail.com" required />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="Senha" type="password" placeholder="Mínimo 8 caracteres" required />
                   <Field label="Confirmar senha" type="password" placeholder="Repita a senha" required />
@@ -824,7 +828,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                       <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
                       <div className="flex flex-wrap items-center gap-2 mt-2">
-                        <Badge variant={item.badge}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></Badge>
+                        <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
                         {item.badge === "success" && (
                           <Btn size="sm" variant="primary" onClick={() => onNavigate("report")}>
                             Ver relatório
@@ -899,7 +903,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="font-bold text-foreground text-lg">João Lima</h2>
-              <p className="text-muted-foreground text-sm">joao.lima@email.com · São Paulo, SP</p>
+              <p className="text-muted-foreground text-sm">joao.lima@gmail.com · São Paulo, SP</p>
               <p className="text-xs text-muted-foreground mt-1 italic">"Profissional em busca da primeira oportunidade na área de Marketing Digital."</p>
             </div>
             <Btn variant="outline" size="sm" className="self-start sm:self-auto shrink-0">
@@ -971,7 +975,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Habilidades técnicas</p>
                       <div className="flex flex-wrap gap-2">
                         {["Google Analytics", "Meta Ads", "Canva", "Excel", "SEO", "Copywriting"].map(s => (
-                          <span key={s} className="bg-blue-50 text-blue-700 text-xs font-medium px-3 py-1 rounded-full border border-blue-100">{s}</span>
+                          <UIBadge key={s} variant="primary" className="px-3 py-1 font-medium">{s}</UIBadge>
                         ))}
                         <button className="bg-muted text-muted-foreground text-xs font-medium px-3 py-1 rounded-full border border-border hover:bg-muted/80 flex items-center gap-1">
                           <Plus className="w-3 h-3" /> Adicionar
@@ -982,7 +986,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Competências comportamentais</p>
                       <div className="flex flex-wrap gap-2">
                         {["Comunicação", "Trabalho em equipe", "Criatividade", "Proatividade"].map(s => (
-                          <span key={s} className="bg-green-50 text-green-700 text-xs font-medium px-3 py-1 rounded-full border border-green-100">{s}</span>
+                          <UIBadge key={s} variant="neutral" className="border-green-100 bg-green-50 px-3 py-1 font-medium text-green-700">{s}</UIBadge>
                         ))}
                       </div>
                     </div>
@@ -990,7 +994,7 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Idiomas</p>
                       <div className="flex flex-wrap gap-2">
                         {["Português (nativo)", "Inglês (básico)"].map(s => (
-                          <span key={s} className="bg-purple-50 text-purple-700 text-xs font-medium px-3 py-1 rounded-full border border-purple-100">{s}</span>
+                          <UIBadge key={s} variant="neutral" className="border-purple-100 bg-purple-50 px-3 py-1 font-medium text-purple-700">{s}</UIBadge>
                         ))}
                       </div>
                     </div>
@@ -1065,11 +1069,11 @@ function JobScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                       </div>
                       <div className="min-w-0">
                         <p className="font-semibold text-foreground truncate">{j.cargo}</p>
-                        <p className="text-sm text-muted-foreground truncate">{j.empresa} · <span className="text-xs bg-muted px-2 py-0.5 rounded-full">{j.tipo}</span></p>
+                        <p className="text-sm text-muted-foreground truncate">{j.empresa} · <UIBadge variant="neutral" className="px-2 py-0.5">{j.tipo}</UIBadge></p>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
-                      <Badge variant="success">{j.status}</Badge>
+                      <StatusBadge tone="success">{j.status}</StatusBadge>
                       <Btn size="sm" variant="primary" onClick={() => onNavigate("interview-setup")}>
                         Iniciar entrevista <ChevronRight className="w-3.5 h-3.5" />
                       </Btn>
@@ -1121,7 +1125,7 @@ function JobScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-6 pt-6 border-t border-border">
-            <Btn variant="outline" className="sm:self-auto" onClick={() => onNavigate("profile")}>← Voltar</Btn>
+            <Btn variant="outline" className="sm:self-auto" onClick={() => onNavigate("profile")}>Voltar</Btn>
             <div className="flex flex-col sm:flex-row gap-3">
               <Btn variant="outline">Salvar vaga</Btn>
               <Btn variant="primary" onClick={() => onNavigate("interview-setup")}>
@@ -1149,7 +1153,7 @@ function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     <AuthLayout current="prep" onNavigate={onNavigate} title="Preparação para Entrevista" subtitle="Leia as orientações antes de começar">
       <div className="w-full">
         {/* Context card */}
-        <Card className="p-4 sm:p-5 mb-6 border-l-4 border-blue-500">
+        <Card className="p-4 sm:p-5 mb-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
               <Briefcase className="w-5 h-5 text-blue-600" />
@@ -1202,7 +1206,7 @@ function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         </Card>
 
         {/* STAR method */}
-        <Card className="p-5 sm:p-6 mb-7 bg-blue-50 border-blue-100">
+        <Card className="p-5 sm:p-6 mb-7">
           <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
             <Star className="w-4 h-4 text-blue-600" /> Método STAR para suas respostas
           </h3>
@@ -1222,15 +1226,15 @@ function PrepScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
         </Card>
 
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-7 flex gap-3">
+        <Alert variant="warning" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-sm text-amber-700">
             <strong>Importante:</strong> Ao iniciar a entrevista, você será solicitado a autorizar o uso da câmera e do microfone.
           </p>
-        </div>
+        </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("consent")}>← Voltar</Btn>
+          <Btn variant="outline" onClick={() => onNavigate("consent")}>Voltar</Btn>
           <Btn variant="primary" size="lg" onClick={() => onNavigate("device")}>
             <span className="hidden sm:inline">Continuar para o teste técnico</span>
             <span className="sm:hidden">Teste técnico</span>
@@ -1259,7 +1263,7 @@ function DeviceScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   return (
     <AuthLayout current="device" onNavigate={onNavigate} title="Teste de Câmera e Microfone" subtitle="Verifique seus dispositivos antes de começar">
       <div className="w-full">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
           {/* Camera preview */}
           <Card className="p-5">
             <p className="text-sm font-bold text-foreground mb-3 flex items-center gap-2">
@@ -1315,7 +1319,7 @@ function DeviceScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </Card>
         </div>
 
-        {/* Status indicators — xl: shown as 3rd grid column; below xl: shown below the 2-col grid */}
+        {/* Status indicators */}
         <Card className="p-5 xl:row-span-1">
           <p className="text-sm font-bold text-foreground mb-4">Status dos dispositivos</p>
           <div className="space-y-3">
@@ -1339,17 +1343,17 @@ function DeviceScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         </Card>
 
         {!canContinue && (
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mt-5 mb-6 flex gap-3">
+          <Alert variant="destructive" role="alert" className="mt-5 mb-6 flex gap-3 rounded-2xl p-4">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-bold text-red-700 mb-1">Resolva os problemas antes de continuar</p>
               <p className="text-xs text-red-600">Você precisa de câmera e microfone funcionando para gravar a entrevista.</p>
             </div>
-          </div>
+          </Alert>
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-3 mt-5">
-          <Btn variant="outline" onClick={() => onNavigate("prep")}>← Voltar</Btn>
+          <Btn variant="outline" onClick={() => onNavigate("prep")}>Voltar</Btn>
           <Btn variant="primary" size="lg" onClick={() => onNavigate("interview")} disabled={!canContinue}>
             {canContinue
               ? <><span className="hidden sm:inline">Tudo pronto — iniciar entrevista</span><span className="sm:hidden">Iniciar entrevista</span><ChevronRight className="w-5 h-5" /></>
@@ -1475,7 +1479,7 @@ function InterviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
 
           <Card className="flex-1 p-5 sm:p-6 flex flex-col">
-            <div className="mb-4"><Badge variant="info">Comportamental</Badge></div>
+            <div className="mb-4"><UIBadge variant="primary">Comportamental</UIBadge></div>
             <blockquote className="text-foreground font-semibold text-base leading-relaxed flex-1 mb-5">
               "{q.text}"
             </blockquote>
@@ -1573,18 +1577,18 @@ function ReviewScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </label>
         </Card>
 
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-7 flex gap-3">
+        <Alert variant="warning" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700">
             Após o envio, suas respostas serão encaminhadas para avaliação humana. Prazo estimado de retorno: até <strong>3 dias úteis</strong>.
           </p>
-        </div>
+        </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("interview")}>← Voltar</Btn>
+          <Btn variant="outline" onClick={() => onNavigate("interview")}>Voltar</Btn>
           <Btn variant="primary" size="lg" disabled={!confirm || sending} onClick={handleSend}>
             {sending ? (
-              <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Enviando...</>
+              <><Spinner />Enviando...</>
             ) : (
               <><Send className="w-4 h-4" /> Enviar entrevista</>
             )}
@@ -1620,10 +1624,10 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano treinado.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <Badge variant="warning">
+            <StatusBadge tone="warning">
               <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />
               Em avaliação
-            </Badge>
+            </StatusBadge>
             <span className="text-xs text-muted-foreground">· Protocolo #ENT-2026-0847</span>
           </div>
         </Card>
@@ -1919,16 +1923,16 @@ function JobListScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     >
       <div className="w-full space-y-4">
         {VAGAS.length === 0 ? (
-          <Card className="p-10 text-center">
-            <div className="w-14 h-14 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Briefcase className="w-7 h-7 text-muted-foreground" />
-            </div>
-            <p className="font-bold text-foreground mb-2">Nenhuma vaga cadastrada</p>
-            <p className="text-sm text-muted-foreground mb-5">Cadastre a vaga que você quer praticar para iniciar sua entrevista simulada.</p>
-            <Btn variant="primary" onClick={() => onNavigate("job")}>
-              <Plus className="w-4 h-4" /> Cadastrar primeira vaga
-            </Btn>
-          </Card>
+          <EmptyState
+            icon={Briefcase}
+            title="Nenhuma vaga cadastrada"
+            description="Cadastre a vaga que você quer praticar para iniciar sua entrevista simulada."
+            action={
+              <Btn variant="primary" onClick={() => onNavigate("job")}>
+                <Plus className="w-4 h-4" /> Cadastrar primeira vaga
+              </Btn>
+            }
+          />
         ) : (
           <div className="space-y-3">
             {VAGAS.map((v) => (
@@ -1940,11 +1944,11 @@ function JobListScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <p className="font-bold text-foreground text-sm">{v.cargo}</p>
-                      <Badge variant="info">{v.tipo}</Badge>
+                      <UIBadge variant="neutral">{v.tipo}</UIBadge>
                     </div>
                     <p className="text-xs text-muted-foreground">{v.empresa} · {v.area} · Cadastrada em {v.data}</p>
                     <div className="flex flex-wrap items-center gap-2 mt-2">
-                      <Badge variant={v.badge}>{v.status}</Badge>
+                      <StatusBadge tone={statusToneFromBadge(v.badge)}>{v.status}</StatusBadge>
                       <span className="text-xs text-muted-foreground">{v.entrevistas} entrevista{v.entrevistas !== 1 ? "s" : ""}</span>
                     </div>
                   </div>
@@ -2013,10 +2017,9 @@ function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
           <div className="flex flex-wrap gap-3 items-center">
             <span className="text-sm font-semibold text-foreground shrink-0">Filtrar por:</span>
             {["Todos", "Concluídas", "Aguardando", "Em andamento"].map(f => (
-              <button key={f} onClick={() => setFiltro(f)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${f === filtro ? "bg-primary text-white" : "bg-muted text-muted-foreground hover:bg-accent"}`}>
+              <FilterChip key={f} onClick={() => setFiltro(f)} selected={f === filtro}>
                 {f}
-              </button>
+              </FilterChip>
             ))}
           </div>
         </Card>
@@ -2024,9 +2027,10 @@ function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
         {/* Lista */}
         <div className="space-y-3">
           {filtered.length === 0 && (
-            <Card className="p-8 text-center">
-              <p className="text-muted-foreground text-sm">Nenhuma entrevista encontrada para este filtro.</p>
-            </Card>
+            <EmptyState
+              className="p-8"
+              title={<span className="text-sm font-normal text-muted-foreground">Nenhuma entrevista encontrada para este filtro.</span>}
+            />
           )}
           {filtered.map((h) => (
             <Card key={h.id} className="p-4 sm:p-5 hover:shadow-md transition-all">
@@ -2034,7 +2038,7 @@ function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     <p className="font-bold text-foreground text-sm">{h.vaga}</p>
-                    <Badge variant={h.badge}>{h.status}</Badge>
+                    <StatusBadge tone={statusToneFromBadge(h.badge)}>{h.status}</StatusBadge>
                   </div>
                   <p className="text-xs text-muted-foreground">{h.empresa} · {h.perguntas} perguntas · {h.data}</p>
                   {h.nota && (
@@ -2091,7 +2095,9 @@ function InterviewSetupScreen({ onNavigate }: { onNavigate: (s: Screen) => void 
             {VAGAS.map((v, i) => (
               <button
                 key={i}
+                type="button"
                 onClick={() => setSelected(i)}
+                aria-pressed={selected === i}
                 className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i ? "border-primary bg-blue-50" : "border-border hover:border-primary/40 hover:bg-muted/30"}`}
               >
                 <div className="flex items-center gap-3">
@@ -2174,12 +2180,12 @@ function ConsentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </p>
             </div>
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <Alert variant="warning" className="flex items-start gap-3 p-4">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-800 leading-relaxed">
               Suas gravações <strong>não serão compartilhadas publicamente</strong> e serão armazenadas em ambiente seguro. Você pode solicitar a exclusão a qualquer momento nas configurações da conta.
             </p>
-          </div>
+          </Alert>
         </Card>
 
         {/* Consentimento obrigatório */}
@@ -2256,13 +2262,13 @@ function InterviewConfirmScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
     >
       <div className="w-full max-w-2xl space-y-5">
         {/* Aviso */}
-        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+        <Alert variant="warning" className="flex items-start gap-3 rounded-2xl p-4">
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-bold text-amber-800 mb-1">Atenção: esta ação não pode ser desfeita</p>
             <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão encaminhadas para avaliação humana. Você não poderá editar ou regravar as respostas.</p>
           </div>
-        </div>
+        </Alert>
 
         {/* Resumo das respostas */}
         <Card className="p-5 sm:p-6">
@@ -2313,7 +2319,7 @@ function InterviewConfirmScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
             className="flex-1"
           >
             {sending ? (
-              <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Enviando...</>
+              <><Spinner /> Enviando...</>
             ) : (
               <><Send className="w-4 h-4" /> Enviar entrevista</>
             )}
@@ -2362,7 +2368,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Status</p>
-                <Badge variant="warning">Aguardando avaliação</Badge>
+                <StatusBadge tone="warning">Aguardando avaliação</StatusBadge>
               </div>
             </div>
           </div>
@@ -2410,7 +2416,7 @@ function EmailVerifyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) 
           </div>
           <h1 className="text-xl font-extrabold text-foreground mb-2">Verifique seu e-mail</h1>
           <p className="text-sm text-muted-foreground mb-1">Enviamos um link de confirmação para:</p>
-          <p className="font-bold text-foreground text-sm mb-6">jo**@email.com</p>
+          <p className="font-bold text-foreground text-sm mb-6">jo**@gmail.com</p>
           <div className="bg-muted rounded-xl p-4 text-left mb-6">
             <p className="text-xs text-muted-foreground leading-relaxed">
               Abra seu e-mail e clique no link de confirmação. Se não encontrar, verifique a pasta de spam ou lixo eletrônico.
@@ -2457,7 +2463,7 @@ function ForgotPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void 
                 <p className="text-sm text-muted-foreground">
                   Informe o e-mail cadastrado na sua conta. Enviaremos as instruções para criar uma nova senha.
                 </p>
-                <Field label="E-mail" type="email" placeholder="seu@email.com" required />
+                <Field label="E-mail" type="email" placeholder="nome@gmail.com" required />
                 <Btn variant="primary" className="w-full !py-3" onClick={() => setSent(true)}>
                   Enviar instruções
                 </Btn>
@@ -2525,7 +2531,7 @@ function TermsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     <div className="min-h-screen bg-background">
       <div className="max-w-3xl mx-auto px-4 py-10 sm:py-14">
         <button onClick={() => onNavigate("landing")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-          <ChevronLeft className="w-4 h-4" /> Voltar à página inicial
+          Voltar à página inicial
         </button>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-2">Termos de Uso</h1>
         <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
@@ -2562,7 +2568,7 @@ function PrivacyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     <div className="min-h-screen bg-background">
       <div className="max-w-3xl mx-auto px-4 py-10 sm:py-14">
         <button onClick={() => onNavigate("landing")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-          <ChevronLeft className="w-4 h-4" /> Voltar à página inicial
+          Voltar à página inicial
         </button>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-2">Política de Privacidade</h1>
         <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
@@ -2606,6 +2612,8 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
     <button
       onClick={onToggle}
+      role="switch"
+      aria-checked={on}
       className={`w-11 h-6 rounded-full relative transition-colors shrink-0 ${on ? "bg-primary" : "bg-slate-200"}`}
     >
       <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow ${on ? "right-1" : "left-1"}`} />
@@ -2670,6 +2678,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <button
                 key={id}
                 onClick={() => setTab(id)}
+                aria-pressed={tab === id}
                 className={`w-full text-left px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 ${tab === id ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
               >
                 {id === "excluir" && <Trash2 className="w-3.5 h-3.5 shrink-0" />}
@@ -2699,11 +2708,11 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0">JL</div>
                 <div>
                   <p className="font-semibold text-foreground text-sm">João Lima</p>
-                  <p className="text-xs text-muted-foreground">joao.lima@email.com</p>
+                  <p className="text-xs text-muted-foreground">joao.lima@gmail.com</p>
                 </div>
               </div>
               <Field label="Nome completo" placeholder="João da Silva Lima" />
-              <Field label="E-mail" type="email" placeholder="seu@email.com" hint="Você receberá um e-mail de verificação para confirmar a alteração." />
+              <Field label="E-mail" type="email" placeholder="nome@gmail.com" hint="Você receberá um e-mail de verificação para confirmar a alteração." />
               <Field label="Telefone" placeholder="(61) 99999-9999" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Cidade" placeholder="Brasília" />
@@ -2752,7 +2761,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                   <div className="flex items-center justify-between gap-4 py-2">
                     <div>
                       <p className="text-sm font-semibold text-foreground">Recuperação de senha</p>
-                      <p className="text-xs text-muted-foreground">joao.lima@email.com</p>
+                      <p className="text-xs text-muted-foreground">joao.lima@gmail.com</p>
                     </div>
                     <Btn variant="outline" size="sm">Alterar e-mail</Btn>
                   </div>
@@ -2792,7 +2801,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Canal de entrega</p>
                 <div className="space-y-1">
                   {[
-                    { key: "email" as const, label: "E-mail", desc: "joao.lima@email.com" },
+                    { key: "email" as const, label: "E-mail", desc: "joao.lima@gmail.com" },
                     { key: "sms" as const,   label: "SMS",    desc: "(61) 99999-9999 — opcional" },
                   ].map(n => (
                     <div key={n.key} className="flex items-center justify-between gap-4 py-3 border-b border-border last:border-0">
@@ -2827,7 +2836,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                       <p className="text-sm font-semibold text-foreground">{d.titulo}</p>
                       <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{d.desc}</p>
                     </div>
-                    <Badge variant={d.badge === "Necessário" ? "info" : "default"}>{d.badge}</Badge>
+                    <UIBadge variant={d.badge === "Necessário" ? "primary" : "neutral"}>{d.badge}</UIBadge>
                   </div>
                 ))}
               </Card>
@@ -2868,7 +2877,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                         <p className="text-xs text-green-600 font-semibold mt-1.5">Autorizado em 15/07/2026</p>
                       </div>
                     </div>
-                    <Badge variant="success">Ativo</Badge>
+                    <StatusBadge tone="success">Ativo</StatusBadge>
                   </div>
                   <div className="mt-3 pt-3 border-t border-green-200">
                     <p className="text-xs text-muted-foreground">Para revogar este consentimento, é necessário solicitar a exclusão da conta na seção correspondente.</p>
@@ -2905,12 +2914,12 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 </div>
               </Card>
 
-              <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-start gap-3">
+              <Alert variant="info" className="flex items-start gap-3 rounded-2xl p-4">
                 <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                 <p className="text-xs text-blue-800 leading-relaxed">
                   Você pode revogar os consentimentos opcionais a qualquer momento. As revogações entram em vigor de forma imediata e não afetam dados já coletados anteriormente.
                 </p>
-              </div>
+              </Alert>
             </div>
           )}
 
@@ -2961,7 +2970,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           {/* ── Excluir conta ── */}
           {tab === "excluir" && (
             <div className="space-y-4">
-              <div className="p-4 sm:p-5 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3">
+              <Alert variant="destructive" className="flex items-start gap-3 rounded-2xl p-4 sm:p-5">
                 <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-bold text-red-800 mb-1">Atenção: esta ação é permanente</p>
@@ -2969,7 +2978,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                     A exclusão da conta remove permanentemente seus dados cadastrais, histórico de entrevistas e relatórios. Esta ação não pode ser desfeita.
                   </p>
                 </div>
-              </div>
+              </Alert>
 
               <Card className="p-5 sm:p-6 space-y-4">
                 <h3 className="font-bold text-foreground">O que acontece ao excluir sua conta</h3>
@@ -3142,7 +3151,7 @@ function MaterialCard({
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${TIPO_COLOR[material.tipo] ?? "bg-muted text-muted-foreground"}`}>{material.tipo}</span>
+            <UIBadge variant="neutral" className={`px-2 py-0.5 text-[11px] font-bold ${TIPO_COLOR[material.tipo] ?? "bg-muted text-muted-foreground"}`}>{material.tipo}</UIBadge>
             <span className="text-[11px] text-muted-foreground">{material.tempo}</span>
           </div>
           <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.titulo}</p>
@@ -3152,8 +3161,8 @@ function MaterialCard({
           <Bookmark className={`w-4 h-4 ${material.favorito ? "fill-current" : ""}`} />
         </button>
       </div>
-      <div className="flex items-center justify-between gap-3 pt-1 border-t border-border">
-        <Badge variant="info">{material.categoria}</Badge>
+      <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
+        <UIBadge variant="primary">{material.categoria}</UIBadge>
         <Btn variant="primary" size="sm" onClick={() => toast.info("Abrindo material...")}>Abrir material</Btn>
       </div>
     </Card>
@@ -3226,33 +3235,28 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           {/* Filtros de aba */}
           <div className="flex flex-wrap gap-2 mb-4">
             {([["todos","Todos"],["recomendados","Recomendados"],["recentes","Recentes"],["favoritos","Favoritos"]] as const).map(([id, label]) => (
-              <button
+              <FilterChip
                 key={id}
                 onClick={() => setAbaFiltro(id)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors ${abaFiltro === id ? "bg-primary text-white" : "bg-muted text-muted-foreground hover:bg-accent"}`}
+                selected={abaFiltro === id}
+                className="px-3.5"
               >
                 {label}
                 {id === "favoritos" && ` (${materiais.filter(m => m.favorito).length})`}
-              </button>
+              </FilterChip>
             ))}
           </div>
 
           {/* Busca + categoria */}
           <div className="flex flex-col sm:flex-row gap-3 mb-5">
-            <div className="relative flex-1">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                value={busca}
-                onChange={e => setBusca(e.target.value)}
-                placeholder="Pesquisar materiais..."
-                className="w-full pl-10 pr-4 py-2.5 border border-border rounded-xl bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
-              />
-              {busca && (
-                <button onClick={() => setBusca("")} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
+            <SearchInput
+              containerClassName="flex-1"
+              value={busca}
+              onChange={e => setBusca(e.target.value)}
+              onClear={() => setBusca("")}
+              placeholder="Pesquisar materiais..."
+              className="bg-white"
+            />
             <div className="relative sm:w-56">
               <button
                 onClick={() => setShowCats(!showCats)}
@@ -3279,20 +3283,20 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
           {/* Lista de resultados */}
           {filtrado.length === 0 ? (
-            <Card className="p-10 text-center">
-              <div className="w-14 h-14 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <BookOpen className="w-7 h-7 text-muted-foreground" />
-              </div>
-              <p className="font-bold text-foreground mb-2">Nenhum material encontrado</p>
-              <p className="text-sm text-muted-foreground mb-5">
-                {abaFiltro === "favoritos"
+            <EmptyState
+              icon={BookOpen}
+              title="Nenhum material encontrado"
+              description={
+                abaFiltro === "favoritos"
                   ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer material."
-                  : "Tente ajustar os filtros ou a busca."}
-              </p>
-              <Btn variant="outline" onClick={() => { setBusca(""); setCategoria("Todas as categorias"); setAbaFiltro("todos"); }}>
-                Limpar filtros
-              </Btn>
-            </Card>
+                  : "Tente ajustar os filtros ou a busca."
+              }
+              action={
+                <Btn variant="outline" onClick={() => { setBusca(""); setCategoria("Todas as categorias"); setAbaFiltro("todos"); }}>
+                  Limpar filtros
+                </Btn>
+              }
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {filtrado.map(m => (
@@ -3347,13 +3351,11 @@ function NotificationsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
     >
       <div className="w-full max-w-2xl space-y-3">
         {notifs.length === 0 ? (
-          <Card className="p-10 text-center">
-            <div className="w-14 h-14 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Bell className="w-7 h-7 text-muted-foreground" />
-            </div>
-            <p className="font-bold text-foreground mb-2">Nenhuma notificação</p>
-            <p className="text-sm text-muted-foreground">Você está em dia. As notificações aparecerão aqui.</p>
-          </Card>
+          <EmptyState
+            icon={Bell}
+            title="Nenhuma notificação"
+            description="Você está em dia. As notificações aparecerão aqui."
+          />
         ) : (
           notifs.map(n => {
             const meta = TIPO_META[n.tipo] ?? TIPO_META.sistema;
