@@ -105,6 +105,60 @@ const createEmptyInterviewDraft = (): InterviewDraft => ({
   answers: {},
 });
 
+const createDemoInterviewDraft = (): InterviewDraft => ({
+  context: {
+    sourceUrl: "https://empregare.com/vaga-demo-desenvolvedor-full-stack-junior",
+    areaId: "information-technology",
+    subareaId: "full-stack-development",
+    seniorityId: "junior",
+    jobTitle: "Desenvolvedor Full Stack Júnior",
+    title: "Desenvolvedor Full Stack Júnior",
+    company: "Tech Labs",
+    summary:
+      "Vaga demonstrativa V1 para desenvolvimento de aplicações web, integração entre front-end e back-end e comunicação objetiva com o time.",
+    requirements: [
+      "Conhecimento em React e TypeScript.",
+      "Noções de APIs REST e integração com back-end.",
+      "Organização para trabalhar com tarefas, prazos e revisão de código.",
+      "Comunicação clara para explicar decisões técnicas.",
+    ],
+  },
+  questions: [
+    {
+      id: 1,
+      type: "Tecnica",
+      text: "Quais conhecimentos de React e TypeScript você usaria para atuar nesta vaga?",
+    },
+    {
+      id: 2,
+      type: "Tecnica",
+      text: "Como você organizaria a integração de uma tela front-end com uma API REST?",
+    },
+    {
+      id: 3,
+      type: "Comportamental",
+      text: "Conte sobre uma situação em que precisou organizar prioridades para cumprir um prazo.",
+    },
+    {
+      id: 4,
+      type: "Comportamental",
+      text: "Descreva uma experiência em que explicou uma decisão técnica para outra pessoa do time.",
+    },
+    {
+      id: 5,
+      type: "Carreira",
+      text: "Por que esta vaga faz sentido para seus objetivos profissionais agora?",
+    },
+  ],
+  answers: {
+    1: "Eu usaria componentes reutilizáveis, tipagem para contratos de dados e estados claros de carregamento, erro e sucesso para entregar uma interface mais confiável.",
+    2: "Começaria entendendo o contrato da API, depois criaria uma camada de serviço no Front e validaria os estados principais antes de integrar à tela final.",
+    3: "Em um projeto acadêmico, organizei tarefas por impacto e prazo, combinei entregas menores com o grupo e acompanhei pendências diariamente até concluir a atividade.",
+    4: "Expliquei para o time por que valia separar um formulário em componentes menores, mostrando como isso reduziria repetição e facilitaria manutenção.",
+    5: "A vaga combina com meu momento porque quero consolidar minha base em desenvolvimento web e ganhar prática em produtos com fluxo real de usuários.",
+  },
+});
+
 type SpeechRecognitionConstructor = new () => {
   lang: string;
   continuous: boolean;
@@ -3256,11 +3310,17 @@ function AppRoutes() {
   const [interviewDraft, setInterviewDraft] = useState(createEmptyInterviewDraft);
   const currentScreen = getCurrentScreen(location.pathname);
   const navigate = (screen: Screen) => routerNavigate(getPathForScreen(screen));
+  const navigateFromFlowNav = (screen: Screen) => {
+    if (["prep", "consent", "interview", "review", "interview-confirm"].includes(screen)) {
+      setInterviewDraft(createDemoInterviewDraft());
+    }
+    navigate(screen);
+  };
 
   return (
     <div className="flex flex-col min-h-screen">
       <Toaster position="top-center" richColors />
-      <FlowNav current={currentScreen} onNavigate={navigate} />
+      <FlowNav current={currentScreen} onNavigate={navigateFromFlowNav} />
       <div className="flex-1 flex flex-col">
         <Routes>
           <Route path="/" element={<LandingScreen onNavigate={navigate} />} />
