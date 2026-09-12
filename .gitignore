@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.vite/
+
+# Test and coverage artifacts
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+cypress/screenshots/
+cypress/videos/
+cypress/downloads/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Package manager caches
+.npm/
+.pnpm-store/
+.yarn/
+!.yarn/releases/
+!.yarn/plugins/
+!.yarn/sdks/
+!.yarn/versions/
+
+# Framework and tool caches
+.cache/
+.turbo/
+.eslintcache
+.stylelintcache
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local runtime artifacts
+*.local
+tmp/
+temp/
+
+# Preserved binary baseline copy.
+# Keep the documentation and SHA-256 in Git, but do not version the ZIP itself.
+docs/00-fontes-originais/prototipo-01/*.zip

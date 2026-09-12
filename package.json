@@ -1,0 +1,15 @@
+{
+  "name": "rh-connect",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev:web": "cd apps/web && pnpm run dev",
+    "build:web": "cd apps/web && pnpm run build",
+    "format:web": "cd apps/web && pnpm run format",
+    "format:check:web": "cd apps/web && pnpm run format:check",
+    "lint:web": "cd apps/web && pnpm run lint",
+    "test:web": "cd apps/web && pnpm run test:run",
+    "typecheck:web": "cd apps/web && pnpm run typecheck"
+  }
+}

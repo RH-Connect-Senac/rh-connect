@@ -1,0 +1,20 @@
+packages:
+  - '.'
+  - 'apps/*'
+  - 'packages/*'
+allowBuilds:
+  '@prisma/client': false
+  '@prisma/engines': false
+  '@tailwindcss/oxide': true
+  esbuild: true
+  prisma: false
+  unrs-resolver: true
+supportedArchitectures:
+  os:
+    - linux
+    - win32
+  cpu:
+    - x64
+    - arm64
+  libc:
+    - glibc
