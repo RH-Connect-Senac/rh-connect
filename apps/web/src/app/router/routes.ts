@@ -5,7 +5,7 @@ export type AppScreen =
   | "auth" | "email-verify" | "forgot-password" | "reset-password"
   | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
   | "dashboard" | "profile" | "settings" | "materials" | "notifications"
-  | "interview-history" | "development"
+  | "interview-history" | "development" | "disc-test"
   | "interview-setup" | "consent" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
   | "pending" | "report"
   | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
@@ -47,6 +47,7 @@ export const APP_ROUTES = [
   { screen: "notifications", path: "/candidate/notifications", label: "Notificacoes", group: "candidate", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "interview-history", path: "/candidate/interviews", label: "Historico de entrevistas", group: "candidate", priority: "P2", status: "mockado", backDependency: "sim" },
   { screen: "development", path: "/candidate/development", label: "Desenvolvimento", group: "candidate", priority: "P1", status: "mockado", backDependency: "sim" },
+  { screen: "disc-test", path: "/candidate/disc", label: "Teste DISC", group: "candidate", priority: "P2", status: "simulado", backDependency: "nao imediata", notes: "Funcionalidade independente com persistencia local temporaria." },
   { screen: "interview-setup", path: "/candidate/interviews/new", label: "Nova entrevista", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim", notes: "Recebe a URL da vaga, analisa contexto mockado e prepara as perguntas." },
   { screen: "consent", path: "/candidate/interviews/new/consent", label: "Consentimento", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "prep", path: "/candidate/interviews/new/preparation", label: "Orientacoes", group: "candidate", priority: "P0", status: "visual", backDependency: "nao imediata" },
@@ -106,6 +107,7 @@ export const FLOW_STEPS = [
   { id: "report", label: "Relatorio" },
   { id: "interview-history", label: "Historico" },
   { id: "development", label: "Desenvolvimento" },
+  { id: "disc-test", label: "Teste DISC" },
   { id: "materials", label: "Materiais" },
   { id: "notifications", label: "Notificacoes" },
   { id: "eval-dashboard", label: "Avaliador" },

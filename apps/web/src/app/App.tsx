@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
 import { DevelopmentContent } from "./components/development-screen";
+import { DiscTestScreen } from "./components/disc-test-screen";
 import {
   AccountDropdown, NotificationDropdown,
   CANDIDATE_ACCOUNT, CANDIDATE_NOTIFS,
@@ -74,7 +75,7 @@ import {
 
 const AUTH_SCREENS: Screen[] = [
   "dashboard","profile","settings","materials","notifications",
-  "interview-history","development",
+  "interview-history","development","disc-test",
   "interview-setup","consent","prep","interview","review","interview-confirm","interview-done",
   "pending","report",
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
@@ -460,6 +461,7 @@ const NAV_ITEMS = [
   { icon: User,      label: "Meu Perfil",   screen: "profile" as Screen },
   { icon: History,   label: "Histórico",       screen: "interview-history" as Screen },
   { icon: TrendingUp,label: "Desenvolvimento", screen: "development" as Screen },
+  { icon: FileText,  label: "Teste DISC",      screen: "disc-test" as Screen },
   { icon: BookOpen,  label: "Materiais",       screen: "materials" as Screen },
   { icon: Settings,  label: "Configurações",screen: "settings" as Screen },
 ];
@@ -3470,6 +3472,16 @@ function DevelopmentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) 
   );
 }
 
+function CandidateDiscTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  return (
+    <AuthLayout current="disc-test" onNavigate={onNavigate}
+      title="Teste DISC"
+      subtitle="Ferramenta de autoconhecimento e desenvolvimento profissional">
+      <DiscTestScreen />
+    </AuthLayout>
+  );
+}
+
 
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
@@ -3514,6 +3526,7 @@ function AppRoutes() {
           <Route path="/candidate/notifications" element={<NotificationsScreen onNavigate={navigate} />} />
           <Route path="/candidate/interviews" element={<InterviewHistoryScreen onNavigate={navigate} />} />
           <Route path="/candidate/development" element={<DevelopmentScreen onNavigate={navigate} />} />
+          <Route path="/candidate/disc" element={<CandidateDiscTestScreen onNavigate={navigate} />} />
           <Route path="/candidate/interviews/new" element={<InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
           <Route path="/candidate/interviews/new/consent" element={<ConsentScreen onNavigate={navigate} draft={interviewDraft} />} />
           <Route path="/candidate/interviews/new/preparation" element={<PrepScreen onNavigate={navigate} draft={interviewDraft} />} />
