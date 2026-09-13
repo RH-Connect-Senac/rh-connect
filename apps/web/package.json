@@ -4,14 +4,14 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-  "dev": "vite",
-  "build": "vite build",
-  "typecheck": "echo \"Typecheck temporariamente ignorado na base importada do Figma Make\"",
-  "lint": "echo \"Lint temporariamente ignorado na base importada do Figma Make\"",
-  "test:run": "echo \"Testes temporariamente ignorados na base importada do Figma Make\"",
-  "format": "echo \"Formatacao temporariamente ignorada na base importada do Figma Make\"",
-  "format:check": "echo \"Checagem de formatacao temporariamente ignorada na base importada do Figma Make\""
-},
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "echo \"Typecheck temporariamente ignorado na base importada do Figma Make\"",
+    "lint": "echo \"Lint temporariamente ignorado na base importada do Figma Make\"",
+    "test:run": "echo \"Testes temporariamente ignorados na base importada do Figma Make\"",
+    "format": "echo \"Formatacao temporariamente ignorada na base importada do Figma Make\"",
+    "format:check": "echo \"Checagem de formatacao temporariamente ignorada na base importada do Figma Make\""
+  },
   "dependencies": {
     "@babel/runtime": "^8.0.0",
     "@emotion/react": "11.14.0",
@@ -72,6 +72,8 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5"

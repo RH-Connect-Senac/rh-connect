@@ -1,7 +1,7 @@
 /** RH Connect — Exploração Visual | Fluxo Principal do Candidato */
 
-import { useState, useRef, useEffect, useCallback, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router";
+import { useState, useRef, useEffect, useCallback, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase,
@@ -19,6 +19,7 @@ import { DiscTestScreen } from "./components/disc-test-screen";
 import {
   AccountDropdown, NotificationDropdown,
   CANDIDATE_ACCOUNT, CANDIDATE_NOTIFS,
+  type AccountConfig,
 } from "./components/header-popovers";
 import { RHConnectLogo } from "./components/brand/rh-connect-logo";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
@@ -70,6 +71,37 @@ import {
   SENIORITY_LEVEL_OPTIONS,
   getProfessionalSubareasByArea,
 } from "./domain/professional-catalog";
+import type { MaterialStatus, MaterialUserState, SupportMaterial } from "./domain/materials";
+import { SUPPORT_MATERIAL_CATEGORIES, SUPPORT_MATERIALS, findSupportMaterialBySlug } from "./mocks/materials";
+import {
+  completeMaterial,
+  getMaterialUserState,
+  getMaterialUserStates,
+  openMaterial,
+  toggleMaterialFavorite,
+} from "./services/materials-service";
+import { advanceDevelopmentFromMaterial } from "./services/development-service";
+import { DEFAULT_CANDIDATE } from "./mocks/interviews";
+import {
+  getAvailableCandidateReports,
+  getAverageScore,
+  getCandidateInterviews,
+  getEvaluationByInterviewId,
+  getInterviewById,
+  getReportByInterviewId,
+  statusLabelFromInterview,
+  submitInterview,
+} from "./services/interviews-service";
+import {
+  completeMockOnboarding,
+  getMockAuthSession,
+  loginMockUser,
+  logoutMockUser,
+  registerMockCandidate,
+  type MockAuthSession,
+  type MockAuthUser,
+  type MockUserRole,
+} from "./services/auth-service";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
@@ -84,6 +116,27 @@ const AUTH_SCREENS: Screen[] = [
   "admin-questions","admin-question-form","admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
 ];
 
+const DASHBOARD_BY_ROLE: Record<MockUserRole, string> = {
+  CANDIDATE: "/candidate/dashboard",
+  EVALUATOR: "/evaluator/dashboard",
+  ADMIN: "/admin/dashboard",
+};
+
+const ONBOARDING_BY_ROLE: Record<MockUserRole, string> = {
+  CANDIDATE: "/candidate/onboarding",
+  EVALUATOR: "/evaluator/onboarding",
+  ADMIN: "/admin/onboarding",
+};
+
+function getEntryPathForSession(session: MockAuthSession) {
+  if (!session.authenticated || !session.user) return "/login";
+  return session.user.onboardingCompleted ? DASHBOARD_BY_ROLE[session.user.role] : ONBOARDING_BY_ROLE[session.user.role];
+}
+
+function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
+  return pathname === ONBOARDING_BY_ROLE[role];
+}
+
 const CRITERIA = [
   { name: "Clareza",         score: 9 },
   { name: "Coerência",       score: 9 },
@@ -95,18 +148,21 @@ const CRITERIA = [
 ];
 
 type InterviewDraft = {
+  interviewId?: string;
   context: JobInterviewContext | null;
   questions: InterviewQuestion[];
   answers: Record<number, string>;
 };
 
 const createEmptyInterviewDraft = (): InterviewDraft => ({
+  interviewId: undefined,
   context: null,
   questions: [],
   answers: {},
 });
 
 const createDemoInterviewDraft = (): InterviewDraft => ({
+  interviewId: "interview-demo",
   context: {
     sourceUrl: "https://empregare.com/vaga-demo-desenvolvedor-full-stack-junior",
     areaId: "information-technology",
@@ -231,6 +287,22 @@ function statusToneFromBadge(variant: "default" | "success" | "warning" | "error
     purple: "neutral",
   } as const;
   return tones[variant];
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "RC";
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
+
+function getCandidateAccountConfig(user?: MockAuthUser | null): AccountConfig {
+  if (!user) return CANDIDATE_ACCOUNT;
+  return {
+    ...CANDIDATE_ACCOUNT,
+    name: user.name,
+    email: user.email,
+    initials: getInitials(user.name),
+  };
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -467,19 +539,20 @@ const NAV_ITEMS = [
 ];
 
 function SidebarContent({
-  current, onNavigate, collapsed, onToggleCollapse, onClose, isMobile = false,
+  current, onNavigate, collapsed, onToggleCollapse, onClose, account = CANDIDATE_ACCOUNT, isMobile = false,
 }: {
   current: Screen;
   onNavigate: (s: Screen) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
   onClose: () => void;
+  account?: AccountConfig;
   isMobile?: boolean;
 }) {
   const [showLogout, setShowLogout] = useState(false);
 
   return (
-    <div className="flex flex-col h-full relative" style={{ backgroundColor: "#021025" }}>
+    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden" style={{ backgroundColor: "#021025" }}>
       {/* Logout confirmation modal */}
       {showLogout && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,38,82,0.92)" }}>
@@ -507,7 +580,7 @@ function SidebarContent({
         </div>
       )}
       {/* Logo */}
-      <div className={`border-b border-white/10 flex items-center ${collapsed ? "px-2 py-4 justify-center" : "px-5 py-4"}`}>
+      <div className={`flex h-[65px] shrink-0 items-center overflow-hidden border-b border-white/10 ${collapsed ? "justify-center px-2" : "px-5"}`}>
         {collapsed ? (
           /* Símbolo RH completo, proporções originais preservadas, sem corte */
           <svg viewBox="0 0 57.9158 31.8399" className="h-6 w-auto shrink-0" fill="none" style={{ maxWidth: "100%" }}>
@@ -522,15 +595,29 @@ function SidebarContent({
             <path d="M53.2854 7.48461C55.1541 7.22913 56.8761 8.53826 57.1282 10.4075C57.38 12.2771 56.065 13.9951 54.1946 14.2424C52.3304 14.4887 50.6175 13.1811 50.3664 11.3176C50.1153 9.45383 51.4222 7.73945 53.2854 7.48461Z" fill="#1560FE" stroke="white" strokeWidth="1.51237" />
           </svg>
         ) : (
-          <div className="flex flex-col gap-0.5 min-w-0">
-            <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
-            <p className="text-white/40 text-[11px]">Candidato</p>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+            <div className="flex min-w-[160px] flex-col gap-0.5 overflow-hidden">
+              <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
+              <p className="text-[11px] text-white/40">Candidato</p>
+            </div>
+
+            {isMobile && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/50 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                aria-label="Fechar menu"
+                title="Fechar menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+      <nav className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {NAV_ITEMS.map((item) => {
           const active = current === item.screen;
           return (
@@ -538,12 +625,12 @@ function SidebarContent({
               key={item.label}
               onClick={() => { item.screen && onNavigate(item.screen); onClose(); }}
               title={collapsed ? item.label : undefined}
-              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all text-left
+                className={`flex w-full min-w-0 max-w-full items-center overflow-hidden rounded-xl text-left text-sm font-medium transition-colors
                 ${collapsed ? "justify-center p-2.5" : "gap-3 px-3.5 py-2.5"}
                 ${active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/10 hover:text-white/80"}`}
             >
               <item.icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
               {active && !collapsed && <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" />}
             </button>
           );
@@ -552,11 +639,11 @@ function SidebarContent({
 
       {/* Collapse toggle — desktop/notebook only, hidden in mobile drawer */}
       {!isMobile && (
-        <div className="p-3 border-t border-white/10">
+          <div className="shrink-0 border-t border-white/10 p-3">
           <button
             onClick={onToggleCollapse}
             title={collapsed ? "Expandir menu" : undefined}
-            className={`w-full flex items-center rounded-xl py-2 text-white/40 hover:text-white/70 hover:bg-white/10 transition-all duration-[220ms]
+              className={`flex w-full min-w-0 items-center overflow-hidden rounded-xl py-2 text-white/40 transition-colors hover:bg-white/10 hover:text-white/70
               ${collapsed ? "justify-center px-2" : "gap-2 px-3"}`}
           >
             {collapsed
@@ -567,19 +654,19 @@ function SidebarContent({
       )}
 
       {/* User */}
-      <div className={`p-3 border-t border-white/10 ${collapsed ? "flex justify-center" : ""}`}>
+      <div className={`shrink-0 overflow-hidden border-t border-white/10 p-3 ${collapsed ? "flex justify-center" : ""}`}>
         {collapsed ? (
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
-            JL
+          <div className={`w-8 h-8 ${account.avatarClass} rounded-full flex items-center justify-center text-white text-xs font-bold`}>
+            {account.initials}
           </div>
         ) : (
           <div className="flex items-center gap-3 px-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
-              JL
+            <div className={`w-8 h-8 ${account.avatarClass} rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0`}>
+              {account.initials}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-semibold truncate">João Lima</p>
-              <p className="text-white/40 text-xs truncate">joao.lima@gmail.com</p>
+              <p className="text-white text-sm font-semibold truncate">{account.name}</p>
+              <p className="text-white/40 text-xs truncate">{account.email}</p>
             </div>
             <button
               onClick={() => setShowLogout(true)}
@@ -596,16 +683,32 @@ function SidebarContent({
 }
 
 function TopBar({
-  title, subtitle, actions, onNavigate,
+  title, subtitle, actions, onNavigate, account = CANDIDATE_ACCOUNT, onOpenMenu,
 }: {
   title: string; subtitle?: string; actions?: React.ReactNode;
   onNavigate: (s: Screen) => void;
+  account?: AccountConfig;
+  onOpenMenu?: () => void;
 }) {
   return (
     <div className="bg-white border-b border-border px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between shrink-0 gap-3">
-      <div className="min-w-0">
-        <h1 className="text-base sm:text-lg font-bold text-foreground truncate">{title}</h1>
-        {subtitle && <p className="text-xs text-muted-foreground mt-0.5 truncate hidden sm:block">{subtitle}</p>}
+      <div className="flex min-w-0 items-center gap-3">
+        {onOpenMenu && (
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+            aria-label="Abrir menu"
+            title="Abrir menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        )}
+
+        <div className="min-w-0">
+          <h1 className="text-base sm:text-lg font-bold text-foreground truncate">{title}</h1>
+          {subtitle && <p className="text-xs text-muted-foreground mt-0.5 truncate hidden sm:block">{subtitle}</p>}
+        </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {actions && <div className="hidden sm:flex items-center gap-2">{actions}</div>}
@@ -615,7 +718,7 @@ function TopBar({
           onNavigate={onNavigate as (s: string) => void}
         />
         <AccountDropdown
-          config={CANDIDATE_ACCOUNT}
+          config={account}
           onNavigate={onNavigate as (s: string) => void}
         />
       </div>
@@ -624,21 +727,86 @@ function TopBar({
 }
 
 function AuthLayout({
-  current, onNavigate, title, subtitle, actions, children,
+  current, onNavigate, title, subtitle, actions, account, children,
 }: {
   current: Screen; onNavigate: (s: Screen) => void;
   title: string; subtitle?: string; actions?: React.ReactNode;
+  account?: AccountConfig;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(() => sessionStorage.getItem("sb-collapsed") === "1");
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = sessionStorage.getItem("sb-collapsed");
+
+    if (saved) {
+      return saved === "1";
+    }
+
+    return window.matchMedia("(min-width: 1024px) and (max-width: 1365px)").matches;
+  });
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const toggleCollapsed = () => setCollapsed(c => { sessionStorage.setItem("sb-collapsed", c ? "0" : "1"); return !c; });
 
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDrawerOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+    };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const mediaQuery = window.matchMedia("(min-width: 1024px)");
+    const closeDrawerOnDesktop = () => {
+      if (mediaQuery.matches) {
+        setDrawerOpen(false);
+      }
+    };
+
+    closeDrawerOnDesktop();
+    mediaQuery.addEventListener("change", closeDrawerOnDesktop);
+
+    return () => {
+      mediaQuery.removeEventListener("change", closeDrawerOnDesktop);
+    };
+  }, [drawerOpen]);
+
   return (
-    <div className="flex w-full">
-      {/* Sidebar fixa — sem overlay, sem drawer, sem bloqueio de cliques */}
+    <div
+      className="relative min-h-[calc(100vh-44px)] w-full overflow-x-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-200 lg:ease-out"
+      style={{ gridTemplateColumns: collapsed ? "4rem minmax(0, 1fr)" : "15rem minmax(0, 1fr)" }}
+    >
+      {/* Desktop/notebook: sidebar no fluxo normal do layout */}
       <aside
-        className={`flex flex-col shrink-0 sticky self-start transition-[width] duration-[220ms] ease-in-out ${collapsed ? "w-16" : "w-60"}`}
-        style={{ backgroundColor: "#021025", top: 44, height: "calc(100vh - 44px)" }}
+        className={`hidden min-w-0 overflow-hidden bg-[#021025] lg:fixed lg:bottom-0 lg:left-0 lg:top-[44px] lg:z-30 lg:flex lg:w-[var(--sidebar-width)] lg:flex-col lg:transition-[width] lg:duration-200 lg:ease-out ${collapsed ? "shadow-none" : "shadow-2xl"}`}
+        style={{ "--sidebar-width": collapsed ? "4rem" : "15rem" } as CSSProperties}
       >
         <SidebarContent
           current={current}
@@ -646,19 +814,43 @@ function AuthLayout({
           collapsed={collapsed}
           onToggleCollapse={toggleCollapsed}
           onClose={() => {}}
+          account={account}
           isMobile={false}
         />
       </aside>
 
+      {/* Mobile/tablet: backdrop + drawer fora do fluxo */}
+      <div
+        aria-hidden={!drawerOpen}
+        onClick={() => setDrawerOpen(false)}
+        className={`fixed inset-0 top-[44px] z-40 bg-black/50 backdrop-blur-[1px] transition-opacity duration-200 lg:hidden ${drawerOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+      />
+
+      <aside
+        className={`fixed bottom-0 left-0 top-[44px] z-50 flex w-[min(280px,85vw)] flex-col overflow-hidden bg-[#021025] shadow-2xl transition-transform duration-[220ms] ease-out lg:hidden ${drawerOpen ? "translate-x-0" : "-translate-x-full"}`}
+      >
+        <SidebarContent
+          current={current}
+          onNavigate={onNavigate}
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          onClose={() => setDrawerOpen(false)}
+          account={account}
+          isMobile
+        />
+      </aside>
+
       {/* Conteúdo principal — reajusta horizontalmente conforme a sidebar */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex min-w-0 flex-1 flex-col lg:col-start-2">
         <TopBar
           title={title}
           subtitle={subtitle}
           actions={actions}
           onNavigate={onNavigate}
+          account={account}
+          onOpenMenu={() => setDrawerOpen(true)}
         />
-        <main className="p-4 sm:p-6 lg:p-8">
+        <main className="min-w-0 flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
           {children}
         </main>
       </div>
@@ -676,9 +868,13 @@ function LandingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 function AuthScreen({
   onNavigate,
+  onLogin,
+  onRegister,
   initialTab = "register",
 }: {
   onNavigate: (s: Screen) => void;
+  onLogin: (role: MockUserRole, onboardingCompleted?: boolean) => void;
+  onRegister: () => void;
   initialTab?: "login" | "register";
 }) {
   const [tab, setTab] = useState<"login" | "register">(initialTab);
@@ -729,7 +925,7 @@ function AuthScreen({
                   </div>
                   <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={() => onNavigate("dashboard")}>
+                <Btn variant="primary" className="w-full !py-3" onClick={() => onLogin("CANDIDATE", true)}>
                   Entrar na plataforma
                 </Btn>
               </div>
@@ -749,7 +945,7 @@ function AuthScreen({
                     </span>
                   </label>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={() => onNavigate("email-verify")}>
+                <Btn variant="primary" className="w-full !py-3" onClick={onRegister}>
                   Criar minha conta
                 </Btn>
               </div>
@@ -775,11 +971,11 @@ function AuthScreen({
               Estes atalhos existem apenas para demonstração.
             </p>
             <div className="flex gap-2">
-              <button onClick={() => onNavigate("eval-onboarding")}
+              <button onClick={() => onLogin("EVALUATOR", false)}
                 className="flex-1 px-3 py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 text-xs font-semibold hover:bg-teal-100 transition-colors">
                 Avaliador
               </button>
-              <button onClick={() => onNavigate("admin-onboarding")}
+              <button onClick={() => onLogin("ADMIN", false)}
                 className="flex-1 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 transition-colors">
                 Administrador
               </button>
@@ -793,15 +989,42 @@ function AuthScreen({
 
 // ─── Screen 3: Dashboard ──────────────────────────────────────────────────────
 
-function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const routerNavigate = useNavigate();
+  const candidateUser = session.user;
+  const isDemoCandidate = candidateUser?.id === "candidate-demo";
+  const candidateId = isDemoCandidate ? DEFAULT_CANDIDATE.id : candidateUser?.id ?? DEFAULT_CANDIDATE.id;
+  const account = getCandidateAccountConfig(candidateUser);
+  const firstName = (candidateUser?.name ?? CANDIDATE_ACCOUNT.name).trim().split(/\s+/)[0] ?? "candidato";
+  const candidateInterviews = getCandidateInterviews(candidateId);
+  const availableReports = getAvailableCandidateReports(candidateId);
+  const pendingCount = candidateInterviews.filter((item) => item.status !== "EVALUATED").length;
+  const bestScore = availableReports
+    .map((item) => getAverageScore(item.evaluation?.scores))
+    .filter((score): score is number => score !== null)
+    .sort((a, b) => b - a)[0];
   const RECENT = [
-    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const },
-    { vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const },
-    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const },
+    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const, interviewId: undefined as string | undefined },
+    { vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const, interviewId: undefined as string | undefined },
+    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const, interviewId: undefined as string | undefined },
   ];
+  const recentItems = [
+    ...candidateInterviews.slice(0, 3).map((interview) => {
+      const report = getReportByInterviewId(interview.id);
+      return {
+        vaga: interview.context.title,
+        empresa: interview.context.company,
+        data: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+        status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
+        badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
+        interviewId: interview.id,
+      };
+    }),
+    ...(isDemoCandidate ? RECENT : []),
+  ].slice(0, 3);
 
   return (
-    <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle="Bem-vindo de volta, João!">
+    <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
       {/* Profile incomplete banner */}
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-start sm:items-center gap-4">
@@ -823,10 +1046,10 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value="3"   label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-        <StatCard value="1"   label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
-        <StatCard value="1"   label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
-        <StatCard value="7,8" label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
+        <StatCard value={candidateInterviews.length || (isDemoCandidate ? 3 : 0)} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+        <StatCard value={pendingCount || (isDemoCandidate ? 1 : 0)} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
+        <StatCard value={availableReports.length || (isDemoCandidate ? 1 : 0)} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
+        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : isDemoCandidate ? "7,8" : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
@@ -856,27 +1079,36 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </button>
             </div>
             <div className="space-y-3">
-              {RECENT.map((item) => (
-                <div key={item.vaga} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
-                      <Briefcase className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
-                      <div className="flex flex-wrap items-center gap-2 mt-2">
-                        <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
-                        {item.badge === "success" && (
-                          <Btn size="sm" variant="primary" onClick={() => onNavigate("report")}>
-                            Ver relatório
-                          </Btn>
-                        )}
+              {recentItems.length ? (
+                recentItems.map((item) => (
+                  <div key={item.interviewId ?? `${item.vaga}-${item.data}`} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
+                        <Briefcase className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
+                          {item.badge === "success" && (
+                            <Btn size="sm" variant="primary" onClick={() => item.interviewId ? routerNavigate(`/candidate/reports/${item.interviewId}`) : onNavigate("report")}>
+                              Ver relatório
+                            </Btn>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <EmptyState
+                  icon={MessageSquare}
+                  title="Nenhuma entrevista enviada ainda"
+                  description="Quando você concluir uma entrevista, ela aparecerá aqui com o status da avaliação."
+                  className="border-none bg-muted/40 p-6"
+                />
+              )}
             </div>
           </Card>
         </div>
@@ -1497,9 +1729,9 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
           </Btn>
           <Btn variant="primary" size="lg" disabled={!confirm || sending} onClick={handleSend}>
             {sending ? (
-              <><Spinner />Enviando...</>
+              <><Spinner />Preparando...</>
             ) : (
-              <><Send className="w-4 h-4" /> Enviar entrevista</>
+              <><Send className="w-4 h-4" /> Continuar para confirmação</>
             )}
           </Btn>
         </div>
@@ -1511,6 +1743,10 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
 // ─── Screen 10: Avaliação Pendente ────────────────────────────────────────────
 
 function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const report = getReportByInterviewId(id);
   const TIMELINE = [
     { label: "Conta criada",          date: "02/07/2026",      done: true },
     { label: "Entrevista realizada",  date: "18/07/2026",      done: true },
@@ -1521,7 +1757,7 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   ];
 
   return (
-    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle="Desenvolvedor Full Stack Júnior · Tech Labs">
+    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle={`${interview?.context.title ?? "Desenvolvedor Full Stack Júnior"} · ${interview?.context.company ?? "Tech Labs"}`}>
       <div className="w-full">
         {/* Status hero */}
         <Card className="p-6 sm:p-8 mb-6 text-center">
@@ -1599,8 +1835,13 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 ))}
               </ul>
             </Card>
-            <Btn variant="primary" className="w-full" onClick={() => onNavigate("report")}>
-              Ver resultado disponível <ArrowRight className="w-4 h-4" />
+            <Btn
+              variant={report?.status === "AVAILABLE" ? "primary" : "outline"}
+              className="w-full"
+              disabled={report?.status !== "AVAILABLE"}
+              onClick={() => id && routerNavigate(`/candidate/reports/${id}`)}
+            >
+              {report?.status === "AVAILABLE" ? "Ver resultado disponível" : "Resultado ainda indisponível"} <ArrowRight className="w-4 h-4" />
             </Btn>
           </div>
         </div>
@@ -1612,15 +1853,40 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ─── Screen 11: Resultado e Relatório ─────────────────────────────────────────
 
 function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const evaluation = getEvaluationByInterviewId(id);
+  const report = getReportByInterviewId(id);
+  const isRealReportRoute = Boolean(id && id !== "report-demo");
   const [resultView, setResultView] = useState<"Atual" | "Anterior" | "Melhor resultado">("Atual");
   const [isReportFading, setIsReportFading] = useState(false);
   const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
 
+  if (isRealReportRoute && (!report || report.status !== "AVAILABLE")) {
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview?.context.title ?? "Entrevista em avaliação"}>
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
+          <p className="text-sm text-muted-foreground mb-5">O relatório fica disponível após a conclusão da avaliação humana.</p>
+          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  const evaluationCriteria = evaluation?.scores
+    ? Object.entries(evaluation.scores).map(([name, score]) => ({
+      name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
+      score,
+    }))
+    : CRITERIA;
+
   const reportResults = {
     Atual: {
       summary:
-        "Você demonstrou clareza e coerência nas respostas, com boa aderência ao contexto da vaga. Continue aprimorando exemplos práticos e organização para alcançar excelência.",
-      criteria: CRITERIA,
+        evaluation?.comment || "Você demonstrou clareza e coerência nas respostas, com boa aderência ao contexto da vaga. Continue aprimorando exemplos práticos e organização para alcançar excelência.",
+      criteria: evaluationCriteria,
     },
     Anterior: {
       summary:
@@ -1706,7 +1972,7 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       current="report"
       onNavigate={onNavigate}
       title="Resultado e Relatório"
-      subtitle="Desenvolvedor Full Stack Júnior · Tech Labs · 18/07/2026"
+      subtitle={`${interview?.context.title ?? "Desenvolvedor Full Stack Júnior"} · ${interview?.context.company ?? "Tech Labs"}${report?.generatedAt ? ` · ${new Date(report.generatedAt).toLocaleDateString("pt-BR")}` : " · 18/07/2026"}`}
       actions={<Btn variant="outline" size="sm" onClick={() => toast.success("PDF gerado! O download iniciará em instantes.")}><Upload className="w-3.5 h-3.5" /> Exportar PDF</Btn>}
     >
       <div className="w-full">
@@ -1986,14 +2252,33 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 // ─── Fase A: CAN-007 Histórico de Entrevistas ─────────────────────────────────
 
 function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const candidateInterviews = getCandidateInterviews(DEFAULT_CANDIDATE.id);
   const HISTORICO = [
-    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const },
-    { id: "E002", vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const },
-    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const },
+    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const, realId: undefined as string | undefined },
+    { id: "E002", vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const, realId: undefined as string | undefined },
+    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const, realId: undefined as string | undefined },
   ];
+  const realHistory = candidateInterviews.map((interview) => {
+    const report = getReportByInterviewId(interview.id);
+    const evaluation = getEvaluationByInterviewId(interview.id);
+    const average = getAverageScore(evaluation?.scores);
+    return {
+      id: interview.id,
+      vaga: interview.context.title,
+      empresa: interview.context.company,
+      data: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+      perguntas: interview.answers.length,
+      status: report?.status === "AVAILABLE" ? "Concluída" : statusLabelFromInterview(interview.status),
+      nota: average ? average.toFixed(1) : null,
+      badge: report?.status === "AVAILABLE" ? "success" as const : "warning" as const,
+      realId: interview.id,
+    };
+  });
+  const historyItems = [...realHistory, ...HISTORICO];
 
   const [filtro, setFiltro] = useState("Todos");
-  const filtered = HISTORICO.filter(h => {
+  const filtered = historyItems.filter(h => {
     if (filtro === "Todos") return true;
     if (filtro === "Concluídas") return h.status === "Concluída";
     if (filtro === "Aguardando") return h.status.includes("Aguardando");
@@ -2044,12 +2329,12 @@ function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
                 </div>
                 <div className="flex gap-2 shrink-0">
                   {h.nota && (
-                    <Btn variant="primary" size="sm" onClick={() => onNavigate("report")}>
+                    <Btn variant="primary" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/reports/${h.realId}`) : onNavigate("report")}>
                       Ver relatório
                     </Btn>
                   )}
                   {h.badge === "warning" && (
-                    <Btn variant="outline" size="sm" onClick={() => onNavigate("pending")}>
+                    <Btn variant="outline" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/interviews/${h.realId}/status`) : onNavigate("pending")}>
                       Acompanhar
                     </Btn>
                   )}
@@ -2239,8 +2524,8 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
         {/* Consentimento obrigatório */}
         <Card className="p-5 sm:p-6">
           <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-4">Autorização obrigatória para participar</p>
-          <label className="flex items-start gap-4 cursor-pointer group">
-            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentRequired ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`} onClick={() => setConsentRequired(!consentRequired)}>
+          <label className="flex items-start gap-4 cursor-pointer group" onClick={() => setConsentRequired((current) => !current)}>
+            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentRequired ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`}>
               {consentRequired && <Check className="w-3 h-3 text-white" />}
             </div>
             <div className="flex-1">
@@ -2255,8 +2540,8 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
         {/* Consentimento opcional */}
         <Card className="p-5 sm:p-6">
           <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4">Autorização opcional</p>
-          <label className="flex items-start gap-4 cursor-pointer group">
-            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentOptional ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`} onClick={() => setConsentOptional(!consentOptional)}>
+          <label className="flex items-start gap-4 cursor-pointer group" onClick={() => setConsentOptional((current) => !current)}>
+            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentOptional ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`}>
               {consentOptional && <Check className="w-3 h-3 text-white" />}
             </div>
             <div className="flex-1">
@@ -2291,6 +2576,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
 // ─── Fase A: ENT-008 Confirmação de Envio ─────────────────────────────────────
 
 function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
+  const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const answeredCount = draft.questions.filter((question) => draft.answers[question.id]?.trim()).length;
 
@@ -2301,8 +2587,20 @@ function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen)
   const handleSend = () => {
     setSending(true);
     setTimeout(() => {
+      const interview = submitInterview({
+        candidateId: DEFAULT_CANDIDATE.id,
+        candidateName: DEFAULT_CANDIDATE.name,
+        candidateEmail: DEFAULT_CANDIDATE.email,
+        context: draft.context!,
+        answers: draft.questions.map((question) => ({
+          questionId: question.id,
+          questionText: question.text,
+          questionType: question.type,
+          answer: draft.answers[question.id] ?? "",
+        })),
+      });
       setSending(false);
-      onNavigate("interview-done");
+      routerNavigate(`/candidate/interviews/${interview.id}/success`);
     }, 1800);
   };
 
@@ -2386,6 +2684,9 @@ function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen)
 // ─── Fase A: ENT-009 Entrevista Concluída ────────────────────────────────────
 
 function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const { id } = useParams();
+  const interview = getInterviewById(id);
   return (
     <AuthLayout
       current="interview-done"
@@ -2409,15 +2710,15 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-[11px] text-muted-foreground">Protocolo</p>
-                <p className="text-sm font-bold text-foreground">#ENT-2026-0418</p>
+                <p className="text-sm font-bold text-foreground">{interview?.id ?? "#ENT-2026-0418"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">Desenvolvedor Full Stack Júnior</p>
+                <p className="text-sm font-semibold text-foreground">{interview?.context.title ?? "Desenvolvedor Full Stack Júnior"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>
-                <p className="text-sm font-semibold text-foreground">18/07/2026 às 14h32</p>
+                <p className="text-sm font-semibold text-foreground">{interview?.submittedAt ? new Date(interview.submittedAt).toLocaleString("pt-BR") : "18/07/2026 às 14h32"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Status</p>
@@ -2431,7 +2732,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <p className="text-xs font-bold text-blue-700 mb-3">O que acontece agora?</p>
             <div className="space-y-2">
               {[
-                "Um avaliador humano autorizado assistirá às suas respostas",
+                "Um avaliador humano autorizado analisará suas respostas.",
                 "Você receberá uma notificação quando o resultado estiver disponível",
                 "Acesse o relatório na seção Histórico de entrevistas",
               ].map((step, i) => (
@@ -2447,8 +2748,8 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <Btn variant="outline" onClick={() => onNavigate("interview-history")} className="flex-1">
               <History className="w-4 h-4" /> Ver histórico
             </Btn>
-            <Btn variant="primary" onClick={() => onNavigate("dashboard")} className="flex-1">
-              <Home className="w-4 h-4" /> Ir ao Dashboard
+            <Btn variant="primary" onClick={() => interview ? routerNavigate(`/candidate/interviews/${interview.id}/status`) : onNavigate("dashboard")} className="flex-1">
+              <Home className="w-4 h-4" /> Acompanhar
             </Btn>
           </div>
         </Card>
@@ -2606,7 +2907,7 @@ function TermsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           ))}
         </div>
         <div className="mt-10 pt-6 border-t border-border flex flex-wrap gap-3">
-          <Btn variant="primary" onClick={() => onNavigate("auth")}>Criar conta</Btn>
+          <Btn variant="primary" onClick={() => onNavigate("register")}>Criar conta</Btn>
           <Btn variant="outline" onClick={() => onNavigate("privacy")}>Ver Política de Privacidade</Btn>
         </div>
       </div>
@@ -2642,7 +2943,7 @@ function PrivacyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           ))}
         </div>
         <div className="mt-10 pt-6 border-t border-border flex flex-wrap gap-3">
-          <Btn variant="primary" onClick={() => onNavigate("auth")}>Criar conta</Btn>
+          <Btn variant="primary" onClick={() => onNavigate("register")}>Criar conta</Btn>
           <Btn variant="outline" onClick={() => onNavigate("terms")}>Ver Termos de Uso</Btn>
         </div>
       </div>
@@ -3156,92 +3457,110 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── CAN-010 Biblioteca de Materiais ─────────────────────────────────────────
 
-const MATERIAIS_DATA = [
-  // Apresentação pessoal
-  { id: 1,  titulo: "Como se apresentar em entrevistas",       categoria: "Apresentação pessoal",      tempo: "8 min",  tipo: "Leitura",  favorito: true,  recente: true,  recomendado: true,  desc: "Aprenda a estruturar uma apresentação pessoal clara, objetiva e impactante." },
-  { id: 2,  titulo: "Elevator pitch para entrevistas",         categoria: "Apresentação pessoal",      tempo: "5 min",  tipo: "Vídeo",    favorito: false, recente: false, recomendado: true,  desc: "Como resumir seu perfil profissional em 60 segundos de forma convincente." },
-  { id: 3,  titulo: "Comunicação verbal e não verbal",          categoria: "Comunicação",               tempo: "12 min", tipo: "Leitura",  favorito: true,  recente: false, recomendado: false, desc: "Entenda como sua postura, tom de voz e gestos impactam a percepção do avaliador." },
-  { id: 4,  titulo: "Como articular ideias com clareza",       categoria: "Comunicação",               tempo: "6 min",  tipo: "Leitura",  favorito: false, recente: true,  recomendado: false, desc: "Técnicas para organizar e transmitir suas ideias de forma coerente e direta." },
-  { id: 5,  titulo: "Postura e linguagem corporal",            categoria: "Postura",                   tempo: "7 min",  tipo: "Vídeo",    favorito: false, recente: false, recomendado: true,  desc: "Dicas práticas para transmitir confiança e profissionalismo pela linguagem corporal." },
-  { id: 6,  titulo: "O método STAR explicado",                 categoria: "Método STAR",               tempo: "10 min", tipo: "Leitura",  favorito: true,  recente: true,  recomendado: true,  desc: "Aprenda a usar o método STAR (Situação, Tarefa, Ação, Resultado) para responder perguntas comportamentais." },
-  { id: 7,  titulo: "STAR na prática: exemplos reais",         categoria: "Método STAR",               tempo: "15 min", tipo: "Exercício",favorito: false, recente: false, recomendado: false, desc: "Exercícios práticos para aplicar o método STAR com exemplos de diferentes áreas." },
-  { id: 8,  titulo: "Perguntas comportamentais mais comuns",   categoria: "Perguntas comportamentais", tempo: "9 min",  tipo: "Leitura",  favorito: false, recente: true,  recomendado: true,  desc: "Lista das perguntas comportamentais mais frequentes e como abordá-las com segurança." },
-  { id: 9,  titulo: "Como responder 'fale sobre você'",        categoria: "Perguntas comportamentais", tempo: "6 min",  tipo: "Leitura",  favorito: true,  recente: false, recomendado: false, desc: "Uma das perguntas mais temidas em entrevistas. Veja como estruturar uma resposta poderosa." },
-  { id: 10, titulo: "Primeiro emprego: como se preparar",      categoria: "Primeiro emprego",          tempo: "11 min", tipo: "Leitura",  favorito: false, recente: false, recomendado: true,  desc: "Guia completo para quem está buscando a primeira experiência profissional." },
-  { id: 11, titulo: "Jovem Aprendiz: direitos e oportunidades",categoria: "Jovem Aprendiz",            tempo: "8 min",  tipo: "Leitura",  favorito: false, recente: false, recomendado: false, desc: "Entenda o programa Jovem Aprendiz e como se destacar no processo seletivo." },
-  { id: 12, titulo: "Como conquistar uma vaga de estágio",     categoria: "Estágio",                   tempo: "9 min",  tipo: "Leitura",  favorito: false, recente: true,  recomendado: false, desc: "Dicas específicas para candidatos que buscam oportunidades de estágio." },
-  { id: 13, titulo: "Recolocação profissional: por onde começar",categoria: "Recolocação profissional",tempo: "14 min", tipo: "Leitura",  favorito: false, recente: false, recomendado: false, desc: "Estratégias para quem está em transição de carreira ou voltando ao mercado." },
-  { id: 14, titulo: "Perguntas técnicas: como se preparar",    categoria: "Perguntas técnicas",        tempo: "10 min", tipo: "Leitura",  favorito: false, recente: false, recomendado: false, desc: "Como estudar e responder perguntas técnicas específicas da sua área de atuação." },
-];
+type MaterialCardView = SupportMaterial & MaterialUserState;
 
-const CATEGORIAS_MATERIAIS = [
-  "Todas as categorias",
-  "Apresentação pessoal",
-  "Comunicação",
-  "Postura",
-  "Perguntas comportamentais",
-  "Perguntas técnicas",
-  "Método STAR",
-  "Primeiro emprego",
-  "Estágio",
-  "Jovem Aprendiz",
-  "Recolocação profissional",
-];
+function materialTypeLabel(type: SupportMaterial["type"]) {
+  return type === "READING" ? "Leitura" : type;
+}
+
+function materialStatusLabel(status: MaterialStatus) {
+  const labels = {
+    NOT_STARTED: "Não iniciado",
+    IN_PROGRESS: "Em andamento",
+    COMPLETED: "Concluído",
+  } satisfies Record<MaterialStatus, string>;
+  return labels[status];
+}
+
+function mergeMaterialsWithUserState(userStates: MaterialUserState[]): MaterialCardView[] {
+  return SUPPORT_MATERIALS.map((material) => {
+    const userState = userStates.find((item) => item.materialId === material.id) ?? getMaterialUserState(material.id);
+    return {
+      ...material,
+      ...userState,
+    };
+  });
+}
+
+function sortMaterialsByLastAccess(items: MaterialCardView[]) {
+  return [...items]
+    .filter((item) => Boolean(item.lastAccessedAt))
+    .sort((a, b) => {
+      const aTime = a.lastAccessedAt ? new Date(a.lastAccessedAt).getTime() : 0;
+      const bTime = b.lastAccessedAt ? new Date(b.lastAccessedAt).getTime() : 0;
+      return bTime - aTime;
+    });
+}
 
 function MaterialCard({
-  material, onFavorite,
+  material, onFavorite, onOpen,
 }: {
-  material: typeof MATERIAIS_DATA[0];
+  material: MaterialCardView;
   onFavorite: () => void;
+  onOpen: () => void;
 }) {
-  const TIPO_COLOR: Record<string, string> = {
-    "Leitura":   "bg-blue-50 text-blue-700",
-    "Vídeo":     "bg-red-50 text-red-700",
-    "Exercício": "bg-green-50 text-green-700",
-  };
   return (
     <Card className="p-4 sm:p-5 flex flex-col gap-3 hover:shadow-md transition-all">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <UIBadge variant="neutral" className={`px-2 py-0.5 text-[11px] font-bold ${TIPO_COLOR[material.tipo] ?? "bg-muted text-muted-foreground"}`}>{material.tipo}</UIBadge>
-            <span className="text-[11px] text-muted-foreground">{material.tempo}</span>
+            <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">{materialTypeLabel(material.type)}</UIBadge>
+            {material.status !== "NOT_STARTED" && (
+              <span className="text-[11px] text-muted-foreground">• {materialStatusLabel(material.status)}</span>
+            )}
           </div>
-          <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.titulo}</p>
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{material.desc}</p>
+          <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.title}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{material.description}</p>
         </div>
-        <button onClick={onFavorite} className={`p-1.5 rounded-lg transition-colors shrink-0 ${material.favorito ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-400"}`}>
-          <Bookmark className={`w-4 h-4 ${material.favorito ? "fill-current" : ""}`} />
+        <button
+          onClick={onFavorite}
+          aria-label={material.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+          className={`p-1.5 rounded-lg transition-colors shrink-0 ${material.isFavorite ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-400"}`}
+        >
+          <Bookmark className={`w-4 h-4 ${material.isFavorite ? "fill-current" : ""}`} />
         </button>
       </div>
       <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
-        <UIBadge variant="primary">{material.categoria}</UIBadge>
-        <Btn variant="primary" size="sm" onClick={() => toast.info("Abrindo material...")}>Abrir material</Btn>
+        <UIBadge variant="primary">{material.category}</UIBadge>
+        <Btn variant="primary" size="sm" onClick={onOpen}>Abrir material</Btn>
       </div>
     </Card>
   );
 }
 
 function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
   const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
-  const [materiais, setMateriais] = useState(MATERIAIS_DATA);
+  const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates());
   const [showCats, setShowCats] = useState(false);
 
-  const toggleFavorito = (id: number) => {
-    setMateriais(m => m.map(item => item.id === id ? { ...item, favorito: !item.favorito } : item));
+  const materiais = mergeMaterialsWithUserState(materialStates);
+
+  const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates());
+
+  const toggleFavorito = (id: string) => {
+    toggleMaterialFavorite(id);
+    refreshMaterialStates();
+  };
+
+  const handleOpenMaterial = (material: MaterialCardView) => {
+    openMaterial(material.id);
+    refreshMaterialStates();
+    routerNavigate(`/candidate/materials/${material.slug}`);
   };
 
   const filtrado = materiais.filter(m => {
-    const matchBusca = busca === "" || m.titulo.toLowerCase().includes(busca.toLowerCase()) || m.desc.toLowerCase().includes(busca.toLowerCase());
-    const matchCat = categoria === "Todas as categorias" || m.categoria === categoria;
-    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.favorito : abaFiltro === "recentes" ? m.recente : m.recomendado;
+    const matchBusca = busca === "" || m.title.toLowerCase().includes(busca.toLowerCase()) || m.description.toLowerCase().includes(busca.toLowerCase());
+    const matchCat = categoria === "Todas as categorias" || m.category === categoria;
+    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "recentes" ? Boolean(m.lastAccessedAt) : m.recommended;
     return matchBusca && matchCat && matchAba;
   });
+  const filtradoOrdenado = abaFiltro === "recentes" ? sortMaterialsByLastAccess(filtrado) : filtrado;
 
-  const recomendados = materiais.filter(m => m.recomendado).slice(0, 3);
-  const recentes = materiais.filter(m => m.recente).slice(0, 3);
+  const recomendados = materiais.filter(m => m.recommended).slice(0, 3);
+  const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
 
   return (
     <AuthLayout
@@ -3259,7 +3578,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {recomendados.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} />
+                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
               ))}
             </div>
           </section>
@@ -3271,11 +3590,17 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-blue-500" /> Acessados recentemente
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {recentes.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} />
-              ))}
-            </div>
+            {recentes.length === 0 ? (
+              <Card className="p-4 text-sm text-muted-foreground">
+                Seus materiais acessados aparecerão aqui.
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {recentes.map(m => (
+                  <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -3295,7 +3620,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 className="px-3.5"
               >
                 {label}
-                {id === "favoritos" && ` (${materiais.filter(m => m.favorito).length})`}
+                {id === "favoritos" && ` (${materiais.filter(m => m.isFavorite).length})`}
               </FilterChip>
             ))}
           </div>
@@ -3320,7 +3645,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </button>
               {showCats && (
                 <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden">
-                  {CATEGORIAS_MATERIAIS.map(cat => (
+                  {SUPPORT_MATERIAL_CATEGORIES.map(cat => (
                     <button
                       key={cat}
                       onClick={() => { setCategoria(cat); setShowCats(false); }}
@@ -3335,7 +3660,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
 
           {/* Lista de resultados */}
-          {filtrado.length === 0 ? (
+          {filtradoOrdenado.length === 0 ? (
             <EmptyState
               icon={BookOpen}
               title="Nenhum material encontrado"
@@ -3352,12 +3677,152 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {filtrado.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} />
+              {filtradoOrdenado.map(m => (
+                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
               ))}
             </div>
           )}
         </section>
+      </div>
+    </AuthLayout>
+  );
+}
+
+function MaterialDetailScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const { materialId } = useParams();
+  const material = materialId ? findSupportMaterialBySlug(materialId) : undefined;
+  const [materialState, setMaterialState] = useState<MaterialUserState | null>(() => material ? getMaterialUserState(material.id) : null);
+
+  useEffect(() => {
+    if (!material) return;
+    setMaterialState(openMaterial(material.id));
+  }, [material?.id]);
+
+  if (!material) {
+    return (
+      <AuthLayout
+        current="materials"
+        onNavigate={onNavigate}
+        title="Material não encontrado"
+        subtitle="O conteúdo solicitado não está disponível."
+      >
+        <EmptyState
+          icon={BookOpen}
+          title="Material não encontrado"
+          description="Verifique o link ou volte para a biblioteca de materiais."
+          action={<Btn variant="primary" onClick={() => routerNavigate("/candidate/materials")}>Voltar para Materiais</Btn>}
+        />
+      </AuthLayout>
+    );
+  }
+
+  const status = materialState?.status ?? "NOT_STARTED";
+  const completed = status === "COMPLETED";
+
+  const handleComplete = () => {
+    if (completed) return;
+    const result = completeMaterial(material.id);
+    setMaterialState(result.state);
+    if (result.completedNow) {
+      try {
+        advanceDevelopmentFromMaterial(material.id);
+      } catch {
+        // A conclusão do material é independente da gamificação local.
+      }
+    }
+    toast.success("Material concluído.");
+  };
+
+  return (
+    <AuthLayout
+      current="materials"
+      onNavigate={onNavigate}
+      title="Materiais de Apoio"
+      subtitle="Conteúdo para você se preparar para entrevistas"
+    >
+      <div className="w-full max-w-4xl mx-auto space-y-5">
+        <button
+          onClick={() => routerNavigate("/candidate/materials")}
+          className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
+        >
+          <ChevronLeft className="w-4 h-4" /> Voltar para Materiais
+        </button>
+
+        <Card className="p-5 sm:p-7 space-y-6">
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <UIBadge variant="neutral" className="px-2.5 py-1 text-xs font-bold bg-blue-50 text-blue-700">
+                {materialTypeLabel(material.type).toUpperCase()}
+              </UIBadge>
+              <UIBadge variant="primary">{material.category}</UIBadge>
+              <Badge variant={completed ? "success" : status === "IN_PROGRESS" ? "info" : "default"}>
+                {materialStatusLabel(status)}
+              </Badge>
+            </div>
+
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight mb-2">{material.title}</h1>
+              <p className="text-muted-foreground leading-relaxed">{material.description}</p>
+            </div>
+
+            {material.content.intro && (
+              <div className="rounded-xl bg-blue-50/70 border border-blue-100 p-4 text-sm text-blue-950 leading-relaxed">
+                {material.content.intro}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-6">
+            {material.content.sections.map((section) => (
+              <section key={section.id} className="space-y-3">
+                <h2 className="text-lg font-bold text-foreground">{section.title}</h2>
+                {section.paragraphs?.map((paragraph, index) => (
+                  <p key={index} className="text-sm sm:text-base text-muted-foreground leading-relaxed">{paragraph}</p>
+                ))}
+                {section.bullets && (
+                  <ul className="space-y-2">
+                    {section.bullets.map((bullet) => (
+                      <li key={bullet} className="flex gap-2 text-sm text-muted-foreground leading-relaxed">
+                        <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+                        <span>{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {section.example && (
+                  <div className="rounded-xl border border-border bg-muted/40 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">Exemplo</p>
+                    <p className="text-sm text-foreground leading-relaxed">{section.example}</p>
+                  </div>
+                )}
+                {section.tip && (
+                  <div className="flex gap-3 rounded-xl border border-amber-100 bg-amber-50 p-4">
+                    <Lightbulb className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-sm text-amber-900 leading-relaxed">{section.tip}</p>
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+
+          {material.content.summary && (
+            <div className="rounded-xl border border-border bg-accent p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">Resumo</p>
+              <p className="text-sm text-foreground leading-relaxed">{material.content.summary}</p>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-5 border-t border-border">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Status</p>
+              <p className="text-sm font-semibold text-foreground">{materialStatusLabel(status)}</p>
+            </div>
+            <Btn variant={completed ? "outline" : "primary"} onClick={handleComplete} disabled={completed}>
+              <Check className="w-4 h-4" /> {completed ? "Concluído" : "Marcar como concluído"}
+            </Btn>
+          </div>
+        </Card>
       </div>
     </AuthLayout>
   );
@@ -3490,12 +3955,80 @@ function getCurrentScreen(pathname: string): Screen {
   return route?.screen ?? "landing";
 }
 
+function ProtectedRoute({
+  session,
+  role,
+  children,
+}: {
+  session: MockAuthSession;
+  role: MockUserRole;
+  children: ReactNode;
+}) {
+  const location = useLocation();
+
+  if (!session.authenticated || !session.user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (session.user.accountStatus !== "ACTIVE") {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (session.user.role !== role) {
+    return <Navigate to={DASHBOARD_BY_ROLE[session.user.role]} replace />;
+  }
+
+  if (!session.user.onboardingCompleted && !isOnboardingPathForRole(location.pathname, role)) {
+    return <Navigate to={ONBOARDING_BY_ROLE[role]} replace />;
+  }
+
+  if (session.user.onboardingCompleted && isOnboardingPathForRole(location.pathname, role)) {
+    return <Navigate to={DASHBOARD_BY_ROLE[role]} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function PublicAuthRoute({ session, children }: { session: MockAuthSession; children: ReactNode }) {
+  if (session.authenticated && session.user?.accountStatus === "ACTIVE") {
+    return <Navigate to={getEntryPathForSession(session)} replace />;
+  }
+
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   const routerNavigate = useNavigate();
   const location = useLocation();
+  const [session, setSession] = useState(() => getMockAuthSession());
   const [interviewDraft, setInterviewDraft] = useState(createEmptyInterviewDraft);
   const currentScreen = getCurrentScreen(location.pathname);
-  const navigate = (screen: Screen) => routerNavigate(getPathForScreen(screen));
+  const navigate = (screen: Screen) => {
+    if ((screen === "auth" || screen === "landing") && session.authenticated) {
+      setSession(logoutMockUser());
+      routerNavigate("/login");
+      return;
+    }
+
+    routerNavigate(getPathForScreen(screen));
+  };
+  const completeOnboardingAndNavigate = (screen: Screen) => {
+    setSession(completeMockOnboarding());
+    routerNavigate(getPathForScreen(screen));
+  };
+  const loginAs = (role: MockUserRole, onboardingCompleted = true) => {
+    const nextSession = loginMockUser(role, { onboardingCompleted });
+    setSession(nextSession);
+    routerNavigate(getEntryPathForSession(nextSession));
+  };
+  const registerCandidate = () => {
+    const nextSession = registerMockCandidate();
+    setSession(nextSession);
+    routerNavigate(getEntryPathForSession(nextSession));
+  };
+  const protect = (role: MockUserRole, children: ReactNode) => (
+    <ProtectedRoute session={session} role={role}>{children}</ProtectedRoute>
+  );
   const navigateFromFlowNav = (screen: Screen) => {
     if (["prep", "consent", "interview", "review", "interview-confirm"].includes(screen)) {
       setInterviewDraft(createDemoInterviewDraft());
@@ -3510,64 +4043,65 @@ function AppRoutes() {
       <div className="flex-1 flex flex-col">
         <Routes>
           <Route path="/" element={<LandingScreen onNavigate={navigate} />} />
-          <Route path="/login" element={<AuthScreen onNavigate={navigate} initialTab="login" />} />
-          <Route path="/register" element={<AuthScreen onNavigate={navigate} initialTab="register" />} />
+          <Route path="/login" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLogin={loginAs} onRegister={registerCandidate} initialTab="login" /></PublicAuthRoute>} />
+          <Route path="/register" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLogin={loginAs} onRegister={registerCandidate} initialTab="register" /></PublicAuthRoute>} />
           <Route path="/terms" element={<TermsScreen onNavigate={navigate} />} />
           <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} />} />
           <Route path="/verify-email" element={<EmailVerifyScreen onNavigate={navigate} />} />
           <Route path="/forgot-password" element={<ForgotPasswordScreen onNavigate={navigate} />} />
           <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
 
-          <Route path="/candidate/onboarding" element={<CandidateOnboardingScreen onNavigate={navigate} />} />
-          <Route path="/candidate/dashboard" element={<DashboardScreen onNavigate={navigate} />} />
-          <Route path="/candidate/profile" element={<ProfileScreen onNavigate={navigate} />} />
-          <Route path="/candidate/settings" element={<SettingsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/materials" element={<MaterialsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/notifications" element={<NotificationsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews" element={<InterviewHistoryScreen onNavigate={navigate} />} />
-          <Route path="/candidate/development" element={<DevelopmentScreen onNavigate={navigate} />} />
-          <Route path="/candidate/disc" element={<CandidateDiscTestScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new" element={<InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
-          <Route path="/candidate/interviews/new/consent" element={<ConsentScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/new/preparation" element={<PrepScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/new/answers" element={<InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
-          <Route path="/candidate/interviews/new/review" element={<ReviewScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/new/submit" element={<InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/:id/success" element={<InterviewDoneScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/:id/status" element={<PendingScreen onNavigate={navigate} />} />
-          <Route path="/candidate/reports/:id" element={<ReportScreen onNavigate={navigate} />} />
+          <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard")} />)} />
+          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+          <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} />)} />
 
           <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/onboarding" element={<EvalOnboardingScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/dashboard" element={<EvalDashboardScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations" element={<EvalQueueScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/active" element={<EvalActiveScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/:id" element={<EvalScreenView onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/:id/review" element={<EvalReviewScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/:id/success" element={<EvalDoneScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/history" element={<EvalHistoryScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/criteria" element={<EvalCriteriaScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/settings" element={<EvalSettingsScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
+          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />
 
-          <Route path="/admin/onboarding" element={<AdminOnboardingScreen onNavigate={navigate} />} />
-          <Route path="/admin/dashboard" element={<AdminDashboardScreen onNavigate={navigate} />} />
-          <Route path="/admin/candidates" element={<AdminCandidatesScreen onNavigate={navigate} />} />
-          <Route path="/admin/candidates/:id" element={<AdminCandidateDetailScreen onNavigate={navigate} />} />
-          <Route path="/admin/evaluators" element={<AdminEvaluatorsScreen onNavigate={navigate} />} />
-          <Route path="/admin/evaluators/new" element={<AdminEvaluatorFormScreen onNavigate={navigate} />} />
-          <Route path="/admin/interviews" element={<AdminInterviewsScreen onNavigate={navigate} />} />
-          <Route path="/admin/assignments" element={<AdminAssignScreen onNavigate={navigate} />} />
-          <Route path="/admin/questions" element={<AdminQuestionsScreen onNavigate={navigate} />} />
-          <Route path="/admin/questions/new" element={<AdminQuestionFormScreen onNavigate={navigate} />} />
-          <Route path="/admin/roles" element={<AdminRolesScreen onNavigate={navigate} />} />
-          <Route path="/admin/criteria" element={<AdminCriteriaScreen onNavigate={navigate} />} />
-          <Route path="/admin/consents" element={<AdminConsentScreen onNavigate={navigate} />} />
-          <Route path="/admin/audit" element={<AdminAuditScreen onNavigate={navigate} />} />
-          <Route path="/admin/settings" element={<AdminSettingsScreen onNavigate={navigate} />} />
+          <Route path="/admin/onboarding" element={protect("ADMIN", <AdminOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("admin-dashboard")} />)} />
+          <Route path="/admin/dashboard" element={protect("ADMIN", <AdminDashboardScreen onNavigate={navigate} />)} />
+          <Route path="/admin/candidates" element={protect("ADMIN", <AdminCandidatesScreen onNavigate={navigate} />)} />
+          <Route path="/admin/candidates/:id" element={protect("ADMIN", <AdminCandidateDetailScreen onNavigate={navigate} />)} />
+          <Route path="/admin/evaluators" element={protect("ADMIN", <AdminEvaluatorsScreen onNavigate={navigate} />)} />
+          <Route path="/admin/evaluators/new" element={protect("ADMIN", <AdminEvaluatorFormScreen onNavigate={navigate} />)} />
+          <Route path="/admin/interviews" element={protect("ADMIN", <AdminInterviewsScreen onNavigate={navigate} />)} />
+          <Route path="/admin/assignments" element={protect("ADMIN", <AdminAssignScreen onNavigate={navigate} />)} />
+          <Route path="/admin/questions" element={protect("ADMIN", <AdminQuestionsScreen onNavigate={navigate} />)} />
+          <Route path="/admin/questions/new" element={protect("ADMIN", <AdminQuestionFormScreen onNavigate={navigate} />)} />
+          <Route path="/admin/roles" element={protect("ADMIN", <AdminRolesScreen onNavigate={navigate} />)} />
+          <Route path="/admin/criteria" element={protect("ADMIN", <AdminCriteriaScreen onNavigate={navigate} />)} />
+          <Route path="/admin/consents" element={protect("ADMIN", <AdminConsentScreen onNavigate={navigate} />)} />
+          <Route path="/admin/audit" element={protect("ADMIN", <AdminAuditScreen onNavigate={navigate} />)} />
+          <Route path="/admin/settings" element={protect("ADMIN", <AdminSettingsScreen onNavigate={navigate} />)} />
 
-          <Route path="/candidate" element={<Navigate to="/candidate/dashboard" replace />} />
-          <Route path="/evaluator" element={<Navigate to="/evaluator/dashboard" replace />} />
-          <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="/candidate" element={protect("CANDIDATE", <Navigate to="/candidate/dashboard" replace />)} />
+          <Route path="/evaluator" element={protect("EVALUATOR", <Navigate to="/evaluator/dashboard" replace />)} />
+          <Route path="/admin" element={protect("ADMIN", <Navigate to="/admin/dashboard" replace />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

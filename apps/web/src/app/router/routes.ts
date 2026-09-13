@@ -2,7 +2,7 @@ export const ROUTER_BASENAME = "/rhconnect";
 
 export type AppScreen =
   | "landing" | "terms" | "privacy"
-  | "auth" | "email-verify" | "forgot-password" | "reset-password"
+  | "auth" | "register" | "email-verify" | "forgot-password" | "reset-password"
   | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
   | "dashboard" | "profile" | "settings" | "materials" | "notifications"
   | "interview-history" | "development" | "disc-test"
@@ -32,7 +32,7 @@ export type AppRoute = {
 export const APP_ROUTES = [
   { screen: "landing", path: "/", label: "Inicio", group: "public", priority: "P1", status: "visual", backDependency: "nao imediata" },
   { screen: "auth", path: "/login", label: "Login", group: "public", priority: "P0", status: "simulado", backDependency: "sim", notes: "Compartilha AuthScreen com /register." },
-  { screen: "auth", path: "/register", label: "Cadastro", group: "public", priority: "P0", status: "simulado", backDependency: "sim", notes: "Compartilha AuthScreen com /login." },
+  { screen: "register", path: "/register", label: "Cadastro", group: "public", priority: "P0", status: "simulado", backDependency: "sim", notes: "Compartilha AuthScreen com /login." },
   { screen: "email-verify", path: "/verify-email", label: "Verificacao de e-mail", group: "public", priority: "P2", status: "simulado", backDependency: "sim" },
   { screen: "forgot-password", path: "/forgot-password", label: "Esqueci senha", group: "public", priority: "P3", status: "simulado", backDependency: "sim" },
   { screen: "reset-password", path: "/reset-password", label: "Redefinir senha", group: "public", priority: "P3", status: "simulado", backDependency: "sim" },
@@ -89,7 +89,7 @@ export const APP_ROUTES = [
 
 export const FLOW_STEPS = [
   { id: "landing", label: "Inicio" },
-  { id: "auth", label: "Cadastro" },
+  { id: "register", label: "Cadastro" },
   { id: "candidate-onboarding", label: "Onboarding" },
   { id: "eval-activate", label: "Ativar Conta Aval." },
   { id: "eval-onboarding", label: "Onboarding Aval." },

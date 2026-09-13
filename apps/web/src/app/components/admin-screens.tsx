@@ -1,6 +1,16 @@
 /** RH Connect — Telas do Administrador */
 
 import { useState, useEffect } from "react";
+import type { InterviewStatus } from "../domain/interviews";
+import {
+  assignInterview,
+  getAdminVisibleInterviews,
+  getAssignmentByInterviewId,
+  getAverageScore,
+  getEvaluationByInterviewId,
+  getPendingAdminInterviews,
+  statusLabelFromInterview,
+} from "../services/interviews-service";
 import {
   AccountDropdown, NotificationDropdown,
   ADMIN_ACCOUNT, ADMIN_NOTIFS,
@@ -271,10 +281,10 @@ const CANDIDATES = [
 ];
 
 const EVALUATORS = [
-  { id: "#AV-01", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
-  { id: "#AV-02", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
-  { id: "#AV-03", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
-  { id: "#AV-04", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
+  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
+  { id: "evaluator-beatriz-lima", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
+  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
+  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
 ];
 
 const INTERVIEWS = [
@@ -284,6 +294,52 @@ const INTERVIEWS = [
   { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",        date: "10/08/2026", status: "Concluído" as const, evaluator: "Carlos A.",     score: 7.1 },
   { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, evaluator: "Camila D.",     score: 9.0 },
 ];
+
+type AdminInterviewRow = {
+  id: string;
+  candidate: string;
+  job: string;
+  date: string;
+  status: string;
+  statusCode?: InterviewStatus;
+  evaluator: string;
+  score: number | null;
+  realId?: string;
+};
+
+function statusVariantFromAdminStatus(status: string): "default" | "success" | "warning" | "error" | "info" | "purple" {
+  if (status === "Aguardando" || status === "Aguardando avaliação") return "warning";
+  if (status === "Em avaliação" || status === "Atribuída") return "info";
+  if (status === "Concluído" || status === "Avaliada") return "success";
+  return "default";
+}
+
+function createAdminInterviewRows(): AdminInterviewRow[] {
+  const realRows = getAdminVisibleInterviews().map((interview) => {
+    const assignment = getAssignmentByInterviewId(interview.id);
+    const evaluation = getEvaluationByInterviewId(interview.id);
+    return {
+      id: interview.id,
+      candidate: interview.candidateName,
+      job: interview.context.title,
+      date: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+      status: statusLabelFromInterview(interview.status),
+      statusCode: interview.status,
+      evaluator: assignment?.evaluatorName ?? "—",
+      score: getAverageScore(evaluation?.scores),
+      realId: interview.id,
+    };
+  });
+
+  return [
+    ...realRows,
+    ...INTERVIEWS.map((interview) => ({
+      ...interview,
+      statusCode: undefined,
+      realId: undefined,
+    })),
+  ];
+}
 
 const QUESTIONS_DATA = [
   { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica",  uses: 247, active: true },
@@ -747,22 +803,25 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [search, setSearch] = useState("");
-  const statusVariant = { "Aguardando": "warning", "Em avaliação": "info", "Concluído": "success" } as const;
+  const interviewRows = createAdminInterviewRows();
+  const pendingCount = interviewRows.filter((item) => item.status === "Aguardando avaliação" || item.status === "Aguardando").length;
+  const evaluatingCount = interviewRows.filter((item) => item.status === "Em avaliação").length;
+  const completedCount = interviewRows.filter((item) => item.status === "Avaliada" || item.status === "Concluído").length;
 
-  const filtered = INTERVIEWS.filter(i =>
+  const filtered = interviewRows.filter(i =>
     i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <AdminLayout current="admin-interviews" onNavigate={onNavigate}
       title="Gestão de Entrevistas"
-      subtitle={`${INTERVIEWS.length} entrevistas registradas`}
+      subtitle={`${interviewRows.length} entrevistas registradas`}
       actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
       <div className="w-full space-y-4">
         <div className="grid grid-cols-3 gap-3">
-          <StatCard value="2"  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
-          <StatCard value="1"  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-          <StatCard value="15" label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
+          <StatCard value={pendingCount}  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
+          <StatCard value={evaluatingCount}  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+          <StatCard value={completedCount} label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
         </div>
 
         <SearchInput
@@ -795,10 +854,10 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
                     <td className="py-3.5 px-4 font-semibold text-foreground">{i.candidate}</td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{i.job}</td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{i.date}</td>
-                    <td className="py-3.5 px-4"><Badge variant={statusVariant[i.status]}>{i.status}</Badge></td>
+                    <td className="py-3.5 px-4"><Badge variant={statusVariantFromAdminStatus(i.status)}>{i.status}</Badge></td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{i.evaluator}</td>
                     <td className="py-3.5 px-4">
-                      {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{i.score}</Badge> : <span className="text-muted-foreground">—</span>}
+                      {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{i.score.toFixed(1)}</Badge> : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="py-3.5 px-5">
                       <button onClick={() => onNavigate("admin-candidate-detail")} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" /></button>
@@ -819,8 +878,31 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
 export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [assigned, setAssigned] = useState<Record<string, string>>({});
+  const [, refresh] = useState(0);
 
-  const pending = INTERVIEWS.filter(i => i.status === "Aguardando");
+  const realPending = getPendingAdminInterviews().map((interview) => ({
+    id: interview.id,
+    candidate: interview.candidateName,
+    job: interview.context.title,
+    date: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+    realId: interview.id,
+  }));
+  const pending = [
+    ...realPending,
+    ...INTERVIEWS.filter(i => i.status === "Aguardando").map((interview) => ({ ...interview, realId: undefined })),
+  ];
+
+  const handleAssign = (evaluatorId: string, evaluatorName: string) => {
+    if (!selected) return;
+    const selectedInterview = pending.find((item) => item.id === selected);
+    if (selectedInterview?.realId) {
+      assignInterview(selectedInterview.realId, evaluatorId);
+      refresh((value) => value + 1);
+    } else {
+      setAssigned(a => ({ ...a, [selected]: evaluatorName }));
+    }
+    setSelected(null);
+  };
 
   return (
     <AdminLayout current="admin-assign" onNavigate={onNavigate}
@@ -865,7 +947,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
             ) : (
               <div className="space-y-2.5">
                 {EVALUATORS.filter(e => e.status === "Ativo").map(ev => (
-                  <button key={ev.id} onClick={() => { setAssigned(a => ({ ...a, [selected]: ev.name })); setSelected(null); }}
+                  <button key={ev.id} onClick={() => handleAssign(ev.id, ev.name)}
                     className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
@@ -1755,7 +1837,7 @@ const ADMIN_ONBOARDING_STEPS = [
   },
 ];
 
-export function AdminOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function AdminOnboardingScreen({ onNavigate, onComplete }: { onNavigate: NavFn; onComplete: () => void }) {
   const [step, setStep] = useState(0);
   const current = ADMIN_ONBOARDING_STEPS[step];
   const Icon = current.icon;
@@ -1792,7 +1874,7 @@ export function AdminOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
                 </Btn>
               )}
               {isLast ? (
-                <Btn variant="primary" className="flex-1" onClick={() => onNavigate("admin-dashboard")}>
+                <Btn variant="primary" className="flex-1" onClick={onComplete}>
                   Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
                 </Btn>
               ) : (
