@@ -283,7 +283,7 @@ export function DevelopmentContent({ onNavigate }: { onNavigate: NavFn }) {
               />
             </div>
 
-            <div className="order-1 flex min-w-0 flex-col justify-between gap-5 p-5 sm:p-6 2xl:order-2 2xl:pl-2">
+            <div className="order-1 flex min-w-0 flex-col justify-center gap-5 p-5 sm:p-6 2xl:order-2 2xl:pl-2">
               <div className="min-w-0">
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/75 text-primary shadow-sm">
                   <Compass className="h-7 w-7" />
@@ -299,12 +299,6 @@ export function DevelopmentContent({ onNavigate }: { onNavigate: NavFn }) {
 
                 <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground break-normal">
                   O Nilo acompanhará sua evolução, destacando próximos passos e dando contexto para a jornada.
-                </p>
-              </div>
-
-              <div className="min-w-0 rounded-xl bg-blue-50/70 px-3 py-2.5">
-                <p className="text-xs font-semibold leading-relaxed text-blue-800 break-normal">
-                  Seu progresso aparece ao lado; o guia acompanha a jornada sem misturar missão, trilha e XP.
                 </p>
               </div>
             </div>

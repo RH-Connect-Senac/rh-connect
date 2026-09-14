@@ -8,6 +8,7 @@ import { RHConnectLogo } from "./brand/rh-connect-logo";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
+import { ROUTER_BASENAME } from "../router/routes";
 
 type NavFn = (s: string) => void;
 
@@ -94,6 +95,9 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
   ];
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const reloadHome = () => {
+    window.location.assign(`${ROUTER_BASENAME}/`);
+  };
 
   return (
     <div className="bg-white w-full">
@@ -101,7 +105,14 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       {/* ── Header ── */}
       <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-border px-4 sm:px-8">
         <div className="max-w-6xl mx-auto flex items-center justify-between h-16">
-          <RHConnectLogo className="h-8 sm:h-9 w-auto" />
+          <button
+            type="button"
+            onClick={reloadHome}
+            className="cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            aria-label="Ir para a página inicial"
+          >
+            <RHConnectLogo className="h-8 sm:h-9 w-auto" />
+          </button>
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-7">
             <a href="#como-funciona" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Como funciona</a>
@@ -414,7 +425,14 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8">
             <div>
-              <RHConnectLogo variant="inverse" className="h-7 w-auto mb-2" />
+              <button
+                type="button"
+                onClick={reloadHome}
+                className="mb-2 cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#021025]"
+                aria-label="Ir para a página inicial"
+              >
+                <RHConnectLogo variant="inverse" className="h-7 w-auto" />
+              </button>
               <p className="text-slate-500 text-xs max-w-xs leading-relaxed">
                 Plataforma de preparação para entrevistas. Desenvolvida no SENAC-DF.
               </p>

@@ -220,6 +220,7 @@ export function startEvaluation(interviewId: string, evaluatorId = DEFAULT_EVALU
     if (!interview || interview.assignedEvaluatorId !== evaluator.id) return state;
 
     const existing = state.evaluations.find((item) => item.interviewId === interviewId);
+    if (existing && existing.evaluatorId !== evaluator.id) return state;
     evaluation = existing ?? {
       id: createId("evaluation"),
       interviewId,
@@ -249,8 +250,10 @@ export function startEvaluation(interviewId: string, evaluatorId = DEFAULT_EVALU
 }
 
 export function saveEvaluationDraft(interviewId: string, scores: EvaluationScores, comment = "", evaluatorId = DEFAULT_EVALUATOR.id) {
-  const existing = getEvaluationByInterviewId(interviewId) ?? startEvaluation(interviewId, evaluatorId);
+  const evaluator = EVALUATOR_DIRECTORY.find((item) => item.id === evaluatorId) ?? DEFAULT_EVALUATOR;
+  const existing = getEvaluationByInterviewId(interviewId) ?? startEvaluation(interviewId, evaluator.id);
   if (!existing) return null;
+  if (existing.evaluatorId !== evaluator.id) return null;
   const timestamp = nowIso();
   const nextEvaluation = {
     ...existing,
@@ -318,6 +321,10 @@ export function getAverageScore(scores?: EvaluationScores) {
   const values = Object.values(scores).filter((score) => score > 0);
   if (values.length === 0) return null;
   return values.reduce((sum, score) => sum + score, 0) / values.length;
+}
+
+export function formatScore(score?: number | null) {
+  return score == null ? "—" : score.toFixed(1);
 }
 
 export function statusLabelFromInterview(status: Interview["status"]) {
