@@ -8,19 +8,9 @@ import {
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
 
 type NavFn = (s: string) => void;
-
-// ─── Nilo Avatar ──────────────────────────────────────────────────────────────
-
-function NiloAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const sizes = { sm: "w-10 h-10 text-lg", md: "w-16 h-16 text-2xl", lg: "w-20 h-20 text-3xl" };
-  return (
-    <div className={`${sizes[size]} rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold shadow-lg ring-4 ring-blue-100`}>
-      N
-    </div>
-  );
-}
 
 // ─── Step data ────────────────────────────────────────────────────────────────
 
@@ -162,60 +152,69 @@ export function CandidateOnboardingScreen({ onNavigate, onComplete }: { onNaviga
       </header>
 
       {/* Main */}
-      <div className="flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md">
-          {/* Step indicator */}
-          <div className="flex items-center justify-center gap-2 mb-8">
-            {STEPS.map((s, i) => (
-              <div
-                key={s.id}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  i === step ? "w-8 bg-primary" : i < step ? "w-4 bg-primary/40" : "w-4 bg-muted"
-                }`}
-              />
-            ))}
+      <div className="flex-1 flex items-center justify-center px-4 py-6 sm:py-8">
+        <div className="relative flex w-full max-w-6xl flex-col items-center gap-6 lg:min-h-[640px] lg:justify-center">
+          <div className="flex justify-center lg:absolute lg:bottom-0 lg:left-0 lg:z-0">
+            <img
+              src={niloOnboarding}
+              alt="Nilo, guia visual do RH Connect"
+              className="h-[260px] w-auto object-contain drop-shadow-2xl sm:h-[300px] lg:h-[clamp(580px,58vh,600px)]"
+              draggable={false}
+            />
           </div>
 
-          {/* Card */}
-          <Card padding="none" className="p-6 sm:p-8">
-            {/* Nilo + Icon */}
-            <div className="flex items-center gap-4 mb-6">
-              <NiloAvatar size="md" />
-              <div className={`w-12 h-12 rounded-2xl ${current.color} flex items-center justify-center`}>
-                <Icon className="w-6 h-6" />
+          <div className="relative z-10 w-full max-w-md">
+            {/* Step indicator */}
+            <div className="flex items-center justify-center gap-2 mb-8">
+              {STEPS.map((s, i) => (
+                <div
+                  key={s.id}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${
+                    i === step ? "w-8 bg-primary" : i < step ? "w-4 bg-primary/40" : "w-4 bg-muted"
+                  }`}
+                />
+              ))}
+            </div>
+
+            {/* Card */}
+            <Card padding="none" className="p-6 sm:p-8">
+              <div className="flex items-center gap-4 mb-6">
+                <div className={`w-12 h-12 rounded-2xl ${current.color} flex items-center justify-center`}>
+                  <Icon className="w-6 h-6" />
+                </div>
               </div>
-            </div>
 
-            {/* Text */}
-            <h2 className="text-xl font-bold text-foreground mb-1">{current.title}</h2>
-            <p className="text-sm text-muted-foreground mb-5">{current.subtitle}</p>
+              {/* Text */}
+              <h2 className="text-xl font-bold text-foreground mb-1">{current.title}</h2>
+              <p className="text-sm text-muted-foreground mb-5">{current.subtitle}</p>
 
-            {/* Content */}
-            <div className="mb-8">{current.content}</div>
+              {/* Content */}
+              <div className="mb-8">{current.content}</div>
 
-            {/* Navigation */}
-            <div className="flex items-center gap-3">
-              {step > 0 && (
-                <Button variant="outline" onClick={() => setStep(s => s - 1)}>
-                  Voltar
-                </Button>
-              )}
-              {isLast ? (
-                <Button variant="primary" className="flex-1" onClick={onComplete}>
-                  Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
-                </Button>
-              ) : (
-                <Button variant="primary" className="flex-1" onClick={() => setStep(s => s + 1)}>
-                  Próximo <ChevronRight className="w-3.5 h-3.5" />
-                </Button>
-              )}
-            </div>
-          </Card>
+              {/* Navigation */}
+              <div className="flex items-center gap-3">
+                {step > 0 && (
+                  <Button variant="outline" onClick={() => setStep(s => s - 1)}>
+                    Voltar
+                  </Button>
+                )}
+                {isLast ? (
+                  <Button variant="primary" className="flex-1" onClick={onComplete}>
+                    Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
+                  </Button>
+                ) : (
+                  <Button variant="primary" className="flex-1" onClick={() => setStep(s => s + 1)}>
+                    Próximo <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </div>
+            </Card>
 
-          {/* Step counter */}
-          <p className="text-center text-xs text-muted-foreground mt-4">
-            Passo {step + 1} de {STEPS.length}
-          </p>
+            {/* Step counter */}
+            <p className="text-center text-xs text-muted-foreground mt-4">
+              Passo {step + 1} de {STEPS.length}
+            </p>
+          </div>
         </div>
       </div>
     </div>

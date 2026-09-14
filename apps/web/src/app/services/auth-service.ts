@@ -304,7 +304,7 @@ export function loginMockWithCredentials(email: string, password: string): { ok:
   };
 }
 
-export function registerMockCandidate(data?: { name?: string; email?: string; password?: string }): { ok: true; session: MockAuthSession } | { ok: false; message: string } {
+export function registerMockCandidate(data?: { name?: string; email?: string; password?: string }): { ok: true; candidate: MockCandidateAccount } | { ok: false; message: string } {
   const email = data?.email?.trim().toLowerCase() || "candidato2.rhconnect@gmail.com";
   if (isMockEmailRegistered(email)) {
     return { ok: false, message: "Este e-mail já está cadastrado. Use o login para acessar sua conta." };
@@ -320,13 +320,7 @@ export function registerMockCandidate(data?: { name?: string; email?: string; pa
     createdAt: new Date().toISOString(),
   };
   saveRegisteredCandidateAccount(candidate);
-  const session = loginMockUser("CANDIDATE", {
-    id: candidate.id,
-    name: candidate.name,
-    email: candidate.email,
-    onboardingCompleted: false,
-  });
-  return { ok: true, session };
+  return { ok: true, candidate };
 }
 
 export function completeMockOnboarding() {

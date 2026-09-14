@@ -71,7 +71,7 @@ export async function analyzeJobUrl(url: string): Promise<JobInterviewContext> {
     title: "Desenvolvedor Full Stack Júnior",
     company: "Empresa extraida da vaga",
     summary:
-      "Contexto mockado enquanto a integracao tecnica Python/Flask de extracao da vaga nao esta conectada ao Front oficial.",
+      "Oportunidade para atuar no desenvolvimento de soluções digitais, colaborando com a equipe técnica e aplicando boas práticas de programação.",
     requirements: MOCK_REQUIREMENTS,
   };
 }
