@@ -10,7 +10,7 @@ datasource db {
 model account_activation_token {
   activation_token_id String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id             Int
-  token_hash          String        @db.VarChar(255)
+  token_hash          String        @unique @db.VarChar(255)
   token_purpose       token_purpose @default(EVALUATOR_INVITE)
   expires_at          DateTime      @db.Timestamptz(6)
   used_at             DateTime?     @db.Timestamptz(6)
