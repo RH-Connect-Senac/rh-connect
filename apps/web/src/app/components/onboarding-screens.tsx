@@ -143,7 +143,7 @@ const STEPS = [
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export function CandidateOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function CandidateOnboardingScreen({ onNavigate, onComplete }: { onNavigate: NavFn; onComplete: () => void }) {
   const [step, setStep] = useState(0);
   const current = STEPS[step];
   const Icon = current.icon;
@@ -155,7 +155,7 @@ export function CandidateOnboardingScreen({ onNavigate }: { onNavigate: NavFn })
       <header className="flex items-center justify-between px-6 py-4 bg-white/80 backdrop-blur border-b border-border">
         <RHConnectLogo className="h-10 w-auto" />
         <button
-          onClick={() => onNavigate("dashboard")}
+          onClick={onComplete}
           className="text-xs text-muted-foreground hover:text-foreground transition-colors">
           Pular introdução →
         </button>
@@ -201,7 +201,7 @@ export function CandidateOnboardingScreen({ onNavigate }: { onNavigate: NavFn })
                 </Button>
               )}
               {isLast ? (
-                <Button variant="primary" className="flex-1" onClick={() => onNavigate("dashboard")}>
+                <Button variant="primary" className="flex-1" onClick={onComplete}>
                   Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
                 </Button>
               ) : (

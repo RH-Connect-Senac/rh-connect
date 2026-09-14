@@ -1,7 +1,7 @@
-/** RH Connect — Exploração Visual | Fluxo Principal do Candidato */
+/** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, useCallback, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { BrowserRouter, Navigate, Route, Routes, matchPath, useLocation, useNavigate } from "react-router";
+import { useState, useRef, useEffect, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase,
@@ -19,6 +19,7 @@ import { DiscTestScreen } from "./components/disc-test-screen";
 import {
   AccountDropdown, NotificationDropdown,
   CANDIDATE_ACCOUNT, CANDIDATE_NOTIFS,
+  type AccountConfig,
 } from "./components/header-popovers";
 import { RHConnectLogo } from "./components/brand/rh-connect-logo";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
@@ -52,8 +53,6 @@ import { EmptyState } from "./components/ui/empty-state";
 import { Spinner } from "./components/ui/spinner";
 import { Toaster } from "./components/ui/sonner";
 import {
-  APP_ROUTES,
-  FLOW_STEPS,
   ROUTER_BASENAME,
   getPathForScreen,
   type AppScreen as Screen,
@@ -70,6 +69,52 @@ import {
   SENIORITY_LEVEL_OPTIONS,
   getProfessionalSubareasByArea,
 } from "./domain/professional-catalog";
+import type { MaterialStatus, MaterialUserState, SupportMaterial } from "./domain/materials";
+import { SUPPORT_MATERIAL_CATEGORIES, SUPPORT_MATERIALS, findSupportMaterialBySlug } from "./mocks/materials";
+import {
+  completeMaterial,
+  getMaterialUserState,
+  getMaterialUserStates,
+  openMaterial,
+  toggleMaterialFavorite,
+} from "./services/materials-service";
+import { advanceDevelopmentFromMaterial } from "./services/development-service";
+import { DEFAULT_CANDIDATE } from "./mocks/interviews";
+import {
+  getAvailableCandidateReports,
+  getAverageScore,
+  getCandidateInterviews,
+  getEvaluationByInterviewId,
+  getInterviewById,
+  getReportByInterviewId,
+  statusLabelFromInterview,
+  submitInterview,
+} from "./services/interviews-service";
+import {
+  clearRememberedLoginEmail,
+  completeMockOnboarding,
+  getRememberedLoginEmail,
+  getMockAuthSession,
+  loginMockWithCredentials,
+  logoutMockUser,
+  registerMockCandidate,
+  saveRememberedLoginEmail,
+  type MockAuthSession,
+  type MockAuthUser,
+  type MockUserRole,
+} from "./services/auth-service";
+import {
+  getCandidateProfile,
+  getCandidateProfileCompleteness,
+  saveCandidateProfile,
+} from "./services/candidate-profile-service";
+import type {
+  CandidateCourse,
+  CandidateExperience,
+  CandidateFormation,
+  CandidateProfile,
+  CandidateProfilePatch,
+} from "./domain/candidate-profile";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
@@ -84,6 +129,52 @@ const AUTH_SCREENS: Screen[] = [
   "admin-questions","admin-question-form","admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
 ];
 
+const DASHBOARD_BY_ROLE: Record<MockUserRole, string> = {
+  CANDIDATE: "/candidate/dashboard",
+  EVALUATOR: "/evaluator/dashboard",
+  ADMIN: "/admin/dashboard",
+};
+
+const ONBOARDING_BY_ROLE: Record<MockUserRole, string> = {
+  CANDIDATE: "/candidate/onboarding",
+  EVALUATOR: "/evaluator/onboarding",
+  ADMIN: "/admin/onboarding",
+};
+
+function getCandidateIdentity(session: MockAuthSession) {
+  const user = session.user;
+  if (session.authenticated && user?.role === "CANDIDATE") {
+    return {
+      id: user.id === "candidate-demo" ? DEFAULT_CANDIDATE.id : user.id,
+      name: user.name,
+      email: user.email,
+    };
+  }
+
+  return DEFAULT_CANDIDATE;
+}
+
+function getEvaluatorIdentity(session: MockAuthSession) {
+  const user = session.user;
+  if (session.authenticated && user?.role === "EVALUATOR") {
+    return {
+      id: user.id === "evaluator-demo" ? "evaluator-carlos-andrade" : user.id,
+      name: user.name,
+    };
+  }
+
+  return { id: "evaluator-carlos-andrade", name: "Carlos Andrade" };
+}
+
+function getEntryPathForSession(session: MockAuthSession) {
+  if (!session.authenticated || !session.user) return "/login";
+  return session.user.onboardingCompleted ? DASHBOARD_BY_ROLE[session.user.role] : ONBOARDING_BY_ROLE[session.user.role];
+}
+
+function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
+  return pathname === ONBOARDING_BY_ROLE[role];
+}
+
 const CRITERIA = [
   { name: "Clareza",         score: 9 },
   { name: "Coerência",       score: 9 },
@@ -95,69 +186,35 @@ const CRITERIA = [
 ];
 
 type InterviewDraft = {
+  interviewId?: string;
   context: JobInterviewContext | null;
   questions: InterviewQuestion[];
   answers: Record<number, string>;
 };
 
+const ANSWER_MAX_CHARS = 1000;
+
+function normalizeInterviewAnswer(value: string) {
+  return value.replace(/\s*\r?\n+\s*/g, " ");
+}
+
+function isValidInterviewAnswer(value?: string) {
+  return Boolean(value?.trim());
+}
+
+function getFirstPendingQuestionIndex(draft: InterviewDraft) {
+  return draft.questions.findIndex((question) => !isValidInterviewAnswer(draft.answers[question.id]));
+}
+
+function hasAllRequiredInterviewAnswers(draft: InterviewDraft) {
+  return draft.questions.length > 0 && getFirstPendingQuestionIndex(draft) === -1;
+}
+
 const createEmptyInterviewDraft = (): InterviewDraft => ({
+  interviewId: undefined,
   context: null,
   questions: [],
   answers: {},
-});
-
-const createDemoInterviewDraft = (): InterviewDraft => ({
-  context: {
-    sourceUrl: "https://empregare.com/vaga-demo-desenvolvedor-full-stack-junior",
-    areaId: "information-technology",
-    subareaId: "full-stack-development",
-    seniorityId: "junior",
-    jobTitle: "Desenvolvedor Full Stack Júnior",
-    title: "Desenvolvedor Full Stack Júnior",
-    company: "Tech Labs",
-    summary:
-      "Vaga demonstrativa V1 para desenvolvimento de aplicações web, integração entre front-end e back-end e comunicação objetiva com o time.",
-    requirements: [
-      "Conhecimento em React e TypeScript.",
-      "Noções de APIs REST e integração com back-end.",
-      "Organização para trabalhar com tarefas, prazos e revisão de código.",
-      "Comunicação clara para explicar decisões técnicas.",
-    ],
-  },
-  questions: [
-    {
-      id: 1,
-      type: "Tecnica",
-      text: "Quais conhecimentos de React e TypeScript você usaria para atuar nesta vaga?",
-    },
-    {
-      id: 2,
-      type: "Tecnica",
-      text: "Como você organizaria a integração de uma tela front-end com uma API REST?",
-    },
-    {
-      id: 3,
-      type: "Comportamental",
-      text: "Conte sobre uma situação em que precisou organizar prioridades para cumprir um prazo.",
-    },
-    {
-      id: 4,
-      type: "Comportamental",
-      text: "Descreva uma experiência em que explicou uma decisão técnica para outra pessoa do time.",
-    },
-    {
-      id: 5,
-      type: "Carreira",
-      text: "Por que esta vaga faz sentido para seus objetivos profissionais agora?",
-    },
-  ],
-  answers: {
-    1: "Eu usaria componentes reutilizáveis, tipagem para contratos de dados e estados claros de carregamento, erro e sucesso para entregar uma interface mais confiável.",
-    2: "Começaria entendendo o contrato da API, depois criaria uma camada de serviço no Front e validaria os estados principais antes de integrar à tela final.",
-    3: "Em um projeto acadêmico, organizei tarefas por impacto e prazo, combinei entregas menores com o grupo e acompanhei pendências diariamente até concluir a atividade.",
-    4: "Expliquei para o time por que valia separar um formulário em componentes menores, mostrando como isso reduziria repetição e facilitaria manutenção.",
-    5: "A vaga combina com meu momento porque quero consolidar minha base em desenvolvimento web e ganhar prática em produtos com fluxo real de usuários.",
-  },
 });
 
 type SpeechRecognitionConstructor = new () => {
@@ -233,6 +290,22 @@ function statusToneFromBadge(variant: "default" | "success" | "warning" | "error
   return tones[variant];
 }
 
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "RC";
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
+
+function getCandidateAccountConfig(user?: MockAuthUser | null): AccountConfig {
+  if (!user) return CANDIDATE_ACCOUNT;
+  return {
+    ...CANDIDATE_ACCOUNT,
+    name: user.name,
+    email: user.email,
+    initials: getInitials(user.name),
+  };
+}
+
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <UICard padding="none" className={className}>
@@ -272,16 +345,16 @@ function Field({ label, type = "text", placeholder, hint, required, ...props }: 
   );
 }
 
-function FieldSelect({ label, options, required }: {
+function FieldSelect({ label, options, required, ...props }: {
   label: string; options: string[]; required?: boolean;
-}) {
+} & React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div>
       <label className="block text-sm font-semibold text-foreground mb-1.5">
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
       <div className="relative">
-        <NativeSelect>
+        <NativeSelect required={required} {...props}>
           <option value="">Selecione...</option>
           {options.map(o => <option key={o} value={o}>{o}</option>)}
         </NativeSelect>
@@ -327,133 +400,6 @@ function StatCard({ value, label, icon: Icon, color }: {
   );
 }
 
-// ─── Flow Navigator ───────────────────────────────────────────────────────────
-
-function FlowNav({ current, onNavigate }: { current: Screen; onNavigate: (s: Screen) => void }) {
-  const idx = FLOW_STEPS.findIndex(s => s.id === current);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const activeRef = useRef<HTMLButtonElement>(null);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
-
-  const updateArrows = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    setCanScrollLeft(el.scrollLeft > 2);
-    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
-  }, []);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    updateArrows();
-    el.addEventListener("scroll", updateArrows, { passive: true });
-    const ro = new ResizeObserver(updateArrows);
-    ro.observe(el);
-    return () => { el.removeEventListener("scroll", updateArrows); ro.disconnect(); };
-  }, [updateArrows]);
-
-  useEffect(() => {
-    const chip = activeRef.current;
-    const container = scrollRef.current;
-    if (!chip || !container) return;
-    const chipLeft = chip.offsetLeft;
-    const chipWidth = chip.offsetWidth;
-    const containerWidth = container.clientWidth;
-    const target = chipLeft - (containerWidth - chipWidth) / 2;
-    container.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
-  }, [current]);
-
-  const scroll = (dir: "left" | "right") => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollBy({ left: dir === "left" ? -200 : 200, behavior: "smooth" });
-  };
-
-  return (
-    <div className="sticky top-0 z-[60] bg-slate-900 border-b border-slate-800 shrink-0" style={{ minHeight: 44 }}>
-      <div className="flex items-center gap-2 max-w-screen-xl mx-auto px-3 py-2">
-        {/* Fixed label */}
-        <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase shrink-0 select-none">
-          Exploração
-        </span>
-
-        {/* Scrollable chips area with arrow controls */}
-        <div className="relative flex-1 min-w-0 flex items-center">
-          {/* Left arrow + gradient */}
-          {canScrollLeft && (
-            <>
-              <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-slate-900 to-transparent pointer-events-none z-10" />
-              <button
-                onClick={() => scroll("left")}
-                className="absolute left-0 z-20 p-1 text-slate-400 hover:text-white transition-colors shrink-0"
-                aria-label="Rolar para a esquerda"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
-
-          {/* Chips row */}
-          <div
-            ref={scrollRef}
-            className="flex items-center gap-1.5 overflow-x-auto w-full"
-            style={{
-              scrollbarWidth: "none",
-              msOverflowStyle: "none",
-              scrollBehavior: "smooth",
-              flexWrap: "nowrap",
-            } as React.CSSProperties}
-          >
-            {/* Left padding when arrow is shown */}
-            {canScrollLeft && <span className="shrink-0 w-5" />}
-
-            {FLOW_STEPS.map((step, i) => {
-              const done = i < idx;
-              const active = i === idx;
-              return (
-                <button
-                  key={step.id}
-                  ref={active ? activeRef : undefined}
-                  onClick={() => onNavigate(step.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap shrink-0 transition-all duration-150
-                    ${active
-                      ? "bg-blue-600 text-white"
-                      : done
-                        ? "bg-green-600/25 text-green-400 hover:bg-green-600/35"
-                        : "bg-slate-800 text-slate-400 hover:bg-slate-700"}`}
-                >
-                  {done
-                    ? <Check className="w-3 h-3 shrink-0" />
-                    : <span className="text-[10px] shrink-0">{i + 1}</span>}
-                  {step.label}
-                </button>
-              );
-            })}
-
-            {/* Right padding when arrow is shown */}
-            {canScrollRight && <span className="shrink-0 w-5" />}
-          </div>
-
-          {/* Right arrow + gradient */}
-          {canScrollRight && (
-            <>
-              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-slate-900 to-transparent pointer-events-none z-10" />
-              <button
-                onClick={() => scroll("right")}
-                className="absolute right-0 z-20 p-1 text-slate-400 hover:text-white transition-colors shrink-0"
-                aria-label="Rolar para a direita"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Authenticated Layout ─────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
@@ -467,19 +413,20 @@ const NAV_ITEMS = [
 ];
 
 function SidebarContent({
-  current, onNavigate, collapsed, onToggleCollapse, onClose, isMobile = false,
+  current, onNavigate, collapsed, onToggleCollapse, onClose, account = CANDIDATE_ACCOUNT, isMobile = false,
 }: {
   current: Screen;
   onNavigate: (s: Screen) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
   onClose: () => void;
+  account?: AccountConfig;
   isMobile?: boolean;
 }) {
   const [showLogout, setShowLogout] = useState(false);
 
   return (
-    <div className="flex flex-col h-full relative" style={{ backgroundColor: "#021025" }}>
+    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden" style={{ backgroundColor: "#021025" }}>
       {/* Logout confirmation modal */}
       {showLogout && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,38,82,0.92)" }}>
@@ -507,7 +454,7 @@ function SidebarContent({
         </div>
       )}
       {/* Logo */}
-      <div className={`border-b border-white/10 flex items-center ${collapsed ? "px-2 py-4 justify-center" : "px-5 py-4"}`}>
+      <div className={`flex h-[65px] shrink-0 items-center overflow-hidden border-b border-white/10 ${collapsed ? "justify-center px-2" : "px-5"}`}>
         {collapsed ? (
           /* Símbolo RH completo, proporções originais preservadas, sem corte */
           <svg viewBox="0 0 57.9158 31.8399" className="h-6 w-auto shrink-0" fill="none" style={{ maxWidth: "100%" }}>
@@ -522,15 +469,29 @@ function SidebarContent({
             <path d="M53.2854 7.48461C55.1541 7.22913 56.8761 8.53826 57.1282 10.4075C57.38 12.2771 56.065 13.9951 54.1946 14.2424C52.3304 14.4887 50.6175 13.1811 50.3664 11.3176C50.1153 9.45383 51.4222 7.73945 53.2854 7.48461Z" fill="#1560FE" stroke="white" strokeWidth="1.51237" />
           </svg>
         ) : (
-          <div className="flex flex-col gap-0.5 min-w-0">
-            <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
-            <p className="text-white/40 text-[11px]">Candidato</p>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+            <div className="flex min-w-[160px] flex-col gap-0.5 overflow-hidden">
+              <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
+              <p className="text-[11px] text-white/40">Candidato</p>
+            </div>
+
+            {isMobile && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/50 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                aria-label="Fechar menu"
+                title="Fechar menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+      <nav className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {NAV_ITEMS.map((item) => {
           const active = current === item.screen;
           return (
@@ -538,12 +499,12 @@ function SidebarContent({
               key={item.label}
               onClick={() => { item.screen && onNavigate(item.screen); onClose(); }}
               title={collapsed ? item.label : undefined}
-              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all text-left
+                className={`flex w-full min-w-0 max-w-full items-center overflow-hidden rounded-xl text-left text-sm font-medium transition-colors
                 ${collapsed ? "justify-center p-2.5" : "gap-3 px-3.5 py-2.5"}
                 ${active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/10 hover:text-white/80"}`}
             >
               <item.icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
               {active && !collapsed && <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" />}
             </button>
           );
@@ -552,11 +513,11 @@ function SidebarContent({
 
       {/* Collapse toggle — desktop/notebook only, hidden in mobile drawer */}
       {!isMobile && (
-        <div className="p-3 border-t border-white/10">
+          <div className="shrink-0 border-t border-white/10 p-3">
           <button
             onClick={onToggleCollapse}
             title={collapsed ? "Expandir menu" : undefined}
-            className={`w-full flex items-center rounded-xl py-2 text-white/40 hover:text-white/70 hover:bg-white/10 transition-all duration-[220ms]
+              className={`flex w-full min-w-0 items-center overflow-hidden rounded-xl py-2 text-white/40 transition-colors hover:bg-white/10 hover:text-white/70
               ${collapsed ? "justify-center px-2" : "gap-2 px-3"}`}
           >
             {collapsed
@@ -567,19 +528,19 @@ function SidebarContent({
       )}
 
       {/* User */}
-      <div className={`p-3 border-t border-white/10 ${collapsed ? "flex justify-center" : ""}`}>
+      <div className={`shrink-0 overflow-hidden border-t border-white/10 p-3 ${collapsed ? "flex justify-center" : ""}`}>
         {collapsed ? (
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
-            JL
+          <div className={`w-8 h-8 ${account.avatarClass} rounded-full flex items-center justify-center text-white text-xs font-bold`}>
+            {account.initials}
           </div>
         ) : (
           <div className="flex items-center gap-3 px-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
-              JL
+            <div className={`w-8 h-8 ${account.avatarClass} rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0`}>
+              {account.initials}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-semibold truncate">João Lima</p>
-              <p className="text-white/40 text-xs truncate">joao.lima@gmail.com</p>
+              <p className="text-white text-sm font-semibold truncate">{account.name}</p>
+              <p className="text-white/40 text-xs truncate">{account.email}</p>
             </div>
             <button
               onClick={() => setShowLogout(true)}
@@ -596,16 +557,32 @@ function SidebarContent({
 }
 
 function TopBar({
-  title, subtitle, actions, onNavigate,
+  title, subtitle, actions, onNavigate, account = CANDIDATE_ACCOUNT, onOpenMenu,
 }: {
   title: string; subtitle?: string; actions?: React.ReactNode;
   onNavigate: (s: Screen) => void;
+  account?: AccountConfig;
+  onOpenMenu?: () => void;
 }) {
   return (
     <div className="bg-white border-b border-border px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between shrink-0 gap-3">
-      <div className="min-w-0">
-        <h1 className="text-base sm:text-lg font-bold text-foreground truncate">{title}</h1>
-        {subtitle && <p className="text-xs text-muted-foreground mt-0.5 truncate hidden sm:block">{subtitle}</p>}
+      <div className="flex min-w-0 items-center gap-3">
+        {onOpenMenu && (
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+            aria-label="Abrir menu"
+            title="Abrir menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        )}
+
+        <div className="min-w-0">
+          <h1 className="text-base sm:text-lg font-bold text-foreground truncate">{title}</h1>
+          {subtitle && <p className="text-xs text-muted-foreground mt-0.5 truncate hidden sm:block">{subtitle}</p>}
+        </div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {actions && <div className="hidden sm:flex items-center gap-2">{actions}</div>}
@@ -615,7 +592,7 @@ function TopBar({
           onNavigate={onNavigate as (s: string) => void}
         />
         <AccountDropdown
-          config={CANDIDATE_ACCOUNT}
+          config={account}
           onNavigate={onNavigate as (s: string) => void}
         />
       </div>
@@ -624,21 +601,92 @@ function TopBar({
 }
 
 function AuthLayout({
-  current, onNavigate, title, subtitle, actions, children,
+  current, onNavigate, title, subtitle, actions, account, children,
 }: {
   current: Screen; onNavigate: (s: Screen) => void;
   title: string; subtitle?: string; actions?: React.ReactNode;
+  account?: AccountConfig;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(() => sessionStorage.getItem("sb-collapsed") === "1");
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = sessionStorage.getItem("sb-collapsed");
+
+    if (saved) {
+      return saved === "1";
+    }
+
+    return window.matchMedia("(min-width: 1024px) and (max-width: 1365px)").matches;
+  });
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const toggleCollapsed = () => setCollapsed(c => { sessionStorage.setItem("sb-collapsed", c ? "0" : "1"); return !c; });
+  const activeSession = getMockAuthSession();
+  const resolvedAccount = account ?? (
+    activeSession.authenticated && activeSession.user?.role === "CANDIDATE"
+      ? getCandidateAccountConfig(activeSession.user)
+      : CANDIDATE_ACCOUNT
+  );
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDrawerOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    document.body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+    };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const mediaQuery = window.matchMedia("(min-width: 1024px)");
+    const closeDrawerOnDesktop = () => {
+      if (mediaQuery.matches) {
+        setDrawerOpen(false);
+      }
+    };
+
+    closeDrawerOnDesktop();
+    mediaQuery.addEventListener("change", closeDrawerOnDesktop);
+
+    return () => {
+      mediaQuery.removeEventListener("change", closeDrawerOnDesktop);
+    };
+  }, [drawerOpen]);
 
   return (
-    <div className="flex w-full">
-      {/* Sidebar fixa — sem overlay, sem drawer, sem bloqueio de cliques */}
+    <div
+      className="relative min-h-screen w-full overflow-x-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-200 lg:ease-out"
+      style={{ gridTemplateColumns: collapsed ? "4rem minmax(0, 1fr)" : "15rem minmax(0, 1fr)" }}
+    >
+      {/* Desktop/notebook: sidebar no fluxo normal do layout */}
       <aside
-        className={`flex flex-col shrink-0 sticky self-start transition-[width] duration-[220ms] ease-in-out ${collapsed ? "w-16" : "w-60"}`}
-        style={{ backgroundColor: "#021025", top: 44, height: "calc(100vh - 44px)" }}
+        className={`hidden min-w-0 overflow-hidden bg-[#021025] lg:fixed lg:bottom-0 lg:left-0 lg:top-0 lg:z-30 lg:flex lg:w-[var(--sidebar-width)] lg:flex-col lg:transition-[width] lg:duration-200 lg:ease-out ${collapsed ? "shadow-none" : "shadow-2xl"}`}
+        style={{ "--sidebar-width": collapsed ? "4rem" : "15rem" } as CSSProperties}
       >
         <SidebarContent
           current={current}
@@ -646,19 +694,43 @@ function AuthLayout({
           collapsed={collapsed}
           onToggleCollapse={toggleCollapsed}
           onClose={() => {}}
+          account={resolvedAccount}
           isMobile={false}
         />
       </aside>
 
+      {/* Mobile/tablet: backdrop + drawer fora do fluxo */}
+      <div
+        aria-hidden={!drawerOpen}
+        onClick={() => setDrawerOpen(false)}
+        className={`fixed inset-0 top-0 z-40 bg-black/50 backdrop-blur-[1px] transition-opacity duration-200 lg:hidden ${drawerOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+      />
+
+      <aside
+        className={`fixed bottom-0 left-0 top-0 z-50 flex w-[min(280px,85vw)] flex-col overflow-hidden bg-[#021025] shadow-2xl transition-transform duration-[220ms] ease-out lg:hidden ${drawerOpen ? "translate-x-0" : "-translate-x-full"}`}
+      >
+        <SidebarContent
+          current={current}
+          onNavigate={onNavigate}
+          collapsed={false}
+          onToggleCollapse={() => {}}
+          onClose={() => setDrawerOpen(false)}
+          account={resolvedAccount}
+          isMobile
+        />
+      </aside>
+
       {/* Conteúdo principal — reajusta horizontalmente conforme a sidebar */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex min-w-0 flex-1 flex-col lg:col-start-2">
         <TopBar
           title={title}
           subtitle={subtitle}
           actions={actions}
           onNavigate={onNavigate}
+          account={resolvedAccount}
+          onOpenMenu={() => setDrawerOpen(true)}
         />
-        <main className="p-4 sm:p-6 lg:p-8">
+        <main className="min-w-0 flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
           {children}
         </main>
       </div>
@@ -676,12 +748,26 @@ function LandingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 function AuthScreen({
   onNavigate,
+  onLoginWithCredentials,
+  onRegister,
   initialTab = "register",
 }: {
   onNavigate: (s: Screen) => void;
+  onLoginWithCredentials: (email: string, password: string) => { ok: true } | { ok: false; message: string };
+  onRegister: (data: { name: string; email: string; password: string }) => { ok: true } | { ok: false; message: string };
   initialTab?: "login" | "register";
 }) {
   const [tab, setTab] = useState<"login" | "register">(initialTab);
+  const [loginEmail, setLoginEmail] = useState(() => getRememberedLoginEmail());
+  const [loginPassword, setLoginPassword] = useState("");
+  const [rememberAccess, setRememberAccess] = useState(() => Boolean(getRememberedLoginEmail()));
+  const [loginError, setLoginError] = useState("");
+  const [registerName, setRegisterName] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
+  const [registerAcceptedTerms, setRegisterAcceptedTerms] = useState(false);
+  const [registerError, setRegisterError] = useState("");
   const authNavigate = useNavigate();
 
   useEffect(() => {
@@ -690,14 +776,75 @@ function AuthScreen({
 
   const selectAuthTab = (nextTab: "login" | "register") => {
     setTab(nextTab);
+    setLoginError("");
+    setRegisterError("");
     authNavigate(nextTab === "login" ? "/login" : "/register");
   };
 
+  const handleLoginSubmit = () => {
+    const result = onLoginWithCredentials(loginEmail, loginPassword);
+    if (!result.ok) {
+      setLoginError(result.message);
+      return;
+    }
+
+    if (rememberAccess) {
+      saveRememberedLoginEmail(loginEmail);
+    } else {
+      clearRememberedLoginEmail();
+    }
+  };
+
+  const handleRegisterSubmit = () => {
+    const name = registerName.trim();
+    const email = registerEmail.trim().toLowerCase();
+    const password = registerPassword;
+    const confirmPassword = registerConfirmPassword;
+
+    if (!name || !email || !password || !confirmPassword) {
+      setRegisterError("Preencha todos os campos obrigatórios para criar sua conta.");
+      return;
+    }
+
+    if (!/^[^\s@]+@gmail\.com$/i.test(email)) {
+      setRegisterError("Use um e-mail válido do Gmail, no formato nome@gmail.com.");
+      return;
+    }
+
+    if (password.length < 8) {
+      setRegisterError("A senha deve ter pelo menos 8 caracteres.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setRegisterError("A confirmação de senha deve ser igual à senha informada.");
+      return;
+    }
+
+    if (!registerAcceptedTerms) {
+      setRegisterError("Você precisa aceitar os Termos de uso e a Política de privacidade para continuar.");
+      return;
+    }
+
+    setRegisterError("");
+    const result = onRegister({ name, email, password });
+    if (!result.ok) {
+      setRegisterError(result.message);
+    }
+  };
+
   return (
-    <div className="min-h-[calc(100vh-44px)] bg-background flex items-center justify-center p-4 sm:p-8 py-8">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 sm:p-8 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <RHConnectLogo className="h-10 w-auto mx-auto mb-3" />
+          <button
+            type="button"
+            onClick={() => onNavigate("landing")}
+            className="mx-auto mb-3 block cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            aria-label="Ir para a página inicial"
+          >
+            <RHConnectLogo className="h-10 w-auto" />
+          </button>
           <p className="text-muted-foreground text-sm">Seu treinamento inteligente para entrevistas</p>
         </div>
 
@@ -718,38 +865,135 @@ function AuthScreen({
           <div className="p-5 sm:p-7">
             {tab === "login" ? (
               <div className="space-y-4">
-                <Field label="E-mail" type="email" placeholder="seuemail@gmail.com" required />
-                <Field label="Senha" type="password" placeholder="Sua senha" required />
+                <Field
+                  label="E-mail"
+                  type="email"
+                  placeholder="seuemail@gmail.com"
+                  value={loginEmail}
+                  onChange={(event) => {
+                    setLoginEmail(event.target.value);
+                    setLoginError("");
+                  }}
+                  required
+                />
+                <Field
+                  label="Senha"
+                  type="password"
+                  placeholder="Sua senha"
+                  value={loginPassword}
+                  onChange={(event) => {
+                    setLoginPassword(event.target.value);
+                    setLoginError("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      handleLoginSubmit();
+                    }
+                  }}
+                  required
+                />
+                {loginError && (
+                  <Alert variant="error" className="rounded-xl p-3 text-xs">
+                    {loginError}
+                  </Alert>
+                )}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                   <div className="flex items-center gap-2">
-                    <Checkbox id="remember-access" />
+                    <Checkbox
+                      id="remember-access"
+                      checked={rememberAccess}
+                      onCheckedChange={(checked) => {
+                        const nextChecked = checked === true;
+                        setRememberAccess(nextChecked);
+                        if (!nextChecked) {
+                          clearRememberedLoginEmail();
+                        }
+                      }}
+                    />
                     <label htmlFor="remember-access" className="text-muted-foreground cursor-pointer">
                       Lembrar acesso
                     </label>
                   </div>
                   <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={() => onNavigate("dashboard")}>
+                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit}>
                   Entrar na plataforma
                 </Btn>
               </div>
             ) : (
               <div className="space-y-4">
-                <Field label="Nome completo" placeholder="João da Silva Lima" required />
-                <Field label="E-mail" type="email" placeholder="nome@gmail.com" required />
+                <Field
+                  label="Nome completo"
+                  placeholder="João da Silva Lima"
+                  value={registerName}
+                  onChange={(event) => {
+                    setRegisterName(event.target.value);
+                    setRegisterError("");
+                  }}
+                  required
+                />
+                <Field
+                  label="E-mail"
+                  type="email"
+                  placeholder="nome@gmail.com"
+                  value={registerEmail}
+                  onChange={(event) => {
+                    setRegisterEmail(event.target.value);
+                    setRegisterError("");
+                  }}
+                  required
+                />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Field label="Senha" type="password" placeholder="Mínimo 8 caracteres" required />
-                  <Field label="Confirmar senha" type="password" placeholder="Repita a senha" required />
+                  <Field
+                    label="Senha"
+                    type="password"
+                    placeholder="Mínimo 8 caracteres"
+                    value={registerPassword}
+                    onChange={(event) => {
+                      setRegisterPassword(event.target.value);
+                      setRegisterError("");
+                    }}
+                    required
+                  />
+                  <Field
+                    label="Confirmar senha"
+                    type="password"
+                    placeholder="Repita a senha"
+                    value={registerConfirmPassword}
+                    onChange={(event) => {
+                      setRegisterConfirmPassword(event.target.value);
+                      setRegisterError("");
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        handleRegisterSubmit();
+                      }
+                    }}
+                    required
+                  />
                 </div>
                 <div className="bg-accent rounded-xl p-4">
                   <label className="flex items-start gap-3 cursor-pointer">
-                    <input type="checkbox" className="mt-0.5 rounded shrink-0" />
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 rounded shrink-0"
+                      checked={registerAcceptedTerms}
+                      onChange={(event) => {
+                        setRegisterAcceptedTerms(event.target.checked);
+                        setRegisterError("");
+                      }}
+                    />
                     <span className="text-xs text-foreground leading-relaxed">
                       Li e aceito os <button onClick={() => onNavigate("terms")} className="text-primary font-semibold hover:underline">Termos de uso</button> e a <button onClick={() => onNavigate("privacy")} className="text-primary font-semibold hover:underline">Política de privacidade</button>. <span className="text-red-500">*</span>
                     </span>
                   </label>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={() => onNavigate("email-verify")}>
+                {registerError && (
+                  <Alert variant="error" className="rounded-xl p-3 text-xs">
+                    {registerError}
+                  </Alert>
+                )}
+                <Btn variant="primary" className="w-full !py-3" onClick={handleRegisterSubmit}>
                   Criar minha conta
                 </Btn>
               </div>
@@ -764,28 +1008,6 @@ function AuthScreen({
           </div>
         </Card>
 
-        {/* Demo shortcuts — prototype only, visually separate from real login */}
-        {tab === "login" && (
-          <div className="w-full max-w-md mx-auto mt-4 border border-dashed border-muted-foreground/30 rounded-2xl p-4 bg-muted/20">
-            <p className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wide mb-3 text-center">
-              Navegação do protótipo — outros perfis
-            </p>
-            <p className="text-[10px] text-muted-foreground text-center mb-3 leading-relaxed">
-              No produto real, o perfil é identificado automaticamente após o login.<br/>
-              Estes atalhos existem apenas para demonstração.
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => onNavigate("eval-onboarding")}
-                className="flex-1 px-3 py-2 rounded-xl border border-teal-200 bg-teal-50 text-teal-700 text-xs font-semibold hover:bg-teal-100 transition-colors">
-                Avaliador
-              </button>
-              <button onClick={() => onNavigate("admin-onboarding")}
-                className="flex-1 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 transition-colors">
-                Administrador
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -793,15 +1015,45 @@ function AuthScreen({
 
 // ─── Screen 3: Dashboard ──────────────────────────────────────────────────────
 
-function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const routerNavigate = useNavigate();
+  const candidateUser = session.user;
+  const isDemoCandidate = candidateUser?.id === "candidate-demo";
+  const candidateIdentity = getCandidateIdentity(session);
+  const candidateId = candidateIdentity.id;
+  const account = getCandidateAccountConfig(candidateUser);
+  const firstName = (candidateUser?.name ?? CANDIDATE_ACCOUNT.name).trim().split(/\s+/)[0] ?? "candidato";
+  const candidateProfile = getCandidateProfile(candidateId, candidateUser);
+  const profileCompleteness = getCandidateProfileCompleteness(candidateProfile);
+  const candidateInterviews = getCandidateInterviews(candidateId);
+  const availableReports = getAvailableCandidateReports(candidateId);
+  const pendingCount = candidateInterviews.filter((item) => item.status !== "EVALUATED").length;
+  const bestScore = availableReports
+    .map((item) => getAverageScore(item.evaluation?.scores))
+    .filter((score): score is number => score !== null)
+    .sort((a, b) => b - a)[0];
   const RECENT = [
-    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const },
-    { vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const },
-    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const },
+    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const, interviewId: undefined as string | undefined },
+    { vaga: "Analista de RH",                  empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const, interviewId: undefined as string | undefined },
+    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const, interviewId: undefined as string | undefined },
   ];
+  const recentItems = [
+    ...candidateInterviews.slice(0, 3).map((interview) => {
+      const report = getReportByInterviewId(interview.id);
+      return {
+        vaga: interview.context.title,
+        empresa: interview.context.company,
+        data: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+        status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
+        badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
+        interviewId: interview.id,
+      };
+    }),
+    ...(isDemoCandidate ? RECENT : []),
+  ].slice(0, 3);
 
   return (
-    <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle="Bem-vindo de volta, João!">
+    <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
       {/* Profile incomplete banner */}
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-start sm:items-center gap-4">
@@ -809,10 +1061,10 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <User className="w-5 h-5 text-blue-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-foreground">Perfil 65% completo</p>
+            <p className="text-sm font-bold text-foreground">Perfil {profileCompleteness}% completo</p>
             <p className="text-xs text-muted-foreground mt-0.5">Complete seu perfil para obter perguntas mais relevantes.</p>
             <div className="mt-2 w-full max-w-xs bg-blue-100 rounded-full h-1.5">
-              <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: "65%" }} />
+              <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${profileCompleteness}%` }} />
             </div>
           </div>
         </div>
@@ -823,10 +1075,10 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value="3"   label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-        <StatCard value="1"   label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
-        <StatCard value="1"   label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
-        <StatCard value="7,8" label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
+        <StatCard value={candidateInterviews.length || (isDemoCandidate ? 3 : 0)} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+        <StatCard value={pendingCount || (isDemoCandidate ? 1 : 0)} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
+        <StatCard value={availableReports.length || (isDemoCandidate ? 1 : 0)} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
+        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : isDemoCandidate ? "7,8" : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
@@ -856,27 +1108,36 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </button>
             </div>
             <div className="space-y-3">
-              {RECENT.map((item) => (
-                <div key={item.vaga} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
-                      <Briefcase className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
-                      <div className="flex flex-wrap items-center gap-2 mt-2">
-                        <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
-                        {item.badge === "success" && (
-                          <Btn size="sm" variant="primary" onClick={() => onNavigate("report")}>
-                            Ver relatório
-                          </Btn>
-                        )}
+              {recentItems.length ? (
+                recentItems.map((item) => (
+                  <div key={item.interviewId ?? `${item.vaga}-${item.data}`} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
+                        <Briefcase className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
+                          {item.badge === "success" && (
+                            <Btn size="sm" variant="primary" onClick={() => item.interviewId ? routerNavigate(`/candidate/reports/${item.interviewId}`) : onNavigate("report")}>
+                              Ver relatório
+                            </Btn>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <EmptyState
+                  icon={MessageSquare}
+                  title="Nenhuma entrevista enviada ainda"
+                  description="Quando você concluir uma entrevista, ela aparecerá aqui com o status da avaliação."
+                  className="border-none bg-muted/40 p-6"
+                />
+              )}
             </div>
           </Card>
         </div>
@@ -906,18 +1167,180 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 4: Perfil Profissional ────────────────────────────────────────────
 
-function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
+  const candidateIdentity = getCandidateIdentity(session);
+  const account = getCandidateAccountConfig(candidateUser);
+  const [profile, setProfile] = useState<CandidateProfile>(() => getCandidateProfile(candidateIdentity.id, candidateUser));
   const [openSection, setOpenSection] = useState<string | null>("objetivo");
-  const [selectedAreaId, setSelectedAreaId] = useState<ProfessionalAreaId | "">("information-technology");
-  const [selectedSubareaId, setSelectedSubareaId] = useState("");
+  const [selectedAreaId, setSelectedAreaId] = useState<ProfessionalAreaId | "">((profile.areaId as ProfessionalAreaId | "") || "");
+  const [selectedSubareaId, setSelectedSubareaId] = useState(profile.subareaId);
+  const [newFormation, setNewFormation] = useState<Omit<CandidateFormation, "id">>({
+    title: "",
+    institution: "",
+    level: "",
+    status: "",
+    startDate: "",
+    endDate: "",
+  });
+  const [newCourse, setNewCourse] = useState<Omit<CandidateCourse, "id">>({
+    name: "",
+    institution: "",
+    workload: "",
+    completedAt: "",
+  });
+  const [newExperience, setNewExperience] = useState<Omit<CandidateExperience, "id">>({
+    company: "",
+    role: "",
+    startDate: "",
+    endDate: "",
+    current: false,
+    description: "",
+  });
+  const [newTechnicalSkill, setNewTechnicalSkill] = useState("");
+  const [newBehavioralSkill, setNewBehavioralSkill] = useState("");
   const availableSubareas = selectedAreaId ? getProfessionalSubareasByArea(selectedAreaId) : [];
+  const profileCompleteness = getCandidateProfileCompleteness(profile);
+
+  useEffect(() => {
+    const nextProfile = getCandidateProfile(candidateIdentity.id, candidateUser);
+    setProfile(nextProfile);
+    setSelectedAreaId((nextProfile.areaId as ProfessionalAreaId | "") || "");
+    setSelectedSubareaId(nextProfile.subareaId);
+  }, [candidateIdentity.id, candidateUser?.id]);
+
+  const updateProfile = (patch: CandidateProfilePatch) => {
+    setProfile((current) => ({ ...current, ...patch }));
+  };
+
+  const persistProfile = (patch: CandidateProfilePatch, message = "Perfil profissional salvo.") => {
+    const saved = saveCandidateProfile(candidateIdentity.id, {
+      ...profile,
+      ...patch,
+    });
+    setProfile(saved);
+    setSelectedAreaId((saved.areaId as ProfessionalAreaId | "") || "");
+    setSelectedSubareaId(saved.subareaId);
+    toast.success(message);
+    return saved;
+  };
+
+  const handleSaveProfile = () => {
+    persistProfile({
+      ...profile,
+      areaId: selectedAreaId,
+      subareaId: selectedSubareaId,
+    });
+  };
+
+  const handleSaveObjective = () => {
+    persistProfile({
+      areaId: selectedAreaId,
+      subareaId: selectedSubareaId,
+      desiredRole: profile.desiredRole,
+      seniority: profile.seniority,
+      contractType: profile.contractType,
+      professionalSummary: profile.professionalSummary,
+    }, "Objetivo profissional salvo.");
+  };
+
+  const hasText = (...values: string[]) => values.some((value) => value.trim().length > 0);
+
+  const updateFormation = (id: string, patch: Partial<CandidateFormation>) => {
+    updateProfile({ formations: profile.formations.map((item) => item.id === id ? { ...item, ...patch } : item) });
+  };
+
+  const addFormation = () => {
+    if (!hasText(newFormation.title, newFormation.institution, newFormation.level, newFormation.startDate, newFormation.endDate, newFormation.status)) {
+      toast.error("Preencha pelo menos um dado da formação antes de adicionar.");
+      return;
+    }
+    updateProfile({ formations: [...profile.formations, { ...newFormation, id: `formation-${Date.now()}` }] });
+    setNewFormation({ title: "", institution: "", level: "", status: "", startDate: "", endDate: "" });
+  };
+
+  const removeFormation = (id: string) => {
+    updateProfile({ formations: profile.formations.filter((item) => item.id !== id) });
+  };
+
+  const updateCourse = (id: string, patch: Partial<CandidateCourse>) => {
+    updateProfile({ courses: profile.courses.map((item) => item.id === id ? { ...item, ...patch } : item) });
+  };
+
+  const addCourse = () => {
+    if (!hasText(newCourse.name, newCourse.institution, newCourse.workload, newCourse.completedAt)) {
+      toast.error("Preencha pelo menos um dado do curso antes de adicionar.");
+      return;
+    }
+    updateProfile({ courses: [...profile.courses, { ...newCourse, id: `course-${Date.now()}` }] });
+    setNewCourse({ name: "", institution: "", workload: "", completedAt: "" });
+  };
+
+  const removeCourse = (id: string) => {
+    updateProfile({ courses: profile.courses.filter((item) => item.id !== id) });
+  };
+
+  const updateExperience = (id: string, patch: Partial<CandidateExperience>) => {
+    updateProfile({ experiences: profile.experiences.map((item) => item.id === id ? { ...item, ...patch } : item) });
+  };
+
+  const addExperience = () => {
+    if (!hasText(newExperience.company, newExperience.role, newExperience.startDate, newExperience.endDate, newExperience.description)) {
+      toast.error("Preencha pelo menos um dado da experiência antes de adicionar.");
+      return;
+    }
+    updateProfile({ experiences: [...profile.experiences, { ...newExperience, id: `experience-${Date.now()}` }] });
+    setNewExperience({ company: "", role: "", startDate: "", endDate: "", current: false, description: "" });
+  };
+
+  const removeExperience = (id: string) => {
+    updateProfile({ experiences: profile.experiences.filter((item) => item.id !== id) });
+  };
+
+  const addSkill = (kind: "technicalSkills" | "behavioralSkills", value: string) => {
+    const skill = value.trim();
+    if (!skill) {
+      toast.error("Digite uma habilidade antes de adicionar.");
+      return;
+    }
+    const normalized = skill.toLocaleLowerCase("pt-BR");
+    if (profile[kind].some((item) => item.trim().toLocaleLowerCase("pt-BR") === normalized)) {
+      toast.error("Essa habilidade já foi adicionada.");
+      return;
+    }
+    if (kind === "technicalSkills") {
+      updateProfile({ technicalSkills: [...profile.technicalSkills, skill] });
+    } else {
+      updateProfile({ behavioralSkills: [...profile.behavioralSkills, skill] });
+    }
+    if (kind === "technicalSkills") setNewTechnicalSkill("");
+    if (kind === "behavioralSkills") setNewBehavioralSkill("");
+  };
+
+  const removeSkill = (kind: "technicalSkills" | "behavioralSkills", value: string) => {
+    if (kind === "technicalSkills") {
+      updateProfile({ technicalSkills: profile.technicalSkills.filter((item) => item !== value) });
+    } else {
+      updateProfile({ behavioralSkills: profile.behavioralSkills.filter((item) => item !== value) });
+    }
+  };
 
   const sections = [
-    { id: "objetivo",    label: "Objetivo profissional",     icon: Target,       filled: true },
-    { id: "formacao",    label: "Formação acadêmica",        icon: GraduationCap,filled: true },
-    { id: "cursos",      label: "Cursos complementares",     icon: BookOpen,     filled: false },
-    { id: "experiencia", label: "Experiência profissional",  icon: Briefcase,    filled: false },
-    { id: "habilidades", label: "Habilidades e competências",icon: Star,         filled: true },
+    {
+      id: "objetivo",
+      label: "Objetivo profissional",
+      icon: Target,
+      filled: Boolean(selectedAreaId || selectedSubareaId || profile.desiredRole || profile.seniority || profile.contractType || profile.professionalSummary),
+    },
+    { id: "formacao",    label: "Formação acadêmica",        icon: GraduationCap,filled: profile.formations.some((item) => hasText(item.title, item.institution, item.level, item.startDate, item.endDate, item.status)) },
+    { id: "cursos",      label: "Cursos complementares",     icon: BookOpen,     filled: profile.courses.some((item) => hasText(item.name, item.institution, item.workload, item.completedAt)) },
+    { id: "experiencia", label: "Experiência profissional",  icon: Briefcase,    filled: profile.experiences.some((item) => hasText(item.company, item.role, item.startDate, item.endDate, item.description)) },
+    {
+      id: "habilidades",
+      label: "Habilidades e competências",
+      icon: Star,
+      filled: profile.technicalSkills.some((value) => value.trim().length > 0) || profile.behavioralSkills.some((value) => value.trim().length > 0),
+    },
   ];
 
   return (
@@ -926,11 +1349,12 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       onNavigate={onNavigate}
       title="Perfil Profissional"
       subtitle="Preencha seu perfil para receber perguntas mais relevantes"
+      account={account}
       actions={
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground whitespace-nowrap">65% completo</span>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{profileCompleteness}% completo</span>
           <div className="w-20 sm:w-24 bg-muted rounded-full h-1.5">
-            <div className="bg-primary h-1.5 rounded-full" style={{ width: "65%" }} />
+            <div className="bg-primary h-1.5 rounded-full" style={{ width: `${profileCompleteness}%` }} />
           </div>
         </div>
       }
@@ -940,15 +1364,20 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         <Card className="p-5 sm:p-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
             <div className="w-16 h-16 bg-gradient-to-br from-blue-400 to-blue-700 rounded-2xl flex items-center justify-center text-white text-xl font-bold shrink-0">
-              JL
+              {getInitials(candidateIdentity.name)}
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="font-bold text-foreground text-lg">João Lima</h2>
-              <p className="text-muted-foreground text-sm">joao.lima@gmail.com · São Paulo, SP</p>
-              <p className="text-xs text-muted-foreground mt-1 italic">"Profissional em busca da primeira oportunidade na área de Tecnologia da Informação."</p>
+              <h2 className="font-bold text-foreground text-lg">{candidateIdentity.name}</h2>
+              <p className="text-muted-foreground text-sm">
+                {candidateIdentity.email}
+                {(profile.city || profile.state) && ` · ${[profile.city, profile.state].filter(Boolean).join(", ")}`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 italic">
+                {profile.professionalSummary ? `"${profile.professionalSummary}"` : "Resumo profissional ainda não preenchido."}
+              </p>
             </div>
-            <Btn variant="outline" size="sm" className="self-start sm:self-auto shrink-0">
-              <Edit2 className="w-3.5 h-3.5" /> Editar
+            <Btn variant="outline" size="sm" className="self-start sm:self-auto shrink-0" onClick={handleSaveProfile}>
+              <Check className="w-3.5 h-3.5" /> Salvar perfil
             </Btn>
           </div>
         </Card>
@@ -1018,30 +1447,175 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                           <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                         </div>
                       </div>
-                      <Field label="Cargo desejado" placeholder="Ex: Desenvolvedor Front-end" required />
-                      <FieldSelect label="Senioridade profissional" options={SENIORITY_LEVEL_OPTIONS} required />
-                      <FieldSelect label="Tipo de contrato" options={["CLT", "Estágio", "PJ", "Temporário"]} />
+                      <Field
+                        label="Cargo desejado"
+                        placeholder="Ex: Desenvolvedor Front-end"
+                        value={profile.desiredRole}
+                        onChange={(event) => updateProfile({ desiredRole: event.target.value })}
+                        required
+                      />
+                      <FieldSelect
+                        label="Senioridade profissional"
+                        options={SENIORITY_LEVEL_OPTIONS}
+                        value={profile.seniority}
+                        onChange={(event) => updateProfile({ seniority: event.target.value })}
+                        required
+                      />
+                      <FieldSelect
+                        label="Tipo de contrato"
+                        options={["CLT", "Estágio", "PJ", "Temporário"]}
+                        value={profile.contractType}
+                        onChange={(event) => updateProfile({ contractType: event.target.value })}
+                      />
                     </div>
-                    <FieldArea label="Resumo profissional" placeholder="Escreva um breve texto sobre sua trajetória, objetivos e diferenciais..." rows={3} required />
+                    <FieldArea
+                      label="Resumo profissional"
+                      placeholder="Escreva um breve texto sobre sua trajetória, objetivos e diferenciais..."
+                      rows={3}
+                      value={profile.professionalSummary}
+                      onChange={(event) => updateProfile({ professionalSummary: event.target.value })}
+                      required
+                    />
                   </>
                 )}
                 {sec.id === "formacao" && (
                   <>
-                    <div className="bg-muted/50 rounded-xl p-4 border border-border">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-foreground text-sm">Análise e Desenvolvimento de Sistemas</p>
-                          <p className="text-xs text-muted-foreground">SENAC-DF · Tecnólogo · Em andamento</p>
-                          <p className="text-xs text-muted-foreground">2025 – 2026</p>
+                    {profile.formations.length > 0 ? (
+                      profile.formations.map((formation) => (
+                        <div key={formation.id} className="bg-muted/50 rounded-xl p-4 border border-border space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                            <Field label="Curso" value={formation.title} onChange={(event) => updateFormation(formation.id, { title: event.target.value })} />
+                            <Field label="Instituição" value={formation.institution} onChange={(event) => updateFormation(formation.id, { institution: event.target.value })} />
+                            <Field label="Nível/tipo" value={formation.level} onChange={(event) => updateFormation(formation.id, { level: event.target.value })} />
+                            <Field label="Início" value={formation.startDate} onChange={(event) => updateFormation(formation.id, { startDate: event.target.value })} />
+                            <Field label="Conclusão" value={formation.endDate} onChange={(event) => updateFormation(formation.id, { endDate: event.target.value })} />
+                            <FieldSelect
+                              label="Situação"
+                              options={["Em andamento", "Concluído", "Trancado", "Interrompido"]}
+                              value={formation.status}
+                              onChange={(event) => updateFormation(formation.id, { status: event.target.value })}
+                            />
+                          </div>
+                          <div className="flex justify-end">
+                            <button onClick={() => removeFormation(formation.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors" aria-label="Remover formação">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-1 shrink-0">
-                          <button className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                          <button className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors"><X className="w-3.5 h-3.5" /></button>
-                        </div>
+                      ))
+                    ) : (
+                      <div className="bg-muted/40 rounded-xl p-4 border border-border">
+                        <p className="text-sm font-semibold text-foreground">Nenhuma formação adicionada</p>
+                        <p className="text-xs text-muted-foreground mt-1">Adicione formações quando quiser completar seu perfil profissional.</p>
                       </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 border-2 border-dashed border-border rounded-xl p-4">
+                      <Field label="Curso" value={newFormation.title} onChange={(event) => setNewFormation((current) => ({ ...current, title: event.target.value }))} />
+                      <Field label="Instituição" value={newFormation.institution} onChange={(event) => setNewFormation((current) => ({ ...current, institution: event.target.value }))} />
+                      <Field label="Nível/tipo" value={newFormation.level} onChange={(event) => setNewFormation((current) => ({ ...current, level: event.target.value }))} />
+                      <Field label="Início" value={newFormation.startDate} onChange={(event) => setNewFormation((current) => ({ ...current, startDate: event.target.value }))} />
+                      <Field label="Conclusão" value={newFormation.endDate} onChange={(event) => setNewFormation((current) => ({ ...current, endDate: event.target.value }))} />
+                      <FieldSelect
+                        label="Situação"
+                        options={["Em andamento", "Concluído", "Trancado", "Interrompido"]}
+                        value={newFormation.status}
+                        onChange={(event) => setNewFormation((current) => ({ ...current, status: event.target.value }))}
+                      />
                     </div>
-                    <button className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
+                    <button onClick={addFormation} className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
                       <Plus className="w-4 h-4" /> Adicionar formação
+                    </button>
+                  </>
+                )}
+                {sec.id === "cursos" && (
+                  <>
+                    {profile.courses.length > 0 ? (
+                      profile.courses.map((course) => (
+                        <div key={course.id} className="bg-muted/50 rounded-xl p-4 border border-border space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                            <Field label="Curso" value={course.name} onChange={(event) => updateCourse(course.id, { name: event.target.value })} />
+                            <Field label="Instituição/plataforma" value={course.institution} onChange={(event) => updateCourse(course.id, { institution: event.target.value })} />
+                            <Field label="Carga horária" value={course.workload} onChange={(event) => updateCourse(course.id, { workload: event.target.value })} />
+                            <Field label="Conclusão" value={course.completedAt} onChange={(event) => updateCourse(course.id, { completedAt: event.target.value })} />
+                          </div>
+                          <div className="flex justify-end">
+                            <button onClick={() => removeCourse(course.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors" aria-label="Remover curso">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="bg-muted/40 rounded-xl p-4 border border-border">
+                        <p className="text-sm font-semibold text-foreground">Nenhum curso complementar adicionado</p>
+                        <p className="text-xs text-muted-foreground mt-1">Adicione cursos quando quiser enriquecer seu perfil profissional.</p>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 border-2 border-dashed border-border rounded-xl p-4">
+                      <Field label="Curso" value={newCourse.name} onChange={(event) => setNewCourse((current) => ({ ...current, name: event.target.value }))} />
+                      <Field label="Instituição/plataforma" value={newCourse.institution} onChange={(event) => setNewCourse((current) => ({ ...current, institution: event.target.value }))} />
+                      <Field label="Carga horária" value={newCourse.workload} onChange={(event) => setNewCourse((current) => ({ ...current, workload: event.target.value }))} />
+                      <Field label="Conclusão" value={newCourse.completedAt} onChange={(event) => setNewCourse((current) => ({ ...current, completedAt: event.target.value }))} />
+                    </div>
+                    <button onClick={addCourse} className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
+                      <Plus className="w-4 h-4" /> Adicionar curso
+                    </button>
+                  </>
+                )}
+                {sec.id === "experiencia" && (
+                  <>
+                    {profile.experiences.length > 0 ? (
+                      profile.experiences.map((experience) => (
+                        <div key={experience.id} className="bg-muted/50 rounded-xl p-4 border border-border space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                            <Field label="Empresa" value={experience.company} onChange={(event) => updateExperience(experience.id, { company: event.target.value })} />
+                            <Field label="Cargo" value={experience.role} onChange={(event) => updateExperience(experience.id, { role: event.target.value })} />
+                            <Field label="Início" value={experience.startDate} onChange={(event) => updateExperience(experience.id, { startDate: event.target.value })} />
+                            <Field label="Fim" value={experience.endDate} disabled={experience.current} onChange={(event) => updateExperience(experience.id, { endDate: event.target.value })} />
+                          </div>
+                          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <input
+                              type="checkbox"
+                              checked={experience.current}
+                              onChange={(event) => updateExperience(experience.id, { current: event.target.checked, endDate: event.target.checked ? "" : experience.endDate })}
+                              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                            />
+                            Trabalho atualmente nesta experiência
+                          </label>
+                          <FieldArea label="Descrição/responsabilidades" rows={3} value={experience.description} onChange={(event) => updateExperience(experience.id, { description: event.target.value })} />
+                          <div className="flex justify-end">
+                            <button onClick={() => removeExperience(experience.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors" aria-label="Remover experiência">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="bg-muted/40 rounded-xl p-4 border border-border">
+                        <p className="text-sm font-semibold text-foreground">Nenhuma experiência profissional adicionada</p>
+                        <p className="text-xs text-muted-foreground mt-1">Adicione experiências quando quiser completar seu histórico profissional.</p>
+                      </div>
+                    )}
+                    <div className="border-2 border-dashed border-border rounded-xl p-4 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <Field label="Empresa" value={newExperience.company} onChange={(event) => setNewExperience((current) => ({ ...current, company: event.target.value }))} />
+                        <Field label="Cargo" value={newExperience.role} onChange={(event) => setNewExperience((current) => ({ ...current, role: event.target.value }))} />
+                        <Field label="Início" value={newExperience.startDate} onChange={(event) => setNewExperience((current) => ({ ...current, startDate: event.target.value }))} />
+                        <Field label="Fim" value={newExperience.endDate} disabled={newExperience.current} onChange={(event) => setNewExperience((current) => ({ ...current, endDate: event.target.value }))} />
+                      </div>
+                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={newExperience.current}
+                          onChange={(event) => setNewExperience((current) => ({ ...current, current: event.target.checked, endDate: event.target.checked ? "" : current.endDate }))}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                        />
+                        Trabalho atualmente nesta experiência
+                      </label>
+                      <FieldArea label="Descrição/responsabilidades" rows={3} value={newExperience.description} onChange={(event) => setNewExperience((current) => ({ ...current, description: event.target.value }))} />
+                    </div>
+                    <button onClick={addExperience} className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
+                      <Plus className="w-4 h-4" /> Adicionar experiência
                     </button>
                   </>
                 )}
@@ -1050,50 +1624,76 @@ function ProfileScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Habilidades técnicas</p>
                       <div className="flex flex-wrap gap-2">
-                        {["JavaScript", "React", "Git", "Testes", "SQL", "Comunicação técnica"].map(s => (
-                          <UIBadge key={s} variant="primary" className="px-3 py-1 font-medium">{s}</UIBadge>
+                        {profile.technicalSkills.map(s => (
+                          <UIBadge key={s} variant="primary" className="px-3 py-1 font-medium">
+                            {s}
+                            <button onClick={() => removeSkill("technicalSkills", s)} className="ml-1 text-blue-700/70 hover:text-blue-900" aria-label={`Remover ${s}`}>
+                              <X className="w-3 h-3" />
+                            </button>
+                          </UIBadge>
                         ))}
-                        <button className="bg-muted text-muted-foreground text-xs font-medium px-3 py-1 rounded-full border border-border hover:bg-muted/80 flex items-center gap-1">
-                          <Plus className="w-3 h-3" /> Adicionar
-                        </button>
+                        {profile.technicalSkills.length === 0 && (
+                          <span className="text-xs text-muted-foreground">Nenhuma habilidade técnica adicionada.</span>
+                        )}
+                      </div>
+                      <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                        <Input value={newTechnicalSkill} onChange={(event) => setNewTechnicalSkill(event.target.value)} placeholder="Adicionar habilidade técnica" />
+                        <Btn variant="secondary" size="sm" onClick={() => addSkill("technicalSkills", newTechnicalSkill)}>
+                          <Plus className="w-3.5 h-3.5" /> Adicionar
+                        </Btn>
                       </div>
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Competências comportamentais</p>
                       <div className="flex flex-wrap gap-2">
-                        {["Comunicação", "Trabalho em equipe", "Criatividade", "Proatividade"].map(s => (
-                          <UIBadge key={s} variant="neutral" className="border-green-100 bg-green-50 px-3 py-1 font-medium text-green-700">{s}</UIBadge>
+                        {profile.behavioralSkills.map(s => (
+                          <UIBadge key={s} variant="neutral" className="border-green-100 bg-green-50 px-3 py-1 font-medium text-green-700">
+                            {s}
+                            <button onClick={() => removeSkill("behavioralSkills", s)} className="ml-1 text-green-700/70 hover:text-green-900" aria-label={`Remover ${s}`}>
+                              <X className="w-3 h-3" />
+                            </button>
+                          </UIBadge>
                         ))}
+                        {profile.behavioralSkills.length === 0 && (
+                          <span className="text-xs text-muted-foreground">Nenhuma competência adicionada.</span>
+                        )}
                       </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Idiomas</p>
-                      <div className="flex flex-wrap gap-2">
-                        {["Português (nativo)", "Inglês (básico)"].map(s => (
-                          <UIBadge key={s} variant="neutral" className="border-purple-100 bg-purple-50 px-3 py-1 font-medium text-purple-700">{s}</UIBadge>
-                        ))}
+                      <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                        <Input value={newBehavioralSkill} onChange={(event) => setNewBehavioralSkill(event.target.value)} placeholder="Adicionar competência comportamental" />
+                        <Btn variant="secondary" size="sm" onClick={() => addSkill("behavioralSkills", newBehavioralSkill)}>
+                          <Plus className="w-3.5 h-3.5" /> Adicionar
+                        </Btn>
                       </div>
                     </div>
                   </>
                 )}
-                {(sec.id === "cursos" || sec.id === "experiencia") && (
-                  <div className="text-center py-4">
-                    <div className="w-10 h-10 bg-muted rounded-xl flex items-center justify-center mx-auto mb-3">
-                      <Plus className="w-5 h-5 text-muted-foreground" />
-                    </div>
-                    <p className="text-sm font-medium text-foreground mb-1">
-                      {sec.id === "cursos" ? "Nenhum curso adicionado" : "Nenhuma experiência adicionada"}
-                    </p>
-                    <p className="text-xs text-muted-foreground mb-4">Adicione informações para enriquecer seu perfil.</p>
-                    <Btn variant="secondary" size="sm">
-                      <Plus className="w-3.5 h-3.5" />
-                      {sec.id === "cursos" ? "Adicionar curso" : "Adicionar experiência"}
-                    </Btn>
-                  </div>
-                )}
-                {sec.filled && (
+                {(
+                  sec.id === "objetivo"
+                  || sec.id === "formacao"
+                  || sec.id === "cursos"
+                  || sec.id === "experiencia"
+                  || sec.id === "habilidades"
+                ) && (
                   <div className="flex justify-end pt-2 border-t border-border">
-                    <Btn variant="primary" size="sm">Salvar alterações</Btn>
+                    <Btn
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        if (sec.id === "objetivo") {
+                          handleSaveObjective();
+                          return;
+                        }
+                        persistProfile({
+                          formations: profile.formations,
+                          courses: profile.courses,
+                          experiences: profile.experiences,
+                          technicalSkills: profile.technicalSkills,
+                          behavioralSkills: profile.behavioralSkills,
+                        }, "Alterações salvas.");
+                      }}
+                    >
+                      Salvar alterações
+                    </Btn>
                   </div>
                 )}
               </div>
@@ -1165,7 +1765,7 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-7">
           {[
             { icon: MessageSquare, label: "5 perguntas",    desc: "Contextualizadas pela vaga" },
-            { icon: Clock,         label: "~15 minutos",    desc: "Duração estimada" },
+            { icon: Clock,         label: "No seu ritmo",    desc: "Responda com calma" },
             { icon: FileText,      label: "Respostas textuais", desc: "Digite ou dite sem armazenar áudio" },
           ].map(i => (
             <Card key={i.label} className="p-4 flex gap-3 items-center">
@@ -1254,11 +1854,14 @@ function InterviewScreen({
 }) {
   const [qIdx, setQIdx] = useState(0);
   const [speechError, setSpeechError] = useState("");
+  const [validationMessage, setValidationMessage] = useState("");
   const [dictating, setDictating] = useState(false);
+  const advancingRef = useRef(false);
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
   const questions = draft.questions;
   const question = questions[qIdx];
   const answer = question ? draft.answers[question.id] ?? "" : "";
+  const answerLength = answer.length;
   const progress = questions.length ? ((qIdx + 1) / questions.length) * 100 : 0;
   const supportsSpeech = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 
@@ -1268,10 +1871,12 @@ function InterviewScreen({
 
   const updateAnswer = (value: string) => {
     if (!question) return;
+    const normalizedValue = normalizeInterviewAnswer(value);
     setDraft((current) => ({
       ...current,
-      answers: { ...current.answers, [question.id]: value },
+      answers: { ...current.answers, [question.id]: normalizedValue },
     }));
+    if (isValidInterviewAnswer(normalizedValue)) setValidationMessage("");
   };
 
   const stopDictation = () => {
@@ -1303,7 +1908,10 @@ function InterviewScreen({
         .join(" ")
         .trim();
       if (transcript) {
-        updateAnswer(`${answer}${answer ? " " : ""}${transcript}`.trim());
+        const availableChars = Math.max(0, ANSWER_MAX_CHARS - answer.length);
+        if (availableChars === 0) return;
+        const textToAppend = `${answer ? " " : ""}${transcript}`.slice(0, availableChars);
+        updateAnswer(`${answer}${textToAppend}`.trim());
       }
     };
     recognition.onerror = () => {
@@ -1318,13 +1926,30 @@ function InterviewScreen({
   };
 
   const goNext = () => {
-    if (!answer.trim()) {
+    if (advancingRef.current) return;
+    if (!isValidInterviewAnswer(answer)) {
+      setValidationMessage("Responda a pergunta atual antes de avançar.");
       toast.error("Responda a pergunta atual antes de avançar.");
       return;
     }
+    advancingRef.current = true;
     stopDictation();
-    if (qIdx < questions.length - 1) setQIdx(qIdx + 1);
-    else onNavigate("review");
+    if (qIdx < questions.length - 1) {
+      setQIdx(qIdx + 1);
+      setValidationMessage("");
+    } else {
+      const pendingIndex = getFirstPendingQuestionIndex(draft);
+      if (pendingIndex >= 0) {
+        setQIdx(pendingIndex);
+        setValidationMessage("Responda todas as perguntas antes de revisar.");
+        toast.error("Responda todas as perguntas antes de revisar.");
+      } else {
+        onNavigate("review");
+      }
+    }
+    window.setTimeout(() => {
+      advancingRef.current = false;
+    }, 250);
   };
 
   if (!draft.context || !question) {
@@ -1348,17 +1973,27 @@ function InterviewScreen({
             <Textarea
               value={answer}
               onChange={(event) => updateAnswer(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (!event.repeat) goNext();
+                }
+              }}
+              maxLength={ANSWER_MAX_CHARS}
               placeholder="Digite sua resposta. Se preferir, use o ditado por voz para preencher este campo."
               className="min-h-56"
             />
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
-              <div className="text-xs text-muted-foreground">
-                {answer.trim().split(/\s+/).filter(Boolean).length} palavras
+              <div className={`text-xs ${answerLength >= ANSWER_MAX_CHARS ? "text-amber-700 font-semibold" : "text-muted-foreground"}`}>
+                {answerLength} / {ANSWER_MAX_CHARS} caracteres
               </div>
               <Btn variant={dictating ? "secondary" : "outline"} size="sm" onClick={toggleDictation}>
                 <Mic className="w-4 h-4" /> {dictating ? "Parar ditado" : "Ditado por voz"}
               </Btn>
             </div>
+            {validationMessage && (
+              <p className="text-xs text-destructive mt-3 font-medium">{validationMessage}</p>
+            )}
             {speechError && (
               <Alert variant="warning" className="mt-4 flex gap-3 rounded-2xl p-4">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1390,19 +2025,34 @@ function InterviewScreen({
           <Card className="p-5">
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Progresso</p>
             <div className="space-y-2">
-              {questions.map((item, index) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => { stopDictation(); setQIdx(index); }}
-                  className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${index === qIdx ? "bg-blue-50 text-blue-700" : "hover:bg-muted"}`}
-                >
-                  <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${draft.answers[item.id]?.trim() ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}>
-                    {index + 1}
-                  </span>
-                  <span className="text-xs font-medium truncate">{draft.answers[item.id]?.trim() ? "Respondida" : "Pendente"}</span>
-                </button>
-              ))}
+              {questions.map((item, index) => {
+                const answered = isValidInterviewAnswer(draft.answers[item.id]);
+                const canOpenQuestion = index === qIdx || (index < qIdx && answered);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={!canOpenQuestion}
+                    onClick={() => {
+                      if (!canOpenQuestion) return;
+                      stopDictation();
+                      setQIdx(index);
+                    }}
+                    className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
+                      index === qIdx
+                        ? "bg-blue-50 text-blue-700"
+                        : canOpenQuestion
+                          ? "hover:bg-muted"
+                          : "cursor-not-allowed opacity-60"
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${answered ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}>
+                      {index + 1}
+                    </span>
+                    <span className="text-xs font-medium truncate">{answered ? "Respondida" : "Pendente"}</span>
+                  </button>
+                );
+              })}
             </div>
           </Card>
 
@@ -1425,13 +2075,18 @@ function InterviewScreen({
 function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  const answeredCount = draft.questions.filter((question) => draft.answers[question.id]?.trim()).length;
+  const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
+  const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
 
   if (!draft.context || draft.questions.length === 0) {
     return <DraftWizardGuard current="review" onNavigate={onNavigate} />;
   }
 
   const handleSend = () => {
+    if (!allAnswersReady) {
+      toast.error("Responda todas as perguntas antes de revisar.");
+      return;
+    }
     setSending(true);
     setTimeout(() => { setSending(false); onNavigate("interview-confirm"); }, 1800);
   };
@@ -1449,28 +2104,45 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
             <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug mt-0.5">perguntas</p>
           </Card>
           <Card className="p-3 sm:p-4 text-center">
-            <p className="text-lg sm:text-2xl font-bold text-blue-600 leading-tight">OK</p>
+            <p className={`text-lg sm:text-2xl font-bold leading-tight ${allAnswersReady ? "text-blue-600" : "text-amber-600"}`}>
+              {allAnswersReady ? "OK" : "Pend."}
+            </p>
             <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug mt-0.5">pronto p/<br className="sm:hidden" /> envio</p>
           </Card>
         </div>
+
+        {!allAnswersReady && (
+          <Alert variant="warning" className="mb-6 flex gap-3 rounded-2xl p-4">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700">Responda todas as perguntas antes de revisar.</p>
+          </Alert>
+        )}
 
         <Card className="mb-6">
           <div className="p-4 sm:p-5 border-b border-border">
             <h3 className="font-bold text-foreground">Suas respostas</h3>
           </div>
           <div className="divide-y divide-border">
-            {draft.questions.map((q, i) => (
-              <div key={q.id} className="p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4">
-                <div className="w-7 h-7 bg-green-50 border border-green-200 rounded-full flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
-                  <Check className="w-3.5 h-3.5 text-green-600" />
+            {draft.questions.map((q, i) => {
+              const answered = isValidInterviewAnswer(draft.answers[q.id]);
+              return (
+                <div key={q.id} className="p-4 sm:p-5 flex items-start sm:items-center gap-3 sm:gap-4">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 ${answered ? "bg-green-50 border border-green-200" : "bg-amber-50 border border-amber-200"}`}>
+                    {answered ? (
+                      <Check className="w-3.5 h-3.5 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Pergunta {i + 1}</p>
+                    <p className="text-sm text-foreground line-clamp-2 sm:truncate">{q.text}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1">Resposta:</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Pergunta {i + 1}</p>
-                  <p className="text-sm text-foreground line-clamp-2 sm:truncate">{q.text}</p>
-                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
 
@@ -1495,11 +2167,11 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
           <Btn variant="outline" onClick={() => onNavigate("interview")}>
             <Edit2 className="w-4 h-4" /> Editar respostas
           </Btn>
-          <Btn variant="primary" size="lg" disabled={!confirm || sending} onClick={handleSend}>
+          <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady} onClick={handleSend}>
             {sending ? (
-              <><Spinner />Enviando...</>
+              <><Spinner />Preparando...</>
             ) : (
-              <><Send className="w-4 h-4" /> Enviar entrevista</>
+              <><Send className="w-4 h-4" /> Continuar para confirmação</>
             )}
           </Btn>
         </div>
@@ -1510,7 +2182,14 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
 
 // ─── Screen 10: Avaliação Pendente ────────────────────────────────────────────
 
-function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const routerNavigate = useNavigate();
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const report = getReportByInterviewId(id);
+  const candidateIdentity = getCandidateIdentity(session);
+  const isRealPendingRoute = Boolean(id && id !== "interview-demo");
+  const canAccessInterview = !isRealPendingRoute || !interview || interview.candidateId === candidateIdentity.id;
   const TIMELINE = [
     { label: "Conta criada",          date: "02/07/2026",      done: true },
     { label: "Entrevista realizada",  date: "18/07/2026",      done: true },
@@ -1520,8 +2199,21 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     { label: "Relatório disponível",  date: "Estimativa: 21/07",done: false },
   ];
 
+  if (!canAccessInterview) {
+    return (
+      <AuthLayout current="pending" onNavigate={onNavigate} title="Entrevista indisponível" subtitle="Acompanhamento da entrevista">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Não encontramos esta entrevista na sua conta</h3>
+          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para acompanhar entrevistas vinculadas ao seu perfil.</p>
+          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   return (
-    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle="Desenvolvedor Full Stack Júnior · Tech Labs">
+    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle={`${interview?.context.title ?? "Desenvolvedor Full Stack Júnior"} · ${interview?.context.company ?? "Tech Labs"}`}>
       <div className="w-full">
         {/* Status hero */}
         <Card className="p-6 sm:p-8 mb-6 text-center">
@@ -1599,8 +2291,13 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 ))}
               </ul>
             </Card>
-            <Btn variant="primary" className="w-full" onClick={() => onNavigate("report")}>
-              Ver resultado disponível <ArrowRight className="w-4 h-4" />
+            <Btn
+              variant={report?.status === "AVAILABLE" ? "primary" : "outline"}
+              className="w-full"
+              disabled={report?.status !== "AVAILABLE"}
+              onClick={() => id && routerNavigate(`/candidate/reports/${id}`)}
+            >
+              {report?.status === "AVAILABLE" ? "Ver resultado disponível" : "Resultado ainda indisponível"} <ArrowRight className="w-4 h-4" />
             </Btn>
           </div>
         </div>
@@ -1611,16 +2308,55 @@ function PendingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 11: Resultado e Relatório ─────────────────────────────────────────
 
-function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const evaluation = getEvaluationByInterviewId(id);
+  const report = getReportByInterviewId(id);
+  const isRealReportRoute = Boolean(id && id !== "report-demo");
+  const candidateIdentity = getCandidateIdentity(session);
   const [resultView, setResultView] = useState<"Atual" | "Anterior" | "Melhor resultado">("Atual");
   const [isReportFading, setIsReportFading] = useState(false);
   const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
 
+  if (isRealReportRoute && interview && interview.candidateId !== candidateIdentity.id) {
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle="Relatório da entrevista">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Este relatório não pertence à sua conta</h3>
+          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para consultar relatórios vinculados ao seu perfil.</p>
+          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  if (isRealReportRoute && (!report || report.status !== "AVAILABLE")) {
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview?.context.title ?? "Entrevista em avaliação"}>
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
+          <p className="text-sm text-muted-foreground mb-5">O relatório fica disponível após a conclusão da avaliação humana.</p>
+          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  const evaluationCriteria = evaluation?.scores
+    ? Object.entries(evaluation.scores).map(([name, score]) => ({
+      name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
+      score,
+    }))
+    : CRITERIA;
+
   const reportResults = {
     Atual: {
       summary:
-        "Você demonstrou clareza e coerência nas respostas, com boa aderência ao contexto da vaga. Continue aprimorando exemplos práticos e organização para alcançar excelência.",
-      criteria: CRITERIA,
+        evaluation?.comment || "Você demonstrou clareza e coerência nas respostas, com boa aderência ao contexto da vaga. Continue aprimorando exemplos práticos e organização para alcançar excelência.",
+      criteria: evaluationCriteria,
     },
     Anterior: {
       summary:
@@ -1706,7 +2442,7 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       current="report"
       onNavigate={onNavigate}
       title="Resultado e Relatório"
-      subtitle="Desenvolvedor Full Stack Júnior · Tech Labs · 18/07/2026"
+      subtitle={`${interview?.context.title ?? "Desenvolvedor Full Stack Júnior"} · ${interview?.context.company ?? "Tech Labs"}${report?.generatedAt ? ` · ${new Date(report.generatedAt).toLocaleDateString("pt-BR")}` : " · 18/07/2026"}`}
       actions={<Btn variant="outline" size="sm" onClick={() => toast.success("PDF gerado! O download iniciará em instantes.")}><Upload className="w-3.5 h-3.5" /> Exportar PDF</Btn>}
     >
       <div className="w-full">
@@ -1985,15 +2721,51 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Fase A: CAN-007 Histórico de Entrevistas ─────────────────────────────────
 
-function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const HISTORICO = [
-    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const },
-    { id: "E002", vaga: "Analista de RH Pleno",            empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const },
-    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const },
+function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const routerNavigate = useNavigate();
+  const candidateIdentity = getCandidateIdentity(session);
+  const isDemoCandidate = session.user?.id === "candidate-demo";
+  const candidateInterviews = getCandidateInterviews(candidateIdentity.id);
+  type CandidateHistoryItem = {
+    id: string;
+    vaga: string;
+    empresa: string;
+    data: string;
+    hora?: string;
+    perguntas: number;
+    status: string;
+    nota: string | null;
+    badge: "success" | "warning" | "default";
+    realId?: string;
+  };
+  const HISTORICO: CandidateHistoryItem[] = [
+    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const, realId: undefined as string | undefined },
+    { id: "E002", vaga: "Analista de RH",                  empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const, realId: undefined as string | undefined },
+    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const, realId: undefined as string | undefined },
   ];
+  const realHistory = candidateInterviews.map((interview) => {
+    const report = getReportByInterviewId(interview.id);
+    const evaluation = getEvaluationByInterviewId(interview.id);
+    const average = getAverageScore(evaluation?.scores);
+    const interviewTimestamp = interview.submittedAt ?? interview.createdAt;
+    const interviewDate = new Date(interviewTimestamp);
+    return {
+      id: interview.id,
+      vaga: interview.context.title,
+      empresa: interview.context.company,
+      data: interviewDate.toLocaleDateString("pt-BR"),
+      hora: interviewDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+      perguntas: interview.answers.length,
+      status: report?.status === "AVAILABLE" ? "Concluída" : statusLabelFromInterview(interview.status),
+      nota: average ? average.toFixed(1) : null,
+      badge: report?.status === "AVAILABLE" ? "success" as const : "warning" as const,
+      realId: interview.id,
+    };
+  });
+  const historyItems = [...realHistory, ...(isDemoCandidate ? HISTORICO : [])];
 
   const [filtro, setFiltro] = useState("Todos");
-  const filtered = HISTORICO.filter(h => {
+  const filtered = historyItems.filter(h => {
     if (filtro === "Todos") return true;
     if (filtro === "Concluídas") return h.status === "Concluída";
     if (filtro === "Aguardando") return h.status.includes("Aguardando");
@@ -2037,19 +2809,21 @@ function InterviewHistoryScreen({ onNavigate }: { onNavigate: (s: Screen) => voi
                     <p className="font-bold text-foreground text-sm">{h.vaga}</p>
                     <StatusBadge tone={statusToneFromBadge(h.badge)}>{h.status}</StatusBadge>
                   </div>
-                  <p className="text-xs text-muted-foreground">{h.empresa} · {h.perguntas} perguntas · {h.data}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {h.empresa} · {h.perguntas} perguntas · {h.data}{h.hora ? ` · ${h.hora}` : ""}
+                  </p>
                   {h.nota && (
                     <p className="text-xs font-semibold text-green-700 mt-1.5">Nota: {h.nota} / 10</p>
                   )}
                 </div>
                 <div className="flex gap-2 shrink-0">
                   {h.nota && (
-                    <Btn variant="primary" size="sm" onClick={() => onNavigate("report")}>
+                    <Btn variant="primary" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/reports/${h.realId}`) : onNavigate("report")}>
                       Ver relatório
                     </Btn>
                   )}
                   {h.badge === "warning" && (
-                    <Btn variant="outline" size="sm" onClick={() => onNavigate("pending")}>
+                    <Btn variant="outline" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/interviews/${h.realId}/status`) : onNavigate("pending")}>
                       Acompanhar
                     </Btn>
                   )}
@@ -2239,8 +3013,8 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
         {/* Consentimento obrigatório */}
         <Card className="p-5 sm:p-6">
           <p className="text-xs font-bold text-foreground uppercase tracking-wider mb-4">Autorização obrigatória para participar</p>
-          <label className="flex items-start gap-4 cursor-pointer group">
-            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentRequired ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`} onClick={() => setConsentRequired(!consentRequired)}>
+          <label className="flex items-start gap-4 cursor-pointer group" onClick={() => setConsentRequired((current) => !current)}>
+            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentRequired ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`}>
               {consentRequired && <Check className="w-3 h-3 text-white" />}
             </div>
             <div className="flex-1">
@@ -2255,8 +3029,8 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
         {/* Consentimento opcional */}
         <Card className="p-5 sm:p-6">
           <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4">Autorização opcional</p>
-          <label className="flex items-start gap-4 cursor-pointer group">
-            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentOptional ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`} onClick={() => setConsentOptional(!consentOptional)}>
+          <label className="flex items-start gap-4 cursor-pointer group" onClick={() => setConsentOptional((current) => !current)}>
+            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center mt-0.5 transition-all shrink-0 ${consentOptional ? "bg-primary border-primary" : "border-border group-hover:border-primary/50"}`}>
               {consentOptional && <Check className="w-3 h-3 text-white" />}
             </div>
             <div className="flex-1">
@@ -2290,19 +3064,38 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
 
 // ─── Fase A: ENT-008 Confirmação de Envio ─────────────────────────────────────
 
-function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
+function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; session: MockAuthSession }) {
+  const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
-  const answeredCount = draft.questions.filter((question) => draft.answers[question.id]?.trim()).length;
+  const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
+  const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
+  const candidateIdentity = getCandidateIdentity(session);
 
   if (!draft.context || draft.questions.length === 0) {
     return <DraftWizardGuard current="interview-confirm" onNavigate={onNavigate} />;
   }
 
   const handleSend = () => {
+    if (!allAnswersReady) {
+      toast.error("Responda todas as perguntas antes de enviar.");
+      return;
+    }
     setSending(true);
     setTimeout(() => {
+      const interview = submitInterview({
+        candidateId: candidateIdentity.id,
+        candidateName: candidateIdentity.name,
+        candidateEmail: candidateIdentity.email,
+        context: draft.context!,
+        answers: draft.questions.map((question) => ({
+          questionId: question.id,
+          questionText: question.text,
+          questionType: question.type,
+          answer: draft.answers[question.id]?.trim() ?? "",
+        })),
+      });
       setSending(false);
-      onNavigate("interview-done");
+      routerNavigate(`/candidate/interviews/${interview.id}/success`);
     }, 1800);
   };
 
@@ -2323,6 +3116,13 @@ function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen)
           </div>
         </Alert>
 
+        {!allAnswersReady && (
+          <Alert variant="warning" className="flex items-start gap-3 rounded-2xl p-4">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700 leading-relaxed">Responda todas as perguntas antes de enviar a entrevista.</p>
+          </Alert>
+        )}
+
         {/* Resumo das respostas */}
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
@@ -2330,14 +3130,20 @@ function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen)
           </h3>
           <div className="space-y-3">
             {draft.questions.map((q, i) => (
-              <div key={q.id} className="flex items-start gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
-                <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
-                  <Check className="w-3 h-3 text-white" />
+              <div key={q.id} className={`flex items-start gap-3 p-3 rounded-xl border ${isValidInterviewAnswer(draft.answers[q.id]) ? "bg-green-50 border-green-100" : "bg-amber-50 border-amber-100"}`}>
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isValidInterviewAnswer(draft.answers[q.id]) ? "bg-green-600" : "bg-amber-500"}`}>
+                  {isValidInterviewAnswer(draft.answers[q.id]) ? (
+                    <Check className="w-3 h-3 text-white" />
+                  ) : (
+                    <AlertCircle className="w-3 h-3 text-white" />
+                  )}
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-foreground mb-0.5">Pergunta {i + 1}</p>
                   <p className="text-xs text-muted-foreground line-clamp-2">{q.text}</p>
-                  <p className="text-[11px] text-green-600 font-medium mt-1">Resposta textual pronta</p>
+                  <p className={`text-[11px] font-medium mt-1 ${isValidInterviewAnswer(draft.answers[q.id]) ? "text-green-600" : "text-amber-700"}`}>
+                    {isValidInterviewAnswer(draft.answers[q.id]) ? "Resposta textual pronta" : "Resposta pendente"}
+                  </p>
                 </div>
               </div>
             ))}
@@ -2368,7 +3174,7 @@ function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen)
           <Btn
             variant="primary"
             onClick={handleSend}
-            disabled={sending}
+            disabled={sending || !allAnswersReady}
             className="flex-1"
           >
             {sending ? (
@@ -2386,6 +3192,9 @@ function InterviewConfirmScreen({ onNavigate, draft }: { onNavigate: (s: Screen)
 // ─── Fase A: ENT-009 Entrevista Concluída ────────────────────────────────────
 
 function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const { id } = useParams();
+  const interview = getInterviewById(id);
   return (
     <AuthLayout
       current="interview-done"
@@ -2409,15 +3218,15 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-[11px] text-muted-foreground">Protocolo</p>
-                <p className="text-sm font-bold text-foreground">#ENT-2026-0418</p>
+                <p className="text-sm font-bold text-foreground">{interview?.id ?? "#ENT-2026-0418"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">Desenvolvedor Full Stack Júnior</p>
+                <p className="text-sm font-semibold text-foreground">{interview?.context.title ?? "Desenvolvedor Full Stack Júnior"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>
-                <p className="text-sm font-semibold text-foreground">18/07/2026 às 14h32</p>
+                <p className="text-sm font-semibold text-foreground">{interview?.submittedAt ? new Date(interview.submittedAt).toLocaleString("pt-BR") : "18/07/2026 às 14h32"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Status</p>
@@ -2431,7 +3240,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <p className="text-xs font-bold text-blue-700 mb-3">O que acontece agora?</p>
             <div className="space-y-2">
               {[
-                "Um avaliador humano autorizado assistirá às suas respostas",
+                "Um avaliador humano autorizado analisará suas respostas.",
                 "Você receberá uma notificação quando o resultado estiver disponível",
                 "Acesse o relatório na seção Histórico de entrevistas",
               ].map((step, i) => (
@@ -2447,8 +3256,8 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <Btn variant="outline" onClick={() => onNavigate("interview-history")} className="flex-1">
               <History className="w-4 h-4" /> Ver histórico
             </Btn>
-            <Btn variant="primary" onClick={() => onNavigate("dashboard")} className="flex-1">
-              <Home className="w-4 h-4" /> Ir ao Dashboard
+            <Btn variant="primary" onClick={() => interview ? routerNavigate(`/candidate/interviews/${interview.id}/status`) : onNavigate("dashboard")} className="flex-1">
+              <Home className="w-4 h-4" /> Acompanhar
             </Btn>
           </div>
         </Card>
@@ -2461,7 +3270,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
 function EmailVerifyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   return (
-    <div className="min-h-[calc(100vh-44px)] bg-background flex items-center justify-center p-4 py-8">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 py-8">
       <div className="w-full max-w-md">
         <Card className="p-6 sm:p-8 text-center">
           <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-5">
@@ -2498,7 +3307,7 @@ function ForgotPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void 
   const [sent, setSent] = useState(false);
 
   return (
-    <div className="min-h-[calc(100vh-44px)] bg-background flex items-center justify-center p-4 py-8">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 py-8">
       <div className="w-full max-w-md">
         <Card className="overflow-hidden">
           <div className="px-6 py-5 border-b border-border flex items-center gap-3">
@@ -2547,7 +3356,7 @@ function ForgotPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void 
 
 function ResetPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   return (
-    <div className="min-h-[calc(100vh-44px)] bg-background flex items-center justify-center p-4 py-8">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 py-8">
       <div className="w-full max-w-md">
         <Card className="overflow-hidden">
           <div className="px-6 py-5 border-b border-border">
@@ -2579,12 +3388,27 @@ function ResetPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
 // ─── Fase C: LEG-001 Termos de Uso ───────────────────────────────────────────
 
-function TermsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function getLegalBackScreen(session: MockAuthSession): Screen {
+  if (!session.authenticated || !session.user) return "landing";
+
+  const backByRole: Record<MockUserRole, Screen> = {
+    CANDIDATE: "settings",
+    EVALUATOR: "eval-settings",
+    ADMIN: "admin-settings",
+  };
+
+  return backByRole[session.user.role];
+}
+
+function TermsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const isAuthenticated = session.authenticated && Boolean(session.user);
+  const backScreen = getLegalBackScreen(session);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-3xl mx-auto px-4 py-10 sm:py-14">
-        <button onClick={() => onNavigate("landing")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-          Voltar à página inicial
+        <button onClick={() => onNavigate(backScreen)} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
+          {isAuthenticated ? "Voltar para configurações" : "Voltar à página inicial"}
         </button>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-2">Termos de Uso</h1>
         <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
@@ -2606,7 +3430,7 @@ function TermsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           ))}
         </div>
         <div className="mt-10 pt-6 border-t border-border flex flex-wrap gap-3">
-          <Btn variant="primary" onClick={() => onNavigate("auth")}>Criar conta</Btn>
+          {!isAuthenticated && <Btn variant="primary" onClick={() => onNavigate("register")}>Criar conta</Btn>}
           <Btn variant="outline" onClick={() => onNavigate("privacy")}>Ver Política de Privacidade</Btn>
         </div>
       </div>
@@ -2616,12 +3440,15 @@ function TermsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Fase C: LEG-002 Política de Privacidade ─────────────────────────────────
 
-function PrivacyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function PrivacyScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const isAuthenticated = session.authenticated && Boolean(session.user);
+  const backScreen = getLegalBackScreen(session);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-3xl mx-auto px-4 py-10 sm:py-14">
-        <button onClick={() => onNavigate("landing")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-          Voltar à página inicial
+        <button onClick={() => onNavigate(backScreen)} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
+          {isAuthenticated ? "Voltar para configurações" : "Voltar à página inicial"}
         </button>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-2">Política de Privacidade</h1>
         <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
@@ -2642,7 +3469,7 @@ function PrivacyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           ))}
         </div>
         <div className="mt-10 pt-6 border-t border-border flex flex-wrap gap-3">
-          <Btn variant="primary" onClick={() => onNavigate("auth")}>Criar conta</Btn>
+          {!isAuthenticated && <Btn variant="primary" onClick={() => onNavigate("register")}>Criar conta</Btn>}
           <Btn variant="outline" onClick={() => onNavigate("terms")}>Ver Termos de Uso</Btn>
         </div>
       </div>
@@ -2699,7 +3526,11 @@ function ConfirmModal({
   );
 }
 
-function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
+  const candidateIdentity = getCandidateIdentity(session);
+  const account = getCandidateAccountConfig(candidateUser);
+  const [settingsProfile, setSettingsProfile] = useState<CandidateProfile>(() => getCandidateProfile(candidateIdentity.id, candidateUser));
   const [tab, setTab] = useState<SettingsTab>("conta");
   const [notifs, setNotifs] = useState({ resultado: true, novidades: false, dicas: true, email: true, sms: false });
   const [consentIA, setConsentIA] = useState(false);
@@ -2716,12 +3547,31 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     ["excluir","Excluir conta"],
   ];
 
+  useEffect(() => {
+    setSettingsProfile(getCandidateProfile(candidateIdentity.id, candidateUser));
+  }, [candidateIdentity.id, candidateUser?.id]);
+
+  const updateSettingsProfile = (patch: CandidateProfilePatch) => {
+    setSettingsProfile((current) => ({ ...current, ...patch }));
+  };
+
+  const handleSaveAccountSettings = () => {
+    const saved = saveCandidateProfile(candidateIdentity.id, {
+      phone: settingsProfile.phone,
+      city: settingsProfile.city,
+      state: settingsProfile.state,
+    });
+    setSettingsProfile(saved);
+    toast.success("Dados de contato salvos.");
+  };
+
   return (
     <AuthLayout
       current="settings"
       onNavigate={onNavigate}
       title="Configurações"
       subtitle="Gerencie suas preferências de conta"
+      account={account}
     >
       <div className="w-full flex flex-col lg:flex-row gap-6">
         {/* Sidebar de abas */}
@@ -2758,21 +3608,38 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 <p className="text-xs text-muted-foreground">Informações que identificam você na plataforma.</p>
               </div>
               <div className="flex items-center gap-4 pb-4 border-b border-border">
-                <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0">JL</div>
+                <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0">
+                  {getInitials(candidateIdentity.name)}
+                </div>
                 <div>
-                  <p className="font-semibold text-foreground text-sm">João Lima</p>
-                  <p className="text-xs text-muted-foreground">joao.lima@gmail.com</p>
+                  <p className="font-semibold text-foreground text-sm">{candidateIdentity.name}</p>
+                  <p className="text-xs text-muted-foreground">{candidateIdentity.email}</p>
                 </div>
               </div>
-              <Field label="Nome completo" placeholder="João da Silva Lima" />
-              <Field label="E-mail" type="email" placeholder="nome@gmail.com" hint="Você receberá um e-mail de verificação para confirmar a alteração." />
-              <Field label="Telefone" placeholder="(61) 99999-9999" />
+              <Field label="Nome completo" defaultValue={candidateIdentity.name} />
+              <Field label="E-mail" type="email" defaultValue={candidateIdentity.email} hint="Você receberá um e-mail de verificação para confirmar a alteração." />
+              <Field
+                label="Telefone"
+                placeholder="(61) 99999-9999"
+                value={settingsProfile.phone}
+                onChange={(event) => updateSettingsProfile({ phone: event.target.value })}
+              />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Cidade" placeholder="Brasília" />
-                <FieldSelect label="Estado" options={["DF","SP","RJ","MG","RS","BA","PR","SC","GO","CE","PE","AM"]} />
+                <Field
+                  label="Cidade"
+                  placeholder="Brasília"
+                  value={settingsProfile.city}
+                  onChange={(event) => updateSettingsProfile({ city: event.target.value })}
+                />
+                <FieldSelect
+                  label="Estado"
+                  options={["DF","SP","RJ","MG","RS","BA","PR","SC","GO","CE","PE","AM"]}
+                  value={settingsProfile.state}
+                  onChange={(event) => updateSettingsProfile({ state: event.target.value })}
+                />
               </div>
               <div className="flex gap-3 pt-2">
-                <Btn variant="primary">Salvar alterações</Btn>
+                <Btn variant="primary" onClick={handleSaveAccountSettings}>Salvar alterações</Btn>
                 <Btn variant="outline">Cancelar</Btn>
               </div>
             </Card>
@@ -2814,7 +3681,7 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                   <div className="flex items-center justify-between gap-4 py-2">
                     <div>
                       <p className="text-sm font-semibold text-foreground">Recuperação de senha</p>
-                      <p className="text-xs text-muted-foreground">joao.lima@gmail.com</p>
+                      <p className="text-xs text-muted-foreground">{candidateIdentity.email}</p>
                     </div>
                     <Btn variant="outline" size="sm">Alterar e-mail</Btn>
                   </div>
@@ -2854,8 +3721,8 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Canal de entrega</p>
                 <div className="space-y-1">
                   {[
-                    { key: "email" as const, label: "E-mail", desc: "joao.lima@gmail.com" },
-                    { key: "sms" as const,   label: "SMS",    desc: "(61) 99999-9999 — opcional" },
+                    { key: "email" as const, label: "E-mail", desc: candidateIdentity.email },
+                    { key: "sms" as const,   label: "SMS",    desc: settingsProfile.phone ? `${settingsProfile.phone} — opcional` : "Telefone não informado — opcional" },
                   ].map(n => (
                     <div key={n.key} className="flex items-center justify-between gap-4 py-3 border-b border-border last:border-0">
                       <div>
@@ -3156,92 +4023,110 @@ function SettingsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── CAN-010 Biblioteca de Materiais ─────────────────────────────────────────
 
-const MATERIAIS_DATA = [
-  // Apresentação pessoal
-  { id: 1,  titulo: "Como se apresentar em entrevistas",       categoria: "Apresentação pessoal",      tempo: "8 min",  tipo: "Leitura",  favorito: true,  recente: true,  recomendado: true,  desc: "Aprenda a estruturar uma apresentação pessoal clara, objetiva e impactante." },
-  { id: 2,  titulo: "Elevator pitch para entrevistas",         categoria: "Apresentação pessoal",      tempo: "5 min",  tipo: "Vídeo",    favorito: false, recente: false, recomendado: true,  desc: "Como resumir seu perfil profissional em 60 segundos de forma convincente." },
-  { id: 3,  titulo: "Comunicação verbal e não verbal",          categoria: "Comunicação",               tempo: "12 min", tipo: "Leitura",  favorito: true,  recente: false, recomendado: false, desc: "Entenda como sua postura, tom de voz e gestos impactam a percepção do avaliador." },
-  { id: 4,  titulo: "Como articular ideias com clareza",       categoria: "Comunicação",               tempo: "6 min",  tipo: "Leitura",  favorito: false, recente: true,  recomendado: false, desc: "Técnicas para organizar e transmitir suas ideias de forma coerente e direta." },
-  { id: 5,  titulo: "Postura e linguagem corporal",            categoria: "Postura",                   tempo: "7 min",  tipo: "Vídeo",    favorito: false, recente: false, recomendado: true,  desc: "Dicas práticas para transmitir confiança e profissionalismo pela linguagem corporal." },
-  { id: 6,  titulo: "O método STAR explicado",                 categoria: "Método STAR",               tempo: "10 min", tipo: "Leitura",  favorito: true,  recente: true,  recomendado: true,  desc: "Aprenda a usar o método STAR (Situação, Tarefa, Ação, Resultado) para responder perguntas comportamentais." },
-  { id: 7,  titulo: "STAR na prática: exemplos reais",         categoria: "Método STAR",               tempo: "15 min", tipo: "Exercício",favorito: false, recente: false, recomendado: false, desc: "Exercícios práticos para aplicar o método STAR com exemplos de diferentes áreas." },
-  { id: 8,  titulo: "Perguntas comportamentais mais comuns",   categoria: "Perguntas comportamentais", tempo: "9 min",  tipo: "Leitura",  favorito: false, recente: true,  recomendado: true,  desc: "Lista das perguntas comportamentais mais frequentes e como abordá-las com segurança." },
-  { id: 9,  titulo: "Como responder 'fale sobre você'",        categoria: "Perguntas comportamentais", tempo: "6 min",  tipo: "Leitura",  favorito: true,  recente: false, recomendado: false, desc: "Uma das perguntas mais temidas em entrevistas. Veja como estruturar uma resposta poderosa." },
-  { id: 10, titulo: "Primeiro emprego: como se preparar",      categoria: "Primeiro emprego",          tempo: "11 min", tipo: "Leitura",  favorito: false, recente: false, recomendado: true,  desc: "Guia completo para quem está buscando a primeira experiência profissional." },
-  { id: 11, titulo: "Jovem Aprendiz: direitos e oportunidades",categoria: "Jovem Aprendiz",            tempo: "8 min",  tipo: "Leitura",  favorito: false, recente: false, recomendado: false, desc: "Entenda o programa Jovem Aprendiz e como se destacar no processo seletivo." },
-  { id: 12, titulo: "Como conquistar uma vaga de estágio",     categoria: "Estágio",                   tempo: "9 min",  tipo: "Leitura",  favorito: false, recente: true,  recomendado: false, desc: "Dicas específicas para candidatos que buscam oportunidades de estágio." },
-  { id: 13, titulo: "Recolocação profissional: por onde começar",categoria: "Recolocação profissional",tempo: "14 min", tipo: "Leitura",  favorito: false, recente: false, recomendado: false, desc: "Estratégias para quem está em transição de carreira ou voltando ao mercado." },
-  { id: 14, titulo: "Perguntas técnicas: como se preparar",    categoria: "Perguntas técnicas",        tempo: "10 min", tipo: "Leitura",  favorito: false, recente: false, recomendado: false, desc: "Como estudar e responder perguntas técnicas específicas da sua área de atuação." },
-];
+type MaterialCardView = SupportMaterial & MaterialUserState;
 
-const CATEGORIAS_MATERIAIS = [
-  "Todas as categorias",
-  "Apresentação pessoal",
-  "Comunicação",
-  "Postura",
-  "Perguntas comportamentais",
-  "Perguntas técnicas",
-  "Método STAR",
-  "Primeiro emprego",
-  "Estágio",
-  "Jovem Aprendiz",
-  "Recolocação profissional",
-];
+function materialTypeLabel(type: SupportMaterial["type"]) {
+  return type === "READING" ? "Leitura" : type;
+}
+
+function materialStatusLabel(status: MaterialStatus) {
+  const labels = {
+    NOT_STARTED: "Não iniciado",
+    IN_PROGRESS: "Em andamento",
+    COMPLETED: "Concluído",
+  } satisfies Record<MaterialStatus, string>;
+  return labels[status];
+}
+
+function mergeMaterialsWithUserState(userStates: MaterialUserState[]): MaterialCardView[] {
+  return SUPPORT_MATERIALS.map((material) => {
+    const userState = userStates.find((item) => item.materialId === material.id) ?? getMaterialUserState(material.id);
+    return {
+      ...material,
+      ...userState,
+    };
+  });
+}
+
+function sortMaterialsByLastAccess(items: MaterialCardView[]) {
+  return [...items]
+    .filter((item) => Boolean(item.lastAccessedAt))
+    .sort((a, b) => {
+      const aTime = a.lastAccessedAt ? new Date(a.lastAccessedAt).getTime() : 0;
+      const bTime = b.lastAccessedAt ? new Date(b.lastAccessedAt).getTime() : 0;
+      return bTime - aTime;
+    });
+}
 
 function MaterialCard({
-  material, onFavorite,
+  material, onFavorite, onOpen,
 }: {
-  material: typeof MATERIAIS_DATA[0];
+  material: MaterialCardView;
   onFavorite: () => void;
+  onOpen: () => void;
 }) {
-  const TIPO_COLOR: Record<string, string> = {
-    "Leitura":   "bg-blue-50 text-blue-700",
-    "Vídeo":     "bg-red-50 text-red-700",
-    "Exercício": "bg-green-50 text-green-700",
-  };
   return (
     <Card className="p-4 sm:p-5 flex flex-col gap-3 hover:shadow-md transition-all">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <UIBadge variant="neutral" className={`px-2 py-0.5 text-[11px] font-bold ${TIPO_COLOR[material.tipo] ?? "bg-muted text-muted-foreground"}`}>{material.tipo}</UIBadge>
-            <span className="text-[11px] text-muted-foreground">{material.tempo}</span>
+            <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">{materialTypeLabel(material.type)}</UIBadge>
+            {material.status !== "NOT_STARTED" && (
+              <span className="text-[11px] text-muted-foreground">• {materialStatusLabel(material.status)}</span>
+            )}
           </div>
-          <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.titulo}</p>
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{material.desc}</p>
+          <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.title}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{material.description}</p>
         </div>
-        <button onClick={onFavorite} className={`p-1.5 rounded-lg transition-colors shrink-0 ${material.favorito ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-400"}`}>
-          <Bookmark className={`w-4 h-4 ${material.favorito ? "fill-current" : ""}`} />
+        <button
+          onClick={onFavorite}
+          aria-label={material.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+          className={`p-1.5 rounded-lg transition-colors shrink-0 ${material.isFavorite ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-400"}`}
+        >
+          <Bookmark className={`w-4 h-4 ${material.isFavorite ? "fill-current" : ""}`} />
         </button>
       </div>
       <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
-        <UIBadge variant="primary">{material.categoria}</UIBadge>
-        <Btn variant="primary" size="sm" onClick={() => toast.info("Abrindo material...")}>Abrir material</Btn>
+        <UIBadge variant="primary">{material.category}</UIBadge>
+        <Btn variant="primary" size="sm" onClick={onOpen}>Abrir material</Btn>
       </div>
     </Card>
   );
 }
 
 function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
   const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
-  const [materiais, setMateriais] = useState(MATERIAIS_DATA);
+  const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates());
   const [showCats, setShowCats] = useState(false);
 
-  const toggleFavorito = (id: number) => {
-    setMateriais(m => m.map(item => item.id === id ? { ...item, favorito: !item.favorito } : item));
+  const materiais = mergeMaterialsWithUserState(materialStates);
+
+  const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates());
+
+  const toggleFavorito = (id: string) => {
+    toggleMaterialFavorite(id);
+    refreshMaterialStates();
+  };
+
+  const handleOpenMaterial = (material: MaterialCardView) => {
+    openMaterial(material.id);
+    refreshMaterialStates();
+    routerNavigate(`/candidate/materials/${material.slug}`);
   };
 
   const filtrado = materiais.filter(m => {
-    const matchBusca = busca === "" || m.titulo.toLowerCase().includes(busca.toLowerCase()) || m.desc.toLowerCase().includes(busca.toLowerCase());
-    const matchCat = categoria === "Todas as categorias" || m.categoria === categoria;
-    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.favorito : abaFiltro === "recentes" ? m.recente : m.recomendado;
+    const matchBusca = busca === "" || m.title.toLowerCase().includes(busca.toLowerCase()) || m.description.toLowerCase().includes(busca.toLowerCase());
+    const matchCat = categoria === "Todas as categorias" || m.category === categoria;
+    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "recentes" ? Boolean(m.lastAccessedAt) : m.recommended;
     return matchBusca && matchCat && matchAba;
   });
+  const filtradoOrdenado = abaFiltro === "recentes" ? sortMaterialsByLastAccess(filtrado) : filtrado;
 
-  const recomendados = materiais.filter(m => m.recomendado).slice(0, 3);
-  const recentes = materiais.filter(m => m.recente).slice(0, 3);
+  const recomendados = materiais.filter(m => m.recommended).slice(0, 3);
+  const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
 
   return (
     <AuthLayout
@@ -3259,7 +4144,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {recomendados.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} />
+                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
               ))}
             </div>
           </section>
@@ -3271,11 +4156,17 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-blue-500" /> Acessados recentemente
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {recentes.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} />
-              ))}
-            </div>
+            {recentes.length === 0 ? (
+              <Card className="p-4 text-sm text-muted-foreground">
+                Seus materiais acessados aparecerão aqui.
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {recentes.map(m => (
+                  <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -3295,7 +4186,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 className="px-3.5"
               >
                 {label}
-                {id === "favoritos" && ` (${materiais.filter(m => m.favorito).length})`}
+                {id === "favoritos" && ` (${materiais.filter(m => m.isFavorite).length})`}
               </FilterChip>
             ))}
           </div>
@@ -3320,7 +4211,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </button>
               {showCats && (
                 <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden">
-                  {CATEGORIAS_MATERIAIS.map(cat => (
+                  {SUPPORT_MATERIAL_CATEGORIES.map(cat => (
                     <button
                       key={cat}
                       onClick={() => { setCategoria(cat); setShowCats(false); }}
@@ -3335,7 +4226,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           </div>
 
           {/* Lista de resultados */}
-          {filtrado.length === 0 ? (
+          {filtradoOrdenado.length === 0 ? (
             <EmptyState
               icon={BookOpen}
               title="Nenhum material encontrado"
@@ -3352,12 +4243,152 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {filtrado.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} />
+              {filtradoOrdenado.map(m => (
+                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
               ))}
             </div>
           )}
         </section>
+      </div>
+    </AuthLayout>
+  );
+}
+
+function MaterialDetailScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const { materialId } = useParams();
+  const material = materialId ? findSupportMaterialBySlug(materialId) : undefined;
+  const [materialState, setMaterialState] = useState<MaterialUserState | null>(() => material ? getMaterialUserState(material.id) : null);
+
+  useEffect(() => {
+    if (!material) return;
+    setMaterialState(openMaterial(material.id));
+  }, [material?.id]);
+
+  if (!material) {
+    return (
+      <AuthLayout
+        current="materials"
+        onNavigate={onNavigate}
+        title="Material não encontrado"
+        subtitle="O conteúdo solicitado não está disponível."
+      >
+        <EmptyState
+          icon={BookOpen}
+          title="Material não encontrado"
+          description="Verifique o link ou volte para a biblioteca de materiais."
+          action={<Btn variant="primary" onClick={() => routerNavigate("/candidate/materials")}>Voltar para Materiais</Btn>}
+        />
+      </AuthLayout>
+    );
+  }
+
+  const status = materialState?.status ?? "NOT_STARTED";
+  const completed = status === "COMPLETED";
+
+  const handleComplete = () => {
+    if (completed) return;
+    const result = completeMaterial(material.id);
+    setMaterialState(result.state);
+    if (result.completedNow) {
+      try {
+        advanceDevelopmentFromMaterial(material.id);
+      } catch {
+        // A conclusão do material é independente da gamificação local.
+      }
+    }
+    toast.success("Material concluído.");
+  };
+
+  return (
+    <AuthLayout
+      current="materials"
+      onNavigate={onNavigate}
+      title="Materiais de Apoio"
+      subtitle="Conteúdo para você se preparar para entrevistas"
+    >
+      <div className="w-full max-w-4xl mx-auto space-y-5">
+        <button
+          onClick={() => routerNavigate("/candidate/materials")}
+          className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
+        >
+          <ChevronLeft className="w-4 h-4" /> Voltar para Materiais
+        </button>
+
+        <Card className="p-5 sm:p-7 space-y-6">
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <UIBadge variant="neutral" className="px-2.5 py-1 text-xs font-bold bg-blue-50 text-blue-700">
+                {materialTypeLabel(material.type).toUpperCase()}
+              </UIBadge>
+              <UIBadge variant="primary">{material.category}</UIBadge>
+              <Badge variant={completed ? "success" : status === "IN_PROGRESS" ? "info" : "default"}>
+                {materialStatusLabel(status)}
+              </Badge>
+            </div>
+
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight mb-2">{material.title}</h1>
+              <p className="text-muted-foreground leading-relaxed">{material.description}</p>
+            </div>
+
+            {material.content.intro && (
+              <div className="rounded-xl bg-blue-50/70 border border-blue-100 p-4 text-sm text-blue-950 leading-relaxed">
+                {material.content.intro}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-6">
+            {material.content.sections.map((section) => (
+              <section key={section.id} className="space-y-3">
+                <h2 className="text-lg font-bold text-foreground">{section.title}</h2>
+                {section.paragraphs?.map((paragraph, index) => (
+                  <p key={index} className="text-sm sm:text-base text-muted-foreground leading-relaxed">{paragraph}</p>
+                ))}
+                {section.bullets && (
+                  <ul className="space-y-2">
+                    {section.bullets.map((bullet) => (
+                      <li key={bullet} className="flex gap-2 text-sm text-muted-foreground leading-relaxed">
+                        <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+                        <span>{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {section.example && (
+                  <div className="rounded-xl border border-border bg-muted/40 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">Exemplo</p>
+                    <p className="text-sm text-foreground leading-relaxed">{section.example}</p>
+                  </div>
+                )}
+                {section.tip && (
+                  <div className="flex gap-3 rounded-xl border border-amber-100 bg-amber-50 p-4">
+                    <Lightbulb className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-sm text-amber-900 leading-relaxed">{section.tip}</p>
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+
+          {material.content.summary && (
+            <div className="rounded-xl border border-border bg-accent p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">Resumo</p>
+              <p className="text-sm text-foreground leading-relaxed">{material.content.summary}</p>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-5 border-t border-border">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Status</p>
+              <p className="text-sm font-semibold text-foreground">{materialStatusLabel(status)}</p>
+            </div>
+            <Btn variant={completed ? "outline" : "primary"} onClick={handleComplete} disabled={completed}>
+              <Check className="w-4 h-4" /> {completed ? "Concluído" : "Marcar como concluído"}
+            </Btn>
+          </div>
+        </Card>
       </div>
     </AuthLayout>
   );
@@ -3485,89 +4516,154 @@ function CandidateDiscTestScreen({ onNavigate }: { onNavigate: (s: Screen) => vo
 
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
-function getCurrentScreen(pathname: string): Screen {
-  const route = APP_ROUTES.find((item) => matchPath({ path: item.path, end: true }, pathname));
-  return route?.screen ?? "landing";
+function ProtectedRoute({
+  session,
+  role,
+  children,
+}: {
+  session: MockAuthSession;
+  role: MockUserRole;
+  children: ReactNode;
+}) {
+  const location = useLocation();
+
+  if (!session.authenticated || !session.user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (session.user.accountStatus !== "ACTIVE") {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (session.user.role !== role) {
+    return <Navigate to={DASHBOARD_BY_ROLE[session.user.role]} replace />;
+  }
+
+  if (!session.user.onboardingCompleted && !isOnboardingPathForRole(location.pathname, role)) {
+    return <Navigate to={ONBOARDING_BY_ROLE[role]} replace />;
+  }
+
+  if (session.user.onboardingCompleted && isOnboardingPathForRole(location.pathname, role)) {
+    return <Navigate to={DASHBOARD_BY_ROLE[role]} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function PublicAuthRoute({ session, children }: { session: MockAuthSession; children: ReactNode }) {
+  if (session.authenticated && session.user?.accountStatus === "ACTIVE") {
+    return <Navigate to={getEntryPathForSession(session)} replace />;
+  }
+
+  return <>{children}</>;
 }
 
 function AppRoutes() {
   const routerNavigate = useNavigate();
   const location = useLocation();
+  const [session, setSession] = useState(() => getMockAuthSession());
   const [interviewDraft, setInterviewDraft] = useState(createEmptyInterviewDraft);
-  const currentScreen = getCurrentScreen(location.pathname);
-  const navigate = (screen: Screen) => routerNavigate(getPathForScreen(screen));
-  const navigateFromFlowNav = (screen: Screen) => {
-    if (["prep", "consent", "interview", "review", "interview-confirm"].includes(screen)) {
-      setInterviewDraft(createDemoInterviewDraft());
+  const navigate = (screen: Screen) => {
+    if ((screen === "auth" || screen === "landing") && session.authenticated) {
+      setSession(logoutMockUser());
+      routerNavigate("/login");
+      return;
     }
-    navigate(screen);
+
+    routerNavigate(getPathForScreen(screen));
   };
+  const completeOnboardingAndNavigate = (screen: Screen) => {
+    setSession(completeMockOnboarding());
+    routerNavigate(getPathForScreen(screen));
+  };
+  const loginWithCredentials = (email: string, password: string) => {
+    const result = loginMockWithCredentials(email, password);
+    if (!result.ok) {
+      return result;
+    }
+    setSession(result.session);
+    routerNavigate(getEntryPathForSession(result.session));
+    return { ok: true as const };
+  };
+  const registerCandidate = (data: { name: string; email: string; password: string }) => {
+    const result = registerMockCandidate(data);
+    if (!result.ok) {
+      return result;
+    }
+    setSession(result.session);
+    routerNavigate(getEntryPathForSession(result.session));
+    return { ok: true as const };
+  };
+  const protect = (role: MockUserRole, children: ReactNode) => (
+    <ProtectedRoute session={session} role={role}>{children}</ProtectedRoute>
+  );
+  const evaluatorIdentity = getEvaluatorIdentity(session);
 
   return (
     <div className="flex flex-col min-h-screen">
       <Toaster position="top-center" richColors />
-      <FlowNav current={currentScreen} onNavigate={navigateFromFlowNav} />
       <div className="flex-1 flex flex-col">
         <Routes>
           <Route path="/" element={<LandingScreen onNavigate={navigate} />} />
-          <Route path="/login" element={<AuthScreen onNavigate={navigate} initialTab="login" />} />
-          <Route path="/register" element={<AuthScreen onNavigate={navigate} initialTab="register" />} />
-          <Route path="/terms" element={<TermsScreen onNavigate={navigate} />} />
-          <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} />} />
+          <Route path="/login" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={loginWithCredentials} onRegister={registerCandidate} initialTab="login" /></PublicAuthRoute>} />
+          <Route path="/register" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={loginWithCredentials} onRegister={registerCandidate} initialTab="register" /></PublicAuthRoute>} />
+          <Route path="/terms" element={<TermsScreen onNavigate={navigate} session={session} />} />
+          <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} session={session} />} />
           <Route path="/verify-email" element={<EmailVerifyScreen onNavigate={navigate} />} />
           <Route path="/forgot-password" element={<ForgotPasswordScreen onNavigate={navigate} />} />
           <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
 
-          <Route path="/candidate/onboarding" element={<CandidateOnboardingScreen onNavigate={navigate} />} />
-          <Route path="/candidate/dashboard" element={<DashboardScreen onNavigate={navigate} />} />
-          <Route path="/candidate/profile" element={<ProfileScreen onNavigate={navigate} />} />
-          <Route path="/candidate/settings" element={<SettingsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/materials" element={<MaterialsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/notifications" element={<NotificationsScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews" element={<InterviewHistoryScreen onNavigate={navigate} />} />
-          <Route path="/candidate/development" element={<DevelopmentScreen onNavigate={navigate} />} />
-          <Route path="/candidate/disc" element={<CandidateDiscTestScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/new" element={<InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
-          <Route path="/candidate/interviews/new/consent" element={<ConsentScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/new/preparation" element={<PrepScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/new/answers" element={<InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />} />
-          <Route path="/candidate/interviews/new/review" element={<ReviewScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/new/submit" element={<InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} />} />
-          <Route path="/candidate/interviews/:id/success" element={<InterviewDoneScreen onNavigate={navigate} />} />
-          <Route path="/candidate/interviews/:id/status" element={<PendingScreen onNavigate={navigate} />} />
-          <Route path="/candidate/reports/:id" element={<ReportScreen onNavigate={navigate} />} />
+          <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard")} />)} />
+          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+          <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} />)} />
+          <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
 
           <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/onboarding" element={<EvalOnboardingScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/dashboard" element={<EvalDashboardScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations" element={<EvalQueueScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/active" element={<EvalActiveScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/:id" element={<EvalScreenView onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/:id/review" element={<EvalReviewScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/evaluations/:id/success" element={<EvalDoneScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/history" element={<EvalHistoryScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/criteria" element={<EvalCriteriaScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/settings" element={<EvalSettingsScreen onNavigate={navigate} />} />
+          <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
+          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />
 
-          <Route path="/admin/onboarding" element={<AdminOnboardingScreen onNavigate={navigate} />} />
-          <Route path="/admin/dashboard" element={<AdminDashboardScreen onNavigate={navigate} />} />
-          <Route path="/admin/candidates" element={<AdminCandidatesScreen onNavigate={navigate} />} />
-          <Route path="/admin/candidates/:id" element={<AdminCandidateDetailScreen onNavigate={navigate} />} />
-          <Route path="/admin/evaluators" element={<AdminEvaluatorsScreen onNavigate={navigate} />} />
-          <Route path="/admin/evaluators/new" element={<AdminEvaluatorFormScreen onNavigate={navigate} />} />
-          <Route path="/admin/interviews" element={<AdminInterviewsScreen onNavigate={navigate} />} />
-          <Route path="/admin/assignments" element={<AdminAssignScreen onNavigate={navigate} />} />
-          <Route path="/admin/questions" element={<AdminQuestionsScreen onNavigate={navigate} />} />
-          <Route path="/admin/questions/new" element={<AdminQuestionFormScreen onNavigate={navigate} />} />
-          <Route path="/admin/roles" element={<AdminRolesScreen onNavigate={navigate} />} />
-          <Route path="/admin/criteria" element={<AdminCriteriaScreen onNavigate={navigate} />} />
-          <Route path="/admin/consents" element={<AdminConsentScreen onNavigate={navigate} />} />
-          <Route path="/admin/audit" element={<AdminAuditScreen onNavigate={navigate} />} />
-          <Route path="/admin/settings" element={<AdminSettingsScreen onNavigate={navigate} />} />
+          <Route path="/admin/onboarding" element={protect("ADMIN", <AdminOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("admin-dashboard")} />)} />
+          <Route path="/admin/dashboard" element={protect("ADMIN", <AdminDashboardScreen onNavigate={navigate} />)} />
+          <Route path="/admin/candidates" element={protect("ADMIN", <AdminCandidatesScreen onNavigate={navigate} />)} />
+          <Route path="/admin/candidates/:id" element={protect("ADMIN", <AdminCandidateDetailScreen onNavigate={navigate} />)} />
+          <Route path="/admin/evaluators" element={protect("ADMIN", <AdminEvaluatorsScreen onNavigate={navigate} />)} />
+          <Route path="/admin/evaluators/new" element={protect("ADMIN", <AdminEvaluatorFormScreen onNavigate={navigate} />)} />
+          <Route path="/admin/interviews" element={protect("ADMIN", <AdminInterviewsScreen onNavigate={navigate} />)} />
+          <Route path="/admin/assignments" element={protect("ADMIN", <AdminAssignScreen onNavigate={navigate} />)} />
+          <Route path="/admin/questions" element={protect("ADMIN", <AdminQuestionsScreen onNavigate={navigate} />)} />
+          <Route path="/admin/questions/new" element={protect("ADMIN", <AdminQuestionFormScreen onNavigate={navigate} />)} />
+          <Route path="/admin/roles" element={protect("ADMIN", <AdminRolesScreen onNavigate={navigate} />)} />
+          <Route path="/admin/criteria" element={protect("ADMIN", <AdminCriteriaScreen onNavigate={navigate} />)} />
+          <Route path="/admin/consents" element={protect("ADMIN", <AdminConsentScreen onNavigate={navigate} />)} />
+          <Route path="/admin/audit" element={protect("ADMIN", <AdminAuditScreen onNavigate={navigate} />)} />
+          <Route path="/admin/settings" element={protect("ADMIN", <AdminSettingsScreen onNavigate={navigate} />)} />
 
-          <Route path="/candidate" element={<Navigate to="/candidate/dashboard" replace />} />
-          <Route path="/evaluator" element={<Navigate to="/evaluator/dashboard" replace />} />
-          <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="/candidate" element={protect("CANDIDATE", <Navigate to="/candidate/dashboard" replace />)} />
+          <Route path="/evaluator" element={protect("EVALUATOR", <Navigate to="/evaluator/dashboard" replace />)} />
+          <Route path="/admin" element={protect("ADMIN", <Navigate to="/admin/dashboard" replace />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

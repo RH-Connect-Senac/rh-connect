@@ -2,7 +2,7 @@ export const ROUTER_BASENAME = "/rhconnect";
 
 export type AppScreen =
   | "landing" | "terms" | "privacy"
-  | "auth" | "email-verify" | "forgot-password" | "reset-password"
+  | "auth" | "register" | "email-verify" | "forgot-password" | "reset-password"
   | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
   | "dashboard" | "profile" | "settings" | "materials" | "notifications"
   | "interview-history" | "development" | "disc-test"
@@ -32,7 +32,7 @@ export type AppRoute = {
 export const APP_ROUTES = [
   { screen: "landing", path: "/", label: "Inicio", group: "public", priority: "P1", status: "visual", backDependency: "nao imediata" },
   { screen: "auth", path: "/login", label: "Login", group: "public", priority: "P0", status: "simulado", backDependency: "sim", notes: "Compartilha AuthScreen com /register." },
-  { screen: "auth", path: "/register", label: "Cadastro", group: "public", priority: "P0", status: "simulado", backDependency: "sim", notes: "Compartilha AuthScreen com /login." },
+  { screen: "register", path: "/register", label: "Cadastro", group: "public", priority: "P0", status: "simulado", backDependency: "sim", notes: "Compartilha AuthScreen com /login." },
   { screen: "email-verify", path: "/verify-email", label: "Verificacao de e-mail", group: "public", priority: "P2", status: "simulado", backDependency: "sim" },
   { screen: "forgot-password", path: "/forgot-password", label: "Esqueci senha", group: "public", priority: "P3", status: "simulado", backDependency: "sim" },
   { screen: "reset-password", path: "/reset-password", label: "Redefinir senha", group: "public", priority: "P3", status: "simulado", backDependency: "sim" },
@@ -86,54 +86,6 @@ export const APP_ROUTES = [
   { screen: "admin-audit", path: "/admin/audit", label: "Auditoria", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "admin-settings", path: "/admin/settings", label: "Configuracoes admin", group: "admin", priority: "P3", status: "simulado", backDependency: "sim" },
 ] satisfies AppRoute[];
-
-export const FLOW_STEPS = [
-  { id: "landing", label: "Inicio" },
-  { id: "auth", label: "Cadastro" },
-  { id: "candidate-onboarding", label: "Onboarding" },
-  { id: "eval-activate", label: "Ativar Conta Aval." },
-  { id: "eval-onboarding", label: "Onboarding Aval." },
-  { id: "admin-onboarding", label: "Intro Admin" },
-  { id: "dashboard", label: "Dashboard" },
-  { id: "profile", label: "Perfil" },
-  { id: "interview-setup", label: "Nova Entrevista" },
-  { id: "prep", label: "Orientacoes" },
-  { id: "consent", label: "Consentimento" },
-  { id: "interview", label: "Respostas" },
-  { id: "review", label: "Revisao" },
-  { id: "interview-confirm", label: "Confirmar Envio" },
-  { id: "interview-done", label: "Concluida" },
-  { id: "pending", label: "Aguardando" },
-  { id: "report", label: "Relatorio" },
-  { id: "interview-history", label: "Historico" },
-  { id: "development", label: "Desenvolvimento" },
-  { id: "disc-test", label: "Teste DISC" },
-  { id: "materials", label: "Materiais" },
-  { id: "notifications", label: "Notificacoes" },
-  { id: "eval-dashboard", label: "Avaliador" },
-  { id: "eval-queue", label: "Fila" },
-  { id: "eval-active", label: "Em Andamento" },
-  { id: "eval-screen", label: "Avaliar" },
-  { id: "eval-review", label: "Revisao Eval" },
-  { id: "eval-done", label: "Concluida Eval" },
-  { id: "eval-history", label: "Historico Eval" },
-  { id: "eval-criteria", label: "Criterios Eval" },
-  { id: "eval-settings", label: "Config. Eval" },
-  { id: "admin-dashboard", label: "Admin" },
-  { id: "admin-candidates", label: "Candidatos" },
-  { id: "admin-candidate-detail", label: "Detalhe Candidato" },
-  { id: "admin-evaluators", label: "Avaliadores" },
-  { id: "admin-evaluator-form", label: "Form. Avaliador" },
-  { id: "admin-interviews", label: "Entrevistas" },
-  { id: "admin-assign", label: "Atribuicoes" },
-  { id: "admin-questions", label: "Perguntas" },
-  { id: "admin-question-form", label: "Nova Pergunta" },
-  { id: "admin-roles", label: "Cargos" },
-  { id: "admin-criteria", label: "Criterios Admin" },
-  { id: "admin-consent", label: "Consentimentos" },
-  { id: "admin-audit", label: "Auditoria" },
-  { id: "admin-settings", label: "Config. Admin" },
-] satisfies { id: AppScreen; label: string }[];
 
 export const DEFAULT_ROUTE_PARAMS: Partial<Record<AppScreen, string>> = {
   "interview-done": "interview-demo",

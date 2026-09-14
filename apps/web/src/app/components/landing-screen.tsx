@@ -8,6 +8,7 @@ import { RHConnectLogo } from "./brand/rh-connect-logo";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
+import { ROUTER_BASENAME } from "../router/routes";
 
 type NavFn = (s: string) => void;
 
@@ -94,6 +95,9 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
   ];
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const reloadHome = () => {
+    window.location.assign(`${ROUTER_BASENAME}/`);
+  };
 
   return (
     <div className="bg-white w-full">
@@ -101,7 +105,14 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       {/* ── Header ── */}
       <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-border px-4 sm:px-8">
         <div className="max-w-6xl mx-auto flex items-center justify-between h-16">
-          <RHConnectLogo className="h-8 sm:h-9 w-auto" />
+          <button
+            type="button"
+            onClick={reloadHome}
+            className="cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            aria-label="Ir para a página inicial"
+          >
+            <RHConnectLogo className="h-8 sm:h-9 w-auto" />
+          </button>
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-7">
             <a href="#como-funciona" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Como funciona</a>
@@ -112,7 +123,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           {/* Desktop CTAs */}
           <div className="hidden md:flex items-center gap-2 sm:gap-3">
             <Btn variant="outline" size="sm" onClick={() => onNavigate("auth")}>Entrar</Btn>
-            <Btn variant="primary" size="sm" onClick={() => onNavigate("auth")}>Criar conta</Btn>
+            <Btn variant="primary" size="sm" onClick={() => onNavigate("register")}>Criar conta</Btn>
           </div>
           {/* Mobile hamburger */}
           <button
@@ -138,7 +149,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
             ))}
             <div className="flex gap-2 pt-2">
               <Btn variant="outline" size="sm" className="flex-1" onClick={() => onNavigate("auth")}>Entrar</Btn>
-              <Btn variant="primary" size="sm" className="flex-1" onClick={() => onNavigate("auth")}>Criar conta</Btn>
+              <Btn variant="primary" size="sm" className="flex-1" onClick={() => onNavigate("register")}>Criar conta</Btn>
             </div>
           </div>
         )}
@@ -155,7 +166,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
               Pratique entrevistas relacionadas ao seu objetivo profissional, desenvolva suas respostas e receba orientações para evoluir.
             </p>
             <div className="flex flex-col sm:flex-row flex-wrap gap-3">
-              <Btn size="lg" variant="primary" onClick={() => onNavigate("auth")} className="!bg-white !text-blue-700 hover:!bg-slate-100 hover:shadow-lg w-full sm:w-auto">
+              <Btn size="lg" variant="primary" onClick={() => onNavigate("register")} className="!bg-white !text-blue-700 hover:!bg-slate-100 hover:shadow-lg w-full sm:w-auto">
                 Começar agora <ArrowRight className="w-5 h-5" />
               </Btn>
               <a href="#como-funciona"
@@ -285,7 +296,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
                 </li>
               ))}
             </ul>
-            <Btn variant="primary" size="lg" onClick={() => onNavigate("auth")}>
+            <Btn variant="primary" size="lg" onClick={() => onNavigate("register")}>
               Começar minha preparação <ArrowRight className="w-5 h-5" />
             </Btn>
           </div>
@@ -386,7 +397,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           <p className="text-blue-200 mb-8 leading-relaxed">
             Crie sua conta em poucos minutos e faça sua primeira entrevista simulada ainda hoje.
           </p>
-          <Btn size="lg" onClick={() => onNavigate("auth")} className="!bg-white !text-blue-700 hover:!bg-slate-100 hover:shadow-lg font-bold">
+          <Btn size="lg" onClick={() => onNavigate("register")} className="!bg-white !text-blue-700 hover:!bg-slate-100 hover:shadow-lg font-bold">
             Criar minha conta <ArrowRight className="w-5 h-5" />
           </Btn>
         </div>
@@ -410,27 +421,45 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Footer ── */}
-      <footer className="px-4 sm:px-8 py-10 sm:py-12 bg-[#021025]">
+      <footer id="contato" className="px-4 sm:px-8 py-10 sm:py-12 bg-[#021025]">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8">
             <div>
-              <RHConnectLogo variant="inverse" className="h-7 w-auto mb-2" />
+              <button
+                type="button"
+                onClick={reloadHome}
+                className="mb-2 cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#021025]"
+                aria-label="Ir para a página inicial"
+              >
+                <RHConnectLogo variant="inverse" className="h-7 w-auto" />
+              </button>
               <p className="text-slate-500 text-xs max-w-xs leading-relaxed">
                 Plataforma de preparação para entrevistas. Desenvolvida no SENAC-DF.
               </p>
             </div>
             <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-x-6 gap-y-2 sm:gap-y-3">
               {[
-                { label: "Como funciona",  href: "#como-funciona" },
-                { label: "Benefícios",     href: "#beneficios" },
-                { label: "Sobre o projeto",href: "#sobre" },
-                { label: "Termos de uso",  href: "#" },
-                { label: "Privacidade",    href: "#" },
-                { label: "Contato",        href: "#" },
+                { label: "Como funciona", href: "#como-funciona" },
+                { label: "Benefícios", href: "#beneficios" },
+                { label: "Sobre o projeto", href: "#sobre" },
+                { label: "Termos de uso", screen: "terms" },
+                { label: "Privacidade", screen: "privacy" },
+                { label: "Contato", href: "#contato" },
               ].map(link => (
-                <a key={link.label} href={link.href} className="text-slate-400 hover:text-white text-sm transition-colors duration-150">
-                  {link.label}
-                </a>
+                "screen" in link ? (
+                  <button
+                    key={link.label}
+                    type="button"
+                    onClick={() => onNavigate(link.screen)}
+                    className="text-left text-slate-400 hover:text-white text-sm transition-colors duration-150"
+                  >
+                    {link.label}
+                  </button>
+                ) : (
+                  <a key={link.label} href={link.href} className="text-slate-400 hover:text-white text-sm transition-colors duration-150">
+                    {link.label}
+                  </a>
+                )
               ))}
             </div>
           </div>

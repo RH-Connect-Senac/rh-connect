@@ -1,9 +1,25 @@
 /** RH Connect — Telas do Avaliador */
 
 import { useState, useEffect } from "react";
+import { useLocation, useNavigate, useParams } from "react-router";
+import { toast } from "sonner";
+import type { EvaluationScores } from "../domain/interviews";
+import { DEFAULT_EVALUATOR } from "../mocks/interviews";
+import {
+  completeEvaluation,
+  createEmptyEvaluationScores,
+  formatScore,
+  getAssignedInterviews,
+  getAverageScore,
+  getCompletedEvaluations,
+  getEvaluationByInterviewId,
+  getInterviewById,
+  saveEvaluationDraft,
+  startEvaluation,
+} from "../services/interviews-service";
 import {
   Home, Clock, History, BookOpen, Settings, LogOut,
-  ChevronLeft, ChevronRight, Bell, CheckCircle, AlertCircle,
+  ChevronLeft, ChevronRight, Bell, CheckCircle,
   Star, Award, Target, TrendingUp,
   Filter, Eye, FileText,
   Edit2, Send, Download, BarChart2, Layers, RefreshCw,
@@ -27,7 +43,10 @@ import { FilterChip } from "./ui/filter-chip";
 import { EmptyState } from "./ui/empty-state";
 
 type NavFn = (s: string) => void;
-type ActivationScenario = "valid" | "invalid" | "expired" | "used";
+type EvalReviewLocationState = {
+  scores?: EvaluationScores;
+  comment?: string;
+};
 
 // ─── Local UI Helpers ─────────────────────────────────────────────────────────
 
@@ -250,7 +269,7 @@ function EvalLayout({ current, onNavigate, title, subtitle, actions, children }:
   return (
     <div className="flex w-full">
       <aside className={`flex flex-col shrink-0 sticky self-start transition-[width] duration-[220ms] ease-in-out ${collapsed ? "w-16" : "w-60"}`}
-        style={{ backgroundColor: "#021025", top: 44, height: "calc(100vh - 44px)" }}>
+        style={{ backgroundColor: "#021025", top: 0, height: "100vh" }}>
         <EvalSidebarContent current={current} onNavigate={onNavigate} collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
       </aside>
       <div className="flex-1 min-w-0 flex flex-col">
@@ -276,7 +295,7 @@ const CRITERIA_GUIDE = [
 ];
 
 const QUEUE_ITEMS = [
-  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedora Front-end", submitted: "11/08/2026 09:14", priority: "high" as const, questions: 5 },
+  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedor Front-end", submitted: "11/08/2026 09:14", priority: "high" as const, questions: 5 },
   { id: "#E-0040", candidate: "Rafael Mendes",     job: "Desenvolvedor Full Stack",      submitted: "11/08/2026 08:52", priority: "normal" as const, questions: 5 },
   { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", submitted: "10/08/2026 17:30", priority: "normal" as const, questions: 5 },
   { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",                submitted: "10/08/2026 16:45", priority: "low" as const, questions: 5 },
@@ -291,6 +310,23 @@ const HISTORY_ITEMS = [
   { id: "#E-0032", candidate: "Thiago Barbosa",   job: "Desenvolvedor Full Stack",     date: "07/08/2026", score: 7.9, time: "21 min", status: "completed" as const },
   { id: "#E-0031", candidate: "Juliana Pires",    job: "Assessora Executiva",           date: "06/08/2026", score: 8.6, time: "20 min", status: "completed" as const },
 ];
+
+function formatDateTime(value?: string) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function mapInterviewToQueueItem(interview: ReturnType<typeof getAssignedInterviews>[number]) {
+  return {
+    id: interview.id,
+    candidate: interview.candidateName,
+    job: interview.context.title,
+    submitted: formatDateTime(interview.submittedAt ?? interview.createdAt),
+    priority: "normal" as const,
+    questions: interview.answers.length,
+    realId: interview.id,
+  };
+}
 
 // ─── Gráfico Interativo — Esta Semana ────────────────────────────────────────
 
@@ -466,13 +502,34 @@ function EvalWeekChartCard({ onDaySelect }: { onDaySelect?: (day: string | null)
 
 // ─── Screen: Dashboard do Avaliador ──────────────────────────────────────────
 
-export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function EvalDashboardScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+  const routerNavigate = useNavigate();
+  const assignedInterviews = getAssignedInterviews(evaluatorId);
+  const completedEvaluations = getCompletedEvaluations(evaluatorId);
+  const queuePreview = [
+    ...assignedInterviews.map(mapInterviewToQueueItem),
+    ...QUEUE_ITEMS.map((item) => ({ ...item, realId: undefined as string | undefined })),
+  ].slice(0, 3);
+  const completedPreview = [
+    ...completedEvaluations.map(({ interview, evaluation }) => ({
+      id: interview.id,
+      candidate: interview.candidateName,
+      job: interview.context.title,
+      date: evaluation.completedAt ? new Date(evaluation.completedAt).toLocaleDateString("pt-BR") : "—",
+      score: getAverageScore(evaluation.scores) ?? 0,
+      time: "—",
+      status: "completed" as const,
+      realId: interview.id,
+    })),
+    ...HISTORY_ITEMS.map((item) => ({ ...item, realId: undefined as string | undefined })),
+  ].slice(0, 4);
+
   return (
-    <EvalLayout current="eval-dashboard" onNavigate={onNavigate} title="Dashboard" subtitle="Bem-vindo de volta, Carlos. Você tem 8 avaliações pendentes.">
+    <EvalLayout current="eval-dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, Carlos. Você tem ${assignedInterviews.length || 8} avaliações pendentes.`}>
       <div className="w-full space-y-5">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard value="8"    label="Avaliações pendentes" icon={Layers}    color="bg-amber-50 text-amber-600" />
-          <StatCard value="3"    label="Concluídas hoje"      icon={CheckCircle} color="bg-green-50 text-green-600" />
+          <StatCard value={assignedInterviews.length || 8}    label="Avaliações pendentes" icon={Layers}    color="bg-amber-50 text-amber-600" />
+          <StatCard value={completedEvaluations.length || 3}    label="Concluídas hoje"      icon={CheckCircle} color="bg-green-50 text-green-600" />
           <StatCard value="7.8"  label="Média geral de score" icon={Star}       color="bg-blue-50 text-blue-600" />
           <StatCard value="19m"  label="Tempo médio de avaliação" icon={Clock}      color="bg-purple-50 text-purple-600" />
         </div>
@@ -485,14 +542,14 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
               <Btn variant="ghost" size="sm" onClick={() => onNavigate("eval-queue")}>Ver todas <ChevronRight className="w-3.5 h-3.5" /></Btn>
             </div>
             <div className="space-y-2.5">
-              {QUEUE_ITEMS.slice(0, 3).map(item => (
+              {queuePreview.map(item => (
                 <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 hover:bg-muted/70 transition-colors">
                   <div className={`w-2 h-2 rounded-full shrink-0 ${item.priority === "high" ? "bg-red-500" : item.priority === "normal" ? "bg-amber-500" : "bg-slate-300"}`} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-foreground truncate">{item.candidate}</p>
                     <p className="text-xs text-muted-foreground truncate">{item.job} · {item.submitted.split(" ")[0]}</p>
                   </div>
-                  <Btn variant="outline" size="sm" onClick={() => onNavigate("eval-screen")}>Avaliar</Btn>
+                  <Btn variant="outline" size="sm" onClick={() => item.realId ? routerNavigate(`/evaluator/evaluations/${item.realId}`) : onNavigate("eval-screen")}>Avaliar</Btn>
                 </div>
               ))}
             </div>
@@ -519,13 +576,13 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {HISTORY_ITEMS.slice(0, 4).map(item => (
+                {completedPreview.map(item => (
                   <tr key={item.id} className="hover:bg-muted/30 transition-colors">
                     <td className="py-3 pr-4 font-medium text-foreground">{item.candidate}</td>
                     <td className="py-3 pr-4 text-muted-foreground hidden sm:table-cell truncate max-w-[180px]">{item.job}</td>
                     <td className="py-3 pr-4 text-muted-foreground">{item.date}</td>
                     <td className="py-3">
-                      <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{item.score}</Badge>
+                      <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{formatScore(item.score)}</Badge>
                     </td>
                   </tr>
                 ))}
@@ -540,10 +597,16 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Fila de Avaliações ───────────────────────────────────────────────
 
-export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function EvalQueueScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+  const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
-  const filtered = QUEUE_ITEMS.filter(i =>
+  const assignedInterviews = getAssignedInterviews(evaluatorId);
+  const queueItems = [
+    ...assignedInterviews.map(mapInterviewToQueueItem),
+    ...QUEUE_ITEMS.map((item) => ({ ...item, realId: undefined as string | undefined })),
+  ];
+  const filtered = queueItems.filter(i =>
     (filter === "all" || i.priority === filter) &&
     (i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase()))
   );
@@ -552,7 +615,7 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
   const priorityTone = { high: "danger", normal: "warning", low: "neutral" } as const;
 
   return (
-    <EvalLayout current="eval-queue" onNavigate={onNavigate} title="Fila de Avaliações" subtitle={`${QUEUE_ITEMS.length} entrevistas aguardando revisão`}>
+    <EvalLayout current="eval-queue" onNavigate={onNavigate} title="Fila de Avaliações" subtitle={`${queueItems.length} entrevistas aguardando revisão`}>
       <div className="w-full space-y-4">
         <div className="flex flex-col sm:flex-row gap-3">
           <SearchInput
@@ -605,8 +668,8 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  <Btn variant="outline" size="sm" onClick={() => onNavigate("eval-screen")}><Eye className="w-3.5 h-3.5" /> Ver</Btn>
-                  <Btn variant="primary" size="sm" onClick={() => onNavigate("eval-screen")}>Avaliar</Btn>
+                  <Btn variant="outline" size="sm" onClick={() => item.realId ? routerNavigate(`/evaluator/evaluations/${item.realId}`) : onNavigate("eval-screen")}><Eye className="w-3.5 h-3.5" /> Ver</Btn>
+                  <Btn variant="primary" size="sm" onClick={() => item.realId ? routerNavigate(`/evaluator/evaluations/${item.realId}`) : onNavigate("eval-screen")}>Avaliar</Btn>
                 </div>
               </div>
             </Card>
@@ -619,10 +682,27 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Em Andamento ─────────────────────────────────────────────────────
 
-export function EvalActiveScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function EvalActiveScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+  const routerNavigate = useNavigate();
   const active = [
-    { id: "#E-0038", candidate: "Paulo Carvalho", job: "Designer UX/UI", progress: 3, total: 5, started: "11:32", elapsed: "14 min" },
-    { id: "#E-0036", candidate: "Lucas Ferreira",  job: "Analista de TI",  progress: 5, total: 5, started: "10:58", elapsed: "22 min" },
+    ...getAssignedInterviews(evaluatorId)
+      .filter((interview) => interview.status === "IN_EVALUATION")
+      .map((interview) => {
+        const evaluation = getEvaluationByInterviewId(interview.id);
+        const progress = Object.values(evaluation?.scores ?? {}).filter((score) => score > 0).length;
+        return {
+          id: interview.id,
+          candidate: interview.candidateName,
+          job: interview.context.title,
+          progress,
+          total: Object.keys(evaluation?.scores ?? createEmptyEvaluationScores()).length,
+          started: evaluation?.createdAt ? new Date(evaluation.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—",
+          elapsed: "—",
+          realId: interview.id,
+        };
+      }),
+    { id: "#E-0038", candidate: "Paulo Carvalho", job: "Designer UX/UI", progress: 3, total: 5, started: "11:32", elapsed: "14 min", realId: undefined as string | undefined },
+    { id: "#E-0036", candidate: "Lucas Ferreira",  job: "Analista de TI",  progress: 5, total: 5, started: "10:58", elapsed: "22 min", realId: undefined as string | undefined },
   ];
   return (
     <EvalLayout current="eval-active" onNavigate={onNavigate} title="Em Andamento" subtitle="Avaliações que você iniciou e ainda não concluiu">
@@ -662,7 +742,7 @@ export function EvalActiveScreen({ onNavigate }: { onNavigate: NavFn }) {
                 </div>
                 <div className="flex gap-2">
                   <Btn variant="outline" size="sm"><RefreshCw className="w-3.5 h-3.5" /> Recomeçar</Btn>
-                  <Btn variant="primary" size="sm" onClick={() => onNavigate("eval-screen")}>Continuar <ChevronRight className="w-3.5 h-3.5" /></Btn>
+                  <Btn variant="primary" size="sm" onClick={() => item.realId ? routerNavigate(`/evaluator/evaluations/${item.realId}`) : onNavigate("eval-screen")}>Continuar <ChevronRight className="w-3.5 h-3.5" /></Btn>
                 </div>
               </div>
             </div>
@@ -680,38 +760,49 @@ export function EvalActiveScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Tela de Avaliação ────────────────────────────────────────────────
 
-export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
-  const [scores, setScores] = useState<Record<string, number>>({
-    Clareza: 0,
-    Coerência: 0,
-    Objetividade: 0,
-    Domínio: 0,
-    Organização: 0,
-    "Aderência aos requisitos": 0,
-    "Capacidade de exemplificar": 0,
-  });
+export function EvalScreenView({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+  const routerNavigate = useNavigate();
+  const location = useLocation();
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const locationState = location.state as EvalReviewLocationState | null;
+  const [scores, setScores] = useState<EvaluationScores>(() => getEvaluationByInterviewId(id)?.scores ?? locationState?.scores ?? createEmptyEvaluationScores());
+  const [comment, setComment] = useState(() => getEvaluationByInterviewId(id)?.comment ?? locationState?.comment ?? "");
   const [currentQ, setCurrentQ] = useState(0);
 
-  const questions = [
+  useEffect(() => {
+    if (!interview) return;
+    const evaluation = startEvaluation(interview.id, evaluatorId);
+    setScores(evaluation?.scores ?? createEmptyEvaluationScores());
+    setComment(evaluation?.comment ?? "");
+  }, [interview?.id, evaluatorId]);
+
+  const fallbackQuestions = [
     "Fale sobre você e o que te motivou a se candidatar para esta vaga.",
     "Descreva uma situação em que você precisou lidar com um prazo apertado.",
     "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?",
     "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.",
     "Onde você se vê profissionalmente daqui a três anos?",
   ];
-  const answers = [
+  const fallbackAnswers = [
     "Candidatei-me porque a vaga combina minha experiência com interfaces web e meu interesse em atuar em times que constroem produtos digitais com foco em qualidade e usabilidade.",
     "Em uma entrega recente, tivemos poucos dias para corrigir fluxos responsivos. Organizei as tarefas por impacto, alinhei prioridades com o time e acompanhei os ajustes até a validação final.",
     "Meu maior ponto forte é transformar requisitos em interfaces claras. Em uma experiência recente, revisei componentes reutilizáveis e reduzi inconsistências visuais entre telas.",
     "Participei de um projeto com produto, design e back-end. Minha contribuição foi organizar as demandas de front, registrar decisões e manter o time alinhado sobre prazos e critérios de aceite.",
     "Quero consolidar minha atuação em desenvolvimento front-end, assumir projetos com mais autonomia e aprofundar qualidade, acessibilidade e testes.",
   ];
-  const requirements = [
+  const fallbackRequirements = [
     "Experiência com desenvolvimento de interfaces web.",
     "Conhecimento em componentes React.",
     "Comunicação objetiva com equipes multidisciplinares.",
     "Organização de prioridades e prazos.",
   ];
+  const questions = interview?.answers.map((answer) => answer.questionText) ?? fallbackQuestions;
+  const answers = interview?.answers.map((answer) => answer.answer) ?? fallbackAnswers;
+  const requirements = interview?.context.requirements ?? fallbackRequirements;
+  const title = interview?.context.title ?? "Desenvolvedor Front-end";
+  const company = interview?.context.company ?? "Tech Labs";
+  const candidate = interview?.candidateName ?? "Fernanda Oliveira";
 
   const totalScore = () => {
     const vals = Object.values(scores).filter(v => v > 0);
@@ -719,11 +810,48 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
   };
 
   const scored = Object.values(scores).filter(v => v > 0).length;
+  const totalCriteria = Object.keys(scores).length;
+  const isScoringComplete = scored === totalCriteria;
+  const hasRequiredComment = comment.trim().length > 0;
+  const canReviewEvaluation = isScoringComplete && hasRequiredComment;
+  const saveCurrentDraft = () => {
+    if (!interview) return null;
+    return saveEvaluationDraft(interview.id, scores, comment, evaluatorId);
+  };
+
+  const handleReview = () => {
+    if (!canReviewEvaluation) {
+      toast.error(!isScoringComplete ? "Avalie todos os critérios antes de revisar." : "O comentário do avaliador é obrigatório.");
+      return;
+    }
+    if (!interview) {
+      routerNavigate(`/evaluator/evaluations/${id ?? "evaluation-demo"}/review`, {
+        state: { scores, comment } satisfies EvalReviewLocationState,
+      });
+      return;
+    }
+    saveCurrentDraft();
+    routerNavigate(`/evaluator/evaluations/${interview.id}/review`);
+  };
+
+  if (interview && interview.assignedEvaluatorId !== evaluatorId) {
+    return (
+      <EvalLayout current="eval-screen" onNavigate={onNavigate} title="Avaliação indisponível" subtitle="Esta entrevista não está atribuída ao seu perfil.">
+        <EmptyState
+          icon={Lock}
+          title="Entrevista não atribuída"
+          description="Apenas o avaliador responsável pode acessar esta avaliação."
+          className="p-12"
+          action={<Btn variant="primary" onClick={() => onNavigate("eval-queue")}>Voltar para a fila</Btn>}
+        />
+      </EvalLayout>
+    );
+  }
 
   return (
     <EvalLayout current="eval-screen" onNavigate={onNavigate}
-      title="Avaliando: Fernanda Oliveira"
-      subtitle="Desenvolvedora Front-end · #E-0041"
+      title={`Avaliando: ${candidate}`}
+      subtitle={`${title} · ${interview?.id ?? "#E-0041"}`}
       actions={<Badge variant="warning">Questão {currentQ + 1} de {questions.length}</Badge>}>
       <div className="w-full grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-5">
 
@@ -731,8 +859,8 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
         <div className="space-y-4">
           <Card className="p-5">
             <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Contexto da vaga</p>
-            <h3 className="font-bold text-foreground">Desenvolvedora Front-end</h3>
-            <p className="text-sm text-muted-foreground mb-4">Tech Labs</p>
+            <h3 className="font-bold text-foreground">{title}</h3>
+            <p className="text-sm text-muted-foreground mb-4">{company}</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {requirements.map((requirement) => (
                 <div key={requirement} className="flex items-start gap-2 text-xs text-foreground bg-muted/50 rounded-xl p-3">
@@ -775,7 +903,7 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-foreground">Critérios de Avaliação</h3>
               <div className="text-right">
-                <p className="text-xs text-muted-foreground">Média</p>
+                <p className="text-xs text-muted-foreground">{isScoringComplete ? "Média" : "Média parcial"}</p>
                 <p className="text-2xl font-bold text-primary">{totalScore()}</p>
               </div>
             </div>
@@ -802,16 +930,35 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
               ))}
             </div>
             <div className="mt-4 pt-4 border-t border-border text-xs text-muted-foreground">
-              {scored}/{Object.keys(scores).length} critérios avaliados
+              {scored}/{totalCriteria} critérios avaliados
             </div>
           </Card>
 
+          <Card className="p-5">
+            <h3 className="font-bold text-foreground mb-3">Comentário do Avaliador</h3>
+            <Textarea
+              value={comment}
+              onChange={e => setComment(e.target.value)}
+              rows={4}
+              placeholder="Registre observações para a revisão final..."
+              className="bg-white resize-none"
+            />
+            {!hasRequiredComment && (
+              <p className="mt-2 text-xs font-medium text-muted-foreground">Comentário obrigatório para revisar e concluir a avaliação.</p>
+            )}
+          </Card>
+
           <div className="flex gap-2">
-            <Btn variant="outline" className="flex-1">Salvar rascunho</Btn>
-            <Btn variant="primary" className="flex-1" onClick={() => onNavigate("eval-review")}>
+            <Btn variant="outline" className="flex-1" onClick={() => saveCurrentDraft()}>Salvar rascunho</Btn>
+            <Btn variant="primary" className="flex-1" onClick={handleReview} disabled={!canReviewEvaluation}>
               Revisar <ChevronRight className="w-3.5 h-3.5" />
             </Btn>
           </div>
+          {!canReviewEvaluation && (
+            <p className="text-xs text-muted-foreground">
+              {!isScoringComplete ? "Avalie todos os critérios para revisar." : "Preencha o comentário do avaliador para revisar."}
+            </p>
+          )}
         </div>
       </div>
     </EvalLayout>
@@ -820,25 +967,75 @@ export function EvalScreenView({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Revisão e Envio ──────────────────────────────────────────────────
 
-export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const [comment, setComment] = useState("");
+export function EvalReviewScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+  const routerNavigate = useNavigate();
+  const location = useLocation();
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const evaluation = getEvaluationByInterviewId(id);
+  const locationState = location.state as EvalReviewLocationState | null;
+  const reviewScores = evaluation?.scores ?? locationState?.scores ?? createEmptyEvaluationScores();
+  const [comment, setComment] = useState(evaluation?.comment ?? locationState?.comment ?? "");
 
-  const scores = [
-    { name: "Clareza",      score: 9, weight: "15%" },
-    { name: "Coerência",    score: 8, weight: "15%" },
-    { name: "Objetividade", score: 8, weight: "10%" },
-    { name: "Domínio",      score: 7, weight: "20%" },
-    { name: "Organização",  score: 8, weight: "15%" },
-    { name: "Aderência",    score: 7, weight: "15%" },
-    { name: "Exemplos",     score: 6, weight: "10%" },
-  ];
+  useEffect(() => {
+    setComment(evaluation?.comment ?? locationState?.comment ?? "");
+  }, [evaluation?.id, evaluation?.comment, locationState?.comment]);
 
-  const avg = (scores.reduce((s, c) => s + c.score, 0) / scores.length).toFixed(1);
+  const scores = Object.entries(reviewScores).map(([name, score]) => ({
+    name,
+    score,
+    weight: CRITERIA_GUIDE.find((criterion) => criterion.name === name)?.weight ?? "—",
+  }));
+  const scoredValues = scores.map((item) => item.score).filter((score) => score > 0);
+  const isScoringComplete = scoredValues.length === scores.length;
+  const hasRequiredComment = comment.trim().length > 0;
+  const canCompleteEvaluation = isScoringComplete && hasRequiredComment;
+  const avg = scoredValues.length ? formatScore(scoredValues.reduce((s, score) => s + score, 0) / scoredValues.length) : "—";
+
+  const handleBack = () => {
+    if (interview) {
+      saveEvaluationDraft(interview.id, reviewScores, comment, evaluatorId);
+      routerNavigate(`/evaluator/evaluations/${interview.id}`);
+      return;
+    }
+    routerNavigate(`/evaluator/evaluations/${id ?? "evaluation-demo"}`, {
+      state: { scores: reviewScores, comment } satisfies EvalReviewLocationState,
+    });
+  };
+
+  const handleComplete = () => {
+    if (!canCompleteEvaluation) {
+      toast.error(!isScoringComplete ? "Avalie todos os critérios antes de concluir." : "O comentário do avaliador é obrigatório.");
+      return;
+    }
+    if (!interview) {
+      routerNavigate(`/evaluator/evaluations/${id ?? "evaluation-demo"}/success`, {
+        state: { scores: reviewScores, comment } satisfies EvalReviewLocationState,
+      });
+      return;
+    }
+    completeEvaluation(interview.id, reviewScores, comment, evaluatorId);
+    routerNavigate(`/evaluator/evaluations/${interview.id}/success`);
+  };
+
+  if (interview && interview.assignedEvaluatorId !== evaluatorId) {
+    return (
+      <EvalLayout current="eval-review" onNavigate={onNavigate} title="Revisão indisponível" subtitle="Esta entrevista não está atribuída ao seu perfil.">
+        <EmptyState
+          icon={Lock}
+          title="Entrevista não atribuída"
+          description="Apenas o avaliador responsável pode revisar esta avaliação."
+          className="p-12"
+          action={<Btn variant="primary" onClick={() => onNavigate("eval-queue")}>Voltar para a fila</Btn>}
+        />
+      </EvalLayout>
+    );
+  }
 
   return (
     <EvalLayout current="eval-review" onNavigate={onNavigate}
       title="Revisão Final"
-      subtitle="Fernanda Oliveira · Desenvolvedora Front-end"
+      subtitle={`${interview?.candidateName ?? "Fernanda Oliveira"} · ${interview?.context.title ?? "Desenvolvedor Front-end"}`}
       actions={<Badge variant="warning">Revisar antes de enviar</Badge>}>
       <div className="w-full max-w-3xl space-y-5">
         {/* Score summary */}
@@ -846,7 +1043,7 @@ export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div className="flex items-start justify-between mb-5">
             <h3 className="font-bold text-foreground">Resumo dos Scores</h3>
             <div className="text-right">
-              <p className="text-xs text-muted-foreground mb-0.5">Score Final</p>
+              <p className="text-xs text-muted-foreground mb-0.5">{isScoringComplete ? "Média" : "Média parcial"}</p>
               <p className="text-4xl font-extrabold text-primary">{avg}</p>
               <p className="text-xs text-muted-foreground">/ 10</p>
             </div>
@@ -854,13 +1051,13 @@ export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div className="space-y-3">
             {scores.map(s => (
               <div key={s.name} className="flex items-center gap-3">
-                <span className="text-sm font-medium text-foreground w-28 shrink-0">{s.name}</span>
+                <span className="text-sm font-medium text-foreground w-36 shrink-0">{s.name}</span>
                 <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                   <div className={`h-2 rounded-full ${s.score >= 8 ? "bg-green-500" : s.score >= 6 ? "bg-blue-500" : "bg-amber-500"}`}
                     style={{ width: `${s.score * 10}%` }} />
                 </div>
                 <span className={`text-sm font-bold w-8 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
-                  {s.score}
+                  {formatScore(s.score)}
                 </span>
                 <span className="text-xs text-muted-foreground w-8">{s.weight}</span>
               </div>
@@ -870,19 +1067,27 @@ export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
 
         {/* Comment */}
         <Card className="p-5 sm:p-6">
-          <h3 className="font-bold text-foreground mb-3">Comentário do Avaliador <span className="text-muted-foreground font-normal text-sm">(opcional)</span></h3>
+          <h3 className="font-bold text-foreground mb-3">Comentário do Avaliador</h3>
           <Textarea value={comment} onChange={e => setComment(e.target.value)} rows={4}
             placeholder="Adicione observações sobre o desempenho do candidato, pontos de destaque ou áreas de melhoria..."
             className="bg-white resize-none" />
+          {!hasRequiredComment && (
+            <p className="mt-2 text-xs font-medium text-muted-foreground">Comentário obrigatório para concluir a avaliação.</p>
+          )}
         </Card>
 
         {/* Actions */}
         <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("eval-screen")}>Voltar</Btn>
-          <Btn variant="primary" className="flex-1" onClick={() => onNavigate("eval-done")}>
+          <Btn variant="outline" onClick={handleBack}>Voltar</Btn>
+          <Btn variant="primary" className="flex-1" onClick={handleComplete} disabled={!canCompleteEvaluation}>
             <Send className="w-3.5 h-3.5" /> Enviar Avaliação
           </Btn>
         </div>
+        {!canCompleteEvaluation && (
+          <p className="text-xs text-muted-foreground">
+            {!isScoringComplete ? "Avalie todos os critérios para concluir." : "Preencha o comentário do avaliador para concluir."}
+          </p>
+        )}
       </div>
     </EvalLayout>
   );
@@ -890,16 +1095,30 @@ export function EvalReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Histórico de Avaliações ─────────────────────────────────────────
 
-export function EvalHistoryScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function EvalHistoryScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+  const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
-  const filtered = HISTORY_ITEMS.filter(i =>
+  const historyItems = [
+    ...getCompletedEvaluations(evaluatorId).map(({ interview, evaluation }) => ({
+      id: interview.id,
+      candidate: interview.candidateName,
+      job: interview.context.title,
+      date: evaluation.completedAt ? new Date(evaluation.completedAt).toLocaleDateString("pt-BR") : "—",
+      score: getAverageScore(evaluation.scores) ?? 0,
+      time: "—",
+      status: "completed" as const,
+      realId: interview.id,
+    })),
+    ...HISTORY_ITEMS.map((item) => ({ ...item, realId: undefined as string | undefined })),
+  ];
+  const filtered = historyItems.filter(i =>
     i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <EvalLayout current="eval-history" onNavigate={onNavigate}
       title="Histórico de Avaliações"
-      subtitle={`${HISTORY_ITEMS.length} avaliações concluídas`}
+      subtitle={`${historyItems.length} avaliações concluídas`}
       actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
       <div className="w-full space-y-4">
         <div className="flex gap-3">
@@ -934,11 +1153,11 @@ export function EvalHistoryScreen({ onNavigate }: { onNavigate: NavFn }) {
                     <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{item.job}</td>
                     <td className="py-3.5 px-4 text-muted-foreground">{item.date}</td>
                     <td className="py-3.5 px-4">
-                      <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{item.score}</Badge>
+                      <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{formatScore(item.score)}</Badge>
                     </td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{item.time}</td>
                     <td className="py-3.5 px-5">
-                      <button onClick={() => onNavigate("eval-done")} className="text-muted-foreground hover:text-primary transition-colors"><Eye className="w-4 h-4" /></button>
+                      <button onClick={() => item.realId ? routerNavigate(`/evaluator/evaluations/${item.realId}/success`) : onNavigate("eval-done")} className="text-muted-foreground hover:text-primary transition-colors"><Eye className="w-4 h-4" /></button>
                     </td>
                   </tr>
                 ))}
@@ -1077,10 +1296,21 @@ export function EvalSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Ativar Conta de Avaliador ───────────────────────────────────────
 
-function EvalLogoHeader() {
+function EvalLogoHeader({ onNavigate }: { onNavigate?: NavFn }) {
   return (
     <header className="flex items-center justify-center px-6 py-5 bg-white/80 backdrop-blur border-b border-border">
-      <RHConnectLogo className="h-10 w-auto" />
+      {onNavigate ? (
+        <button
+          type="button"
+          onClick={() => onNavigate("landing")}
+          className="cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          aria-label="Ir para a página inicial"
+        >
+          <RHConnectLogo className="h-10 w-auto" />
+        </button>
+      ) : (
+        <RHConnectLogo className="h-10 w-auto" />
+      )}
     </header>
   );
 }
@@ -1091,75 +1321,24 @@ export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [mostrarConfirmacao, setMostrarConfirmacao] = useState(false);
   const [ativado, setAtivado] = useState(false);
-  const [activationScenario, setActivationScenario] = useState<ActivationScenario>("valid");
 
   const strength = senha.length === 0 ? 0 : senha.length < 6 ? 1 : senha.length < 10 ? 2 : /[^a-zA-Z0-9]/.test(senha) ? 4 : 3;
   const strengthLabel = ["", "Fraca", "Média", "Forte", "Muito forte"][strength];
   const strengthColor = ["", "bg-red-400", "bg-amber-400", "bg-green-400", "bg-green-500"][strength];
-  const tokenScenarios = [
-    { label: "Válido", scenario: "valid" },
-    { label: "Inválido", scenario: "invalid" },
-    { label: "Expirado", scenario: "expired" },
-    { label: "Usado", scenario: "used" },
-  ] satisfies { label: string; scenario: ActivationScenario }[];
 
-  const scenarioDetails = {
-    valid: {
-      name: "Patricia Gomes",
-      email: "patricia.gomes@gmail.com",
-    },
-    invalid: null,
-    expired: null,
-    used: null,
-  };
-
-  const handleScenarioChange = (nextScenario: ActivationScenario) => {
-    setSenha("");
-    setConfirmar("");
-    setMostrarSenha(false);
-    setMostrarConfirmacao(false);
-    setAtivado(false);
-    setActivationScenario(nextScenario);
+  const inviteDetails = {
+    name: "Patricia Gomes",
+    email: "patricia.gomes@gmail.com",
   };
 
   const handleActivate = () => {
-    if (activationScenario === "valid") setAtivado(true);
+    setAtivado(true);
   };
-
-  const tokenStateContent = {
-    invalid: {
-      icon: AlertCircle,
-      title: "Link de ativação inválido",
-      description: "Este link não corresponde a um convite ativo do RH Connect.",
-      tone: "bg-red-50 text-red-600",
-      border: "border-red-100",
-      actionLabel: "Voltar para login",
-      action: () => onNavigate("auth"),
-    },
-    expired: {
-      icon: Clock,
-      title: "Link de ativação expirado",
-      description: "O prazo deste convite terminou. Solicite um novo link ao administrador responsável.",
-      tone: "bg-amber-50 text-amber-600",
-      border: "border-amber-100",
-      actionLabel: "Voltar para login",
-      action: () => onNavigate("auth"),
-    },
-    used: {
-      icon: CheckCircle,
-      title: "Link já utilizado",
-      description: "Esta conta já foi ativada. Acesse a plataforma usando seu e-mail e senha.",
-      tone: "bg-blue-50 text-blue-600",
-      border: "border-blue-100",
-      actionLabel: "Fazer login",
-      action: () => onNavigate("auth"),
-    },
-  } as const;
 
   if (ativado) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
-        <EvalLogoHeader />
+        <EvalLogoHeader onNavigate={onNavigate} />
         <div className="flex-1 flex items-center justify-center px-4 py-8">
           <div className="w-full max-w-md bg-white rounded-2xl border border-border shadow-sm p-8 text-center">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
@@ -1178,56 +1357,9 @@ export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
     );
   }
 
-  if (activationScenario !== "valid") {
-    const content = tokenStateContent[activationScenario];
-    const Icon = content.icon;
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
-        <EvalLogoHeader />
-        <div className="flex-1 flex items-center justify-center px-4 py-8">
-          <div className="w-full max-w-md space-y-4">
-            <div className={`bg-white rounded-2xl border shadow-sm p-6 sm:p-8 text-center ${content.border}`}>
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5 ${content.tone}`}>
-                <Icon className="w-8 h-8" />
-              </div>
-              <h2 className="text-xl font-bold text-foreground mb-2">{content.title}</h2>
-              <p className="text-sm text-muted-foreground mb-6">{content.description}</p>
-              <Btn variant="primary" className="w-full" onClick={content.action}>
-                {content.actionLabel} <ArrowRight className="w-3.5 h-3.5" />
-              </Btn>
-            </div>
-
-            <div className="bg-white/70 border border-dashed border-border rounded-2xl p-4">
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3 text-center">
-                Cenários visuais do protótipo
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {tokenScenarios.map((scenario) => (
-                  <button
-                    key={scenario.label}
-                    type="button"
-                    onClick={() => handleScenarioChange(scenario.scenario)}
-                    className={`px-3 py-2 rounded-xl border text-xs font-semibold transition-colors ${
-                      activationScenario === scenario.scenario
-                        ? "bg-primary text-white border-primary"
-                        : "bg-white text-muted-foreground border-border hover:bg-muted"
-                    }`}
-                  >
-                    {scenario.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
-      <EvalLogoHeader />
+      <EvalLogoHeader onNavigate={onNavigate} />
       <div className="flex-1 flex items-center justify-center px-4 py-8">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl border border-border shadow-sm p-6 sm:p-8">
@@ -1239,11 +1371,7 @@ export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
               <div>
                 <p className="text-sm font-bold text-foreground">Convite recebido</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {scenarioDetails.valid ? (
-                    <>Convite enviado para <strong>{scenarioDetails.valid.name}</strong> ({scenarioDetails.valid.email}) pelo <strong>SENAC-DF</strong>.</>
-                  ) : (
-                    <>Você foi convidado pelo <strong>SENAC-DF</strong> para atuar como <strong>Avaliador</strong> no RH Connect.</>
-                  )}
+                  Convite enviado para <strong>{inviteDetails.name}</strong> ({inviteDetails.email}) pelo <strong>SENAC-DF</strong>.
                 </p>
               </div>
             </div>
@@ -1303,27 +1431,6 @@ export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
             </div>
           </div>
 
-          <div className="mt-4 bg-white/70 border border-dashed border-border rounded-2xl p-4">
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3 text-center">
-              Cenários visuais do protótipo
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {tokenScenarios.map((scenario) => (
-                <button
-                  key={scenario.label}
-                  type="button"
-                  onClick={() => handleScenarioChange(scenario.scenario)}
-                  className={`px-3 py-2 rounded-xl border text-xs font-semibold transition-colors ${
-                    activationScenario === scenario.scenario
-                      ? "bg-primary text-white border-primary"
-                      : "bg-white text-muted-foreground border-border hover:bg-muted"
-                  }`}
-                >
-                  {scenario.label}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -1436,7 +1543,7 @@ const EVAL_ONBOARDING_STEPS = [
   },
 ];
 
-export function EvalOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function EvalOnboardingScreen({ onNavigate, onComplete }: { onNavigate: NavFn; onComplete: () => void }) {
   const [step, setStep] = useState(0);
   const current = EVAL_ONBOARDING_STEPS[step];
   const Icon = current.icon;
@@ -1473,7 +1580,7 @@ export function EvalOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
                 </Btn>
               )}
               {isLast ? (
-                <Btn variant="primary" className="flex-1" onClick={() => onNavigate("eval-dashboard")}>
+                <Btn variant="primary" className="flex-1" onClick={onComplete}>
                   Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
                 </Btn>
               ) : (
@@ -1496,16 +1603,22 @@ export function EvalOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Avaliação Concluída ──────────────────────────────────────────────
 
 export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const scores = [
-    { name: "Clareza",      score: 9 },
-    { name: "Coerência",    score: 8 },
-    { name: "Objetividade", score: 8 },
-    { name: "Domínio",      score: 7 },
-    { name: "Organização",  score: 8 },
-    { name: "Aderência",    score: 7 },
-    { name: "Exemplos",     score: 6 },
-  ];
-  const avg = (scores.reduce((s, c) => s + c.score, 0) / scores.length).toFixed(1);
+  const { id } = useParams();
+  const interview = getInterviewById(id);
+  const evaluation = getEvaluationByInterviewId(id);
+  const scores = evaluation?.scores
+    ? Object.entries(evaluation.scores).map(([name, score]) => ({ name, score }))
+    : [
+      { name: "Clareza",      score: 9 },
+      { name: "Coerência",    score: 8 },
+      { name: "Objetividade", score: 8 },
+      { name: "Domínio",      score: 7 },
+      { name: "Organização",  score: 8 },
+      { name: "Aderência",    score: 7 },
+      { name: "Exemplos",     score: 6 },
+    ];
+  const average = getAverageScore(evaluation?.scores);
+  const avg = average !== null ? formatScore(average) : formatScore(scores.reduce((s, c) => s + c.score, 0) / scores.length);
   const numAvg = parseFloat(avg);
   const verdict = numAvg >= 8 ? { label: "Excelente", color: "text-green-600", bg: "bg-green-100" }
     : numAvg >= 6.5 ? { label: "Bom", color: "text-blue-600", bg: "bg-blue-100" }
@@ -1521,7 +1634,7 @@ export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
           </div>
           <h2 className="text-2xl font-bold text-foreground mb-2">Avaliação Enviada!</h2>
           <p className="text-muted-foreground text-sm">
-            A avaliação de <strong>Fernanda Oliveira</strong> foi registrada com sucesso no sistema RH Connect.
+            A avaliação de <strong>{interview?.candidateName ?? "Fernanda Oliveira"}</strong> foi registrada com sucesso no sistema RH Connect.
           </p>
           <div className="inline-flex items-center gap-3 mt-6 px-6 py-4 bg-muted/50 rounded-2xl">
             <div className="text-center">
@@ -1546,7 +1659,7 @@ export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
                     style={{ width: `${s.score * 10}%` }} />
                 </div>
                 <span className={`text-sm font-bold w-6 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
-                  {s.score}
+                  {formatScore(s.score)}
                 </span>
               </div>
             ))}
@@ -1559,19 +1672,19 @@ export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <p className="text-muted-foreground mb-0.5">Candidato</p>
-              <p className="font-semibold text-foreground">Fernanda Oliveira</p>
+              <p className="font-semibold text-foreground">{interview?.candidateName ?? "Fernanda Oliveira"}</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5">Vaga</p>
-              <p className="font-semibold text-foreground">Desenvolvedora Front-end</p>
+              <p className="font-semibold text-foreground">{interview?.context.title ?? "Desenvolvedor Front-end"}</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5">Avaliador</p>
-              <p className="font-semibold text-foreground">Carlos Andrade</p>
+              <p className="font-semibold text-foreground">{evaluation?.evaluatorName ?? "Carlos Andrade"}</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-0.5">Data de Envio</p>
-              <p className="font-semibold text-foreground">11/08/2026 às 10:42</p>
+              <p className="font-semibold text-foreground">{evaluation?.completedAt ? formatDateTime(evaluation.completedAt) : "11/08/2026 às 10:42"}</p>
             </div>
           </div>
         </Card>

@@ -1,6 +1,25 @@
 /** RH Connect — Telas do Administrador */
 
 import { useState, useEffect } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
+import type { InterviewStatus } from "../domain/interviews";
+import { DEFAULT_CANDIDATE } from "../mocks/interviews";
+import {
+  getMockCandidateAccounts,
+  type MockAccountStatus,
+} from "../services/auth-service";
+import { getCandidateProfile } from "../services/candidate-profile-service";
+import {
+  assignInterview,
+  getAdminVisibleInterviews,
+  getAssignmentByInterviewId,
+  getAverageScore,
+  getEvaluationByInterviewId,
+  formatScore,
+  getInterviewById,
+  getPendingAdminInterviews,
+  statusLabelFromInterview,
+} from "../services/interviews-service";
 import {
   AccountDropdown, NotificationDropdown,
   ADMIN_ACCOUNT, ADMIN_NOTIFS,
@@ -246,7 +265,7 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
   return (
     <div className="flex w-full">
       <aside className={`flex flex-col shrink-0 sticky self-start transition-[width] duration-[220ms] ease-in-out ${collapsed ? "w-16" : "w-60"}`}
-        style={{ backgroundColor: "#021025", top: 44, height: "calc(100vh - 44px)" }}>
+        style={{ backgroundColor: "#021025", top: 0, height: "100vh" }}>
         <AdminSidebarContent current={current} onNavigate={onNavigate} collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
       </aside>
       <div className="flex-1 min-w-0 flex flex-col">
@@ -262,8 +281,8 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 // ─── Shared mock data ─────────────────────────────────────────────────────────
 
 const CANDIDATES = [
-  { id: "#C-001", name: "Fernanda Oliveira", email: "fernanda.o@gmail.com", job: "Desenvolvedora Front-end", date: "11/08/2026", status: "Aguardando" as const, score: null },
-  { id: "#C-002", name: "Rafael Mendes",     email: "rafael.m@gmail.com",   job: "Dev Full Stack",       date: "11/08/2026", status: "Em avaliação" as const, score: null },
+  { id: "#C-001", name: "Fernanda Oliveira", email: "fernanda.o@gmail.com", job: "Desenvolvedor Front-end", date: "11/08/2026", status: "Aguardando" as const, score: null },
+  { id: "#C-002", name: "Rafael Mendes",     email: "rafael.m@gmail.com",   job: "Desenvolvedor Full Stack",       date: "11/08/2026", status: "Em avaliação" as const, score: null },
   { id: "#C-003", name: "Isabela Costa",     email: "isabela.c@gmail.com",  job: "Analista de Recrutamento e Seleção", date: "10/08/2026", status: "Concluído" as const, score: 8.4 },
   { id: "#C-004", name: "Paulo Carvalho",    email: "paulo.c@gmail.com",    job: "Designer UX/UI",       date: "10/08/2026", status: "Concluído" as const, score: 7.1 },
   { id: "#C-005", name: "Mariana Souza",     email: "mariana.s@gmail.com",  job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, score: 9.0 },
@@ -271,19 +290,124 @@ const CANDIDATES = [
 ];
 
 const EVALUATORS = [
-  { id: "#AV-01", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
-  { id: "#AV-02", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
-  { id: "#AV-03", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
-  { id: "#AV-04", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
+  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
+  { id: "evaluator-beatriz-lima", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
+  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
+  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
 ];
 
 const INTERVIEWS = [
-  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedora Front-end", date: "11/08/2026", status: "Aguardando" as const, evaluator: "—",              score: null },
-  { id: "#E-0040", candidate: "Rafael Mendes",     job: "Dev Full Stack",        date: "11/08/2026", status: "Em avaliação" as const, evaluator: "Carlos A.",     score: null },
-  { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", date: "10/08/2026", status: "Concluído" as const, evaluator: "Beatriz L.",     score: 8.4 },
-  { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",        date: "10/08/2026", status: "Concluído" as const, evaluator: "Carlos A.",     score: 7.1 },
-  { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, evaluator: "Camila D.",     score: 9.0 },
+  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedor Front-end", submittedAt: "2026-08-11T09:18:00-03:00", status: "Aguardando" as const, evaluator: "—",              score: null },
+  { id: "#E-0040", candidate: "Rafael Mendes",     job: "Desenvolvedor Full Stack",        submittedAt: "2026-08-11T14:05:00-03:00", status: "Em avaliação" as const, evaluator: "Carlos A.",     score: null },
+  { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", submittedAt: "2026-08-10T10:40:00-03:00", status: "Concluído" as const, evaluator: "Beatriz L.",     score: 8.4 },
+  { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",        submittedAt: "2026-08-10T15:25:00-03:00", status: "Concluído" as const, evaluator: "Carlos A.",     score: 7.1 },
+  { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",       submittedAt: "2026-08-09T11:10:00-03:00", status: "Concluído" as const, evaluator: "Camila D.",     score: 9.0 },
 ];
+
+type AdminCandidateRow = {
+  id: string;
+  name: string;
+  email: string;
+  accountStatus: MockAccountStatus;
+  onboardingLabel: string;
+  createdAt?: string;
+};
+
+type AdminInterviewRow = {
+  id: string;
+  candidateId?: string;
+  candidate: string;
+  job: string;
+  date: string;
+  status: string;
+  statusCode?: InterviewStatus;
+  evaluator: string;
+  score: number | null;
+  realId?: string;
+  legacyInterviewId?: string;
+};
+
+function formatAdminInterviewDateTime(timestamp?: string) {
+  if (!timestamp) return "—";
+  const date = new Date(timestamp);
+  return `${date.toLocaleDateString("pt-BR")} às ${date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function formatAdminDate(timestamp?: string) {
+  if (!timestamp) return "—";
+  return new Date(timestamp).toLocaleDateString("pt-BR");
+}
+
+function createAdminInterviewDisplayId(index: number) {
+  const safeIndex = Math.max(0, index);
+  return `#E-${String(42 + safeIndex).padStart(4, "0")}`;
+}
+
+function createAdminCandidateRows(): AdminCandidateRow[] {
+  const candidatesByKey = new Map<string, AdminCandidateRow>();
+
+  CANDIDATES.forEach((candidate) => {
+    candidatesByKey.set(candidate.id, {
+      id: candidate.id,
+      name: candidate.name,
+      email: candidate.email,
+      accountStatus: "ACTIVE",
+      onboardingLabel: "—",
+    });
+  });
+
+  getMockCandidateAccounts().forEach((candidate) => {
+    const candidateId = candidate.id === "candidate-demo" ? DEFAULT_CANDIDATE.id : candidate.id;
+    candidatesByKey.set(candidateId, {
+      id: candidateId,
+      name: candidate.name,
+      email: candidate.email,
+      accountStatus: candidate.accountStatus,
+      onboardingLabel: candidate.onboardingCompleted ? "Concluído" : "Pendente",
+      createdAt: candidate.createdAt,
+    });
+  });
+
+  return Array.from(candidatesByKey.values());
+}
+
+function statusVariantFromAdminStatus(status: string): "default" | "success" | "warning" | "error" | "info" | "purple" {
+  if (status === "Aguardando" || status === "Aguardando avaliação") return "warning";
+  if (status === "Em avaliação" || status === "Atribuída") return "info";
+  if (status === "Concluído" || status === "Avaliada") return "success";
+  return "default";
+}
+
+function createAdminInterviewRows(): AdminInterviewRow[] {
+  const realRows = getAdminVisibleInterviews().map((interview, index) => {
+    const assignment = getAssignmentByInterviewId(interview.id);
+    const evaluation = getEvaluationByInterviewId(interview.id);
+    return {
+      id: createAdminInterviewDisplayId(index),
+      candidateId: interview.candidateId,
+      candidate: interview.candidateName,
+      job: interview.context.title,
+      date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
+      status: statusLabelFromInterview(interview.status),
+      statusCode: interview.status,
+      evaluator: assignment?.evaluatorName ?? "—",
+      score: getAverageScore(evaluation?.scores),
+      realId: interview.id,
+    };
+  });
+
+  return [
+    ...realRows,
+    ...INTERVIEWS.map((interview) => ({
+      ...interview,
+      date: formatAdminInterviewDateTime(interview.submittedAt),
+      candidateId: CANDIDATES.find((candidate) => candidate.name === interview.candidate)?.id,
+      statusCode: undefined,
+      realId: undefined,
+      legacyInterviewId: interview.id,
+    })),
+  ];
+}
 
 const QUESTIONS_DATA = [
   { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica",  uses: 247, active: true },
@@ -511,19 +635,32 @@ export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Gestão de Candidatos ────────────────────────────────────────────
 
 export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const filtered = CANDIDATES.filter(c =>
-    (status === "all" || c.status === status) &&
-    (c.name.toLowerCase().includes(search.toLowerCase()) || c.job.toLowerCase().includes(search.toLowerCase()))
+  const candidateRows = createAdminCandidateRows();
+  const filtered = candidateRows.filter(c =>
+    (status === "all" || c.accountStatus === status) &&
+    (c.name.toLowerCase().includes(search.toLowerCase()) || c.email.toLowerCase().includes(search.toLowerCase()))
   );
 
-  const statusVariant = { "Aguardando": "warning", "Em avaliação": "info", "Concluído": "success" } as const;
+  const statusVariant = {
+    ACTIVE: "success",
+    INVITED: "warning",
+    BLOCKED: "error",
+    INACTIVE: "default",
+  } satisfies Record<MockAccountStatus, "default" | "success" | "warning" | "error" | "info" | "purple">;
+  const statusLabel = {
+    ACTIVE: "Ativa",
+    INVITED: "Convidada",
+    BLOCKED: "Bloqueada",
+    INACTIVE: "Inativa",
+  } satisfies Record<MockAccountStatus, string>;
 
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
       title="Gestão de Candidatos"
-      subtitle={`${CANDIDATES.length} candidatos cadastrados`}
+      subtitle={`${candidateRows.length} candidatos cadastrados`}
       actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
       <div className="w-full space-y-4">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -531,18 +668,18 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
             containerClassName="flex-1"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar candidato ou vaga..."
+            placeholder="Buscar candidato ou e-mail..."
             className="bg-white"
           />
           <div className="flex gap-2 flex-wrap">
-            {["all","Aguardando","Em avaliação","Concluído"].map(s => (
+            {["all","ACTIVE","INVITED","BLOCKED","INACTIVE"].map(s => (
               <FilterChip
                 key={s}
                 onClick={() => setStatus(s)}
                 selected={status === s}
                 className={status === s ? "py-2" : "bg-white py-2 hover:bg-muted"}
               >
-                {s === "all" ? "Todos" : s}
+                {s === "all" ? "Todos" : statusLabel[s as MockAccountStatus]}
               </FilterChip>
             ))}
           </div>
@@ -555,10 +692,10 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
                 <tr className="border-b border-border">
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Vaga</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">E-mail</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status da conta</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Onboarding / Perfil</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden lg:table-cell">Cadastro</th>
                   <th className="py-3 px-5" />
                 </tr>
               </thead>
@@ -570,15 +707,13 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
                       <p className="font-semibold text-foreground">{c.name}</p>
                       <p className="text-xs text-muted-foreground">{c.email}</p>
                     </td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{c.job}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{c.date}</td>
-                    <td className="py-3.5 px-4"><Badge variant={statusVariant[c.status]}>{c.status}</Badge></td>
-                    <td className="py-3.5 px-4">
-                      {c.score !== null ? <Badge variant={c.score >= 8 ? "success" : c.score >= 7 ? "info" : "warning"}>{c.score}</Badge> : <span className="text-muted-foreground">—</span>}
-                    </td>
+                    <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{c.email}</td>
+                    <td className="py-3.5 px-4"><Badge variant={statusVariant[c.accountStatus]}>{statusLabel[c.accountStatus]}</Badge></td>
+                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{c.onboardingLabel}</td>
+                    <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{formatAdminDate(c.createdAt)}</td>
                     <td className="py-3.5 px-5">
                       <div className="flex gap-1.5">
-                        <button onClick={() => onNavigate("admin-candidate-detail")} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => routerNavigate(`/admin/candidates/${encodeURIComponent(c.id)}`)} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" /></button>
                         <button className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </td>
@@ -746,23 +881,27 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Gestão de Entrevistas ───────────────────────────────────────────
 
 export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
-  const statusVariant = { "Aguardando": "warning", "Em avaliação": "info", "Concluído": "success" } as const;
+  const interviewRows = createAdminInterviewRows();
+  const pendingCount = interviewRows.filter((item) => item.status === "Aguardando avaliação" || item.status === "Aguardando").length;
+  const evaluatingCount = interviewRows.filter((item) => item.status === "Em avaliação").length;
+  const completedCount = interviewRows.filter((item) => item.status === "Avaliada" || item.status === "Concluído").length;
 
-  const filtered = INTERVIEWS.filter(i =>
+  const filtered = interviewRows.filter(i =>
     i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <AdminLayout current="admin-interviews" onNavigate={onNavigate}
       title="Gestão de Entrevistas"
-      subtitle={`${INTERVIEWS.length} entrevistas registradas`}
+      subtitle={`${interviewRows.length} entrevistas registradas`}
       actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
       <div className="w-full space-y-4">
         <div className="grid grid-cols-3 gap-3">
-          <StatCard value="2"  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
-          <StatCard value="1"  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-          <StatCard value="15" label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
+          <StatCard value={pendingCount}  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
+          <StatCard value={evaluatingCount}  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+          <StatCard value={completedCount} label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
         </div>
 
         <SearchInput
@@ -781,7 +920,7 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden lg:table-cell">Vaga</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data/hora</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Avaliador</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
@@ -795,13 +934,29 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
                     <td className="py-3.5 px-4 font-semibold text-foreground">{i.candidate}</td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{i.job}</td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{i.date}</td>
-                    <td className="py-3.5 px-4"><Badge variant={statusVariant[i.status]}>{i.status}</Badge></td>
+                    <td className="py-3.5 px-4"><Badge variant={statusVariantFromAdminStatus(i.status)}>{i.status}</Badge></td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{i.evaluator}</td>
                     <td className="py-3.5 px-4">
-                      {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{i.score}</Badge> : <span className="text-muted-foreground">—</span>}
+                      {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{formatScore(i.score)}</Badge> : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="py-3.5 px-5">
-                      <button onClick={() => onNavigate("admin-candidate-detail")} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" /></button>
+                      <button
+                        onClick={() => {
+                          if (i.realId && i.candidateId) {
+                            routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}?interviewId=${encodeURIComponent(i.realId)}`);
+                            return;
+                          }
+                          if (i.candidateId) {
+                            const legacyQuery = i.legacyInterviewId ? `?legacyInterviewId=${encodeURIComponent(i.legacyInterviewId)}` : "";
+                            routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}${legacyQuery}`);
+                            return;
+                          }
+                          onNavigate("admin-candidate-detail");
+                        }}
+                        className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -819,8 +974,35 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
 export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [assigned, setAssigned] = useState<Record<string, string>>({});
+  const [, refresh] = useState(0);
 
-  const pending = INTERVIEWS.filter(i => i.status === "Aguardando");
+  const realPending = getPendingAdminInterviews().map((interview) => ({
+    id: interview.id,
+    candidate: interview.candidateName,
+    job: interview.context.title,
+    date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
+    realId: interview.id,
+  }));
+  const pending = [
+    ...realPending,
+    ...INTERVIEWS.filter(i => i.status === "Aguardando").map((interview) => ({
+      ...interview,
+      date: formatAdminInterviewDateTime(interview.submittedAt),
+      realId: undefined,
+    })),
+  ];
+
+  const handleAssign = (evaluatorId: string, evaluatorName: string) => {
+    if (!selected) return;
+    const selectedInterview = pending.find((item) => item.id === selected);
+    if (selectedInterview?.realId) {
+      assignInterview(selectedInterview.realId, evaluatorId);
+      refresh((value) => value + 1);
+    } else {
+      setAssigned(a => ({ ...a, [selected]: evaluatorName }));
+    }
+    setSelected(null);
+  };
 
   return (
     <AdminLayout current="admin-assign" onNavigate={onNavigate}
@@ -865,7 +1047,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
             ) : (
               <div className="space-y-2.5">
                 {EVALUATORS.filter(e => e.status === "Ativo").map(ev => (
-                  <button key={ev.id} onClick={() => { setAssigned(a => ({ ...a, [selected]: ev.name })); setSelected(null); }}
+                  <button key={ev.id} onClick={() => handleAssign(ev.id, ev.name)}
                     className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
@@ -1423,29 +1605,123 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Detalhe do Candidato ─────────────────────────────────────────────
 
 export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const candidate = CANDIDATES[0];
-  const interview = INTERVIEWS[0];
+  const { id: candidateIdParam } = useParams();
+  const [searchParams] = useSearchParams();
+  const interviewIdParam = searchParams.get("interviewId") ?? undefined;
+  const legacyInterviewIdParam = searchParams.get("legacyInterviewId") ?? undefined;
+  const adminVisibleInterviews = getAdminVisibleInterviews();
+  const candidateAccount = createAdminCandidateRows().find((item) => item.id === candidateIdParam) ?? null;
+  const relatedInterviews = adminVisibleInterviews.filter((item) => item.candidateId === candidateIdParam);
+  const realInterview =
+    getInterviewById(interviewIdParam) ??
+    relatedInterviews[0] ??
+    null;
+  const realInterviewDisplayIndex = realInterview
+    ? adminVisibleInterviews.findIndex((item) => item.id === realInterview.id)
+    : -1;
+  const assignment = getAssignmentByInterviewId(realInterview?.id);
+  const evaluation = getEvaluationByInterviewId(realInterview?.id);
+  const legacyCandidate = CANDIDATES.find((item) => item.id === candidateIdParam) ?? null;
+  const legacyInterview =
+    INTERVIEWS.find((item) => item.id === legacyInterviewIdParam && item.candidate === legacyCandidate?.name) ??
+    null;
+  const averageScore = getAverageScore(evaluation?.scores);
 
-  const criteriaScores = [
-    { name: "Clareza",      score: 9 },
-    { name: "Coerência",    score: 8 },
-    { name: "Objetividade", score: 8 },
-    { name: "Domínio",      score: 7 },
-    { name: "Organização",  score: 8 },
-    { name: "Aderência",    score: 7 },
-    { name: "Exemplos",     score: 6 },
-  ];
+  const candidate = realInterview
+    ? {
+        id: realInterview.candidateId,
+        name: realInterview.candidateName,
+        email: realInterview.candidateEmail,
+        job: realInterview.context.title,
+        date: formatAdminInterviewDateTime(realInterview.submittedAt ?? realInterview.createdAt),
+        status: statusLabelFromInterview(realInterview.status),
+        score: averageScore,
+      }
+    : legacyCandidate ?? {
+        id: candidateIdParam ?? "—",
+        name: "Candidato não encontrado",
+        email: "—",
+        job: "Conta de candidato",
+        date: "—",
+        status: "—",
+        score: null,
+      };
+  const isLegacyCandidateDetail = !realInterview && Boolean(legacyInterview);
+  const candidateDisplay = !realInterview && candidateAccount
+    ? {
+        id: candidateAccount.id,
+        name: candidateAccount.name,
+        email: candidateAccount.email,
+        job: "Conta de candidato",
+        status: candidateAccount.onboardingLabel,
+        score: null,
+      }
+    : candidate;
 
-  const timeline = [
-    { date: "09/08/2026", label: "Candidatura recebida", icon: FileText },
-    { date: "10/08/2026", label: "Entrevista enviada",    icon: MessageSquare },
-    { date: "11/08/2026", label: "Em avaliação",          icon: Clock },
-  ];
+  const interview = realInterview
+    ? {
+        id: createAdminInterviewDisplayId(realInterviewDisplayIndex),
+        date: formatAdminInterviewDateTime(realInterview.submittedAt ?? realInterview.createdAt),
+        evaluator: assignment?.evaluatorName ?? "—",
+        score: averageScore,
+      }
+    : isLegacyCandidateDetail
+      ? legacyInterview && {
+          ...legacyInterview,
+          date: formatAdminInterviewDateTime(legacyInterview.submittedAt),
+        }
+      : null;
+
+  const criteriaScores = evaluation?.scores
+    ? Object.entries(evaluation.scores).map(([name, score]) => ({ name, score }))
+    : [
+        { name: "Clareza",      score: 9 },
+        { name: "Coerência",    score: 8 },
+        { name: "Objetividade", score: 8 },
+        { name: "Domínio",      score: 7 },
+        { name: "Organização",  score: 8 },
+        { name: "Aderência",    score: 7 },
+        { name: "Exemplos",     score: 6 },
+      ];
+
+  const timeline = realInterview
+    ? [
+        { date: formatAdminInterviewDateTime(realInterview.createdAt), label: "Entrevista criada", icon: FileText },
+        ...(realInterview.submittedAt ? [{ date: formatAdminInterviewDateTime(realInterview.submittedAt), label: "Entrevista enviada", icon: MessageSquare }] : []),
+        ...(assignment ? [{ date: formatAdminInterviewDateTime(assignment.assignedAt), label: "Avaliador atribuído", icon: Clock }] : []),
+        ...(evaluation?.completedAt ? [{ date: formatAdminInterviewDateTime(evaluation.completedAt), label: "Avaliação concluída", icon: CheckCircle }] : []),
+      ]
+    : candidateAccount?.createdAt
+      ? [
+          { date: formatAdminDate(candidateAccount.createdAt), label: "Cadastro criado", icon: FileText },
+        ]
+      : isLegacyCandidateDetail
+        ? [
+            { date: formatAdminInterviewDateTime(legacyInterview?.submittedAt), label: "Entrevista enviada", icon: MessageSquare },
+          ]
+        : [];
+  const candidateProfile = candidateIdParam && candidateDisplay.name !== "Candidato não encontrado"
+    ? getCandidateProfile(candidateIdParam)
+    : null;
+  const professionalArea = candidateProfile?.areaId
+    ? PROFESSIONAL_AREAS.find((area) => area.id === candidateProfile.areaId)?.name ?? candidateProfile.areaId
+    : "";
+  const professionalSubarea = candidateProfile?.subareaId
+    ? (
+        candidateProfile.areaId
+          ? getProfessionalSubareasByArea(candidateProfile.areaId as ProfessionalAreaId).find((subarea) => subarea.id === candidateProfile.subareaId)?.name
+          : undefined
+      ) ?? candidateProfile.subareaId
+    : "";
+  const locationLabel = candidateProfile
+    ? [candidateProfile.city, candidateProfile.state].filter(Boolean).join(" / ")
+    : "";
+  const notInformed = "Não informado";
 
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
       title="Detalhe do Candidato"
-      subtitle={`${candidate.name} · ${candidate.job}`}
+      subtitle={`${candidateDisplay.name} · ${candidateDisplay.email}`}
       actions={
         <div className="flex gap-2">
           <Btn variant="outline" size="sm" onClick={() => onNavigate("admin-candidates")}>
@@ -1461,18 +1737,142 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
         <Card className="p-6">
           <div className="flex items-start gap-5">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-xl font-bold shrink-0">
-              {candidate.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+              {candidateDisplay.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
-                  <h2 className="text-xl font-bold text-foreground">{candidate.name}</h2>
-                  <p className="text-muted-foreground text-sm">{candidate.email}</p>
-                  <p className="text-muted-foreground text-sm mt-0.5">{candidate.job}</p>
+                  <h2 className="text-xl font-bold text-foreground">{candidateDisplay.name}</h2>
+                  <p className="text-muted-foreground text-sm">{candidateDisplay.email}</p>
+                  <p className="text-muted-foreground text-sm mt-0.5">{candidateDisplay.job}</p>
                 </div>
-                <Badge variant={candidate.status === "Concluído" ? "success" : candidate.status === "Em avaliação" ? "info" : "warning"}>
-                  {candidate.status}
+                <Badge variant={realInterview ? statusVariantFromAdminStatus(candidateDisplay.status) : "info"}>
+                  {candidateDisplay.status}
                 </Badge>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+            <div>
+              <h3 className="font-bold text-foreground">Perfil Profissional</h3>
+              <p className="text-xs text-muted-foreground">Dados preenchidos pelo candidato em Meu Perfil.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
+            {[
+              { label: "Telefone", value: candidateProfile?.phone },
+              { label: "Cidade/UF", value: locationLabel },
+              { label: "Área", value: professionalArea },
+              { label: "Subárea", value: professionalSubarea },
+              { label: "Cargo desejado", value: candidateProfile?.desiredRole },
+              { label: "Senioridade", value: candidateProfile?.seniority },
+              { label: "Tipo de contrato", value: candidateProfile?.contractType },
+            ].map((item) => (
+              <div key={item.label} className="rounded-xl border border-border bg-muted/30 p-3">
+                <p className="text-xs text-muted-foreground mb-0.5">{item.label}</p>
+                <p className="font-semibold text-foreground">{item.value?.trim() || notInformed}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 pt-5 border-t border-border">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Resumo profissional</p>
+            <p className="text-sm text-foreground leading-relaxed">
+              {candidateProfile?.professionalSummary?.trim() || notInformed}
+            </p>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Formação acadêmica</p>
+              {candidateProfile?.formations.length ? (
+                <div className="space-y-3">
+                  {candidateProfile.formations.map((formation) => (
+                    <div key={formation.id}>
+                      <p className="text-sm font-semibold text-foreground">{formation.title || notInformed}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[formation.institution, formation.level, formation.status].filter(Boolean).join(" · ") || notInformed}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {[formation.startDate, formation.endDate].filter(Boolean).join(" – ") || notInformed}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nenhuma formação cadastrada.</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Cursos complementares</p>
+              {candidateProfile?.courses.length ? (
+                <div className="space-y-3">
+                  {candidateProfile.courses.map((course) => (
+                    <div key={course.id}>
+                      <p className="text-sm font-semibold text-foreground">{course.name || notInformed}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[course.institution, course.workload, course.completedAt].filter(Boolean).join(" · ") || notInformed}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nenhum curso complementar cadastrado.</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Experiência profissional</p>
+              {candidateProfile?.experiences.length ? (
+                <div className="space-y-3">
+                  {candidateProfile.experiences.map((experience) => (
+                    <div key={experience.id}>
+                      <p className="text-sm font-semibold text-foreground">
+                        {[experience.role, experience.company].filter(Boolean).join(" · ") || notInformed}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {[
+                          experience.startDate,
+                          experience.current ? "Atual" : experience.endDate,
+                        ].filter(Boolean).join(" – ") || notInformed}
+                      </p>
+                      {experience.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{experience.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Nenhuma experiência cadastrada.</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Habilidades e competências</p>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Técnicas</p>
+                  {candidateProfile?.technicalSkills.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {candidateProfile.technicalSkills.map((skill) => <Badge key={skill} variant="info">{skill}</Badge>)}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Nenhuma habilidade técnica cadastrada.</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Comportamentais</p>
+                  {candidateProfile?.behavioralSkills.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {candidateProfile.behavioralSkills.map((skill) => <Badge key={skill} variant="success">{skill}</Badge>)}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Nenhuma competência comportamental cadastrada.</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1483,7 +1883,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           <Card className="p-5 lg:col-span-1">
             <h3 className="font-bold text-foreground mb-4">Linha do Tempo</h3>
             <div className="space-y-4">
-              {timeline.map((t, i) => (
+              {timeline.length > 0 ? timeline.map((t, i) => (
                 <div key={i} className="flex gap-3 items-start">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <t.icon className="w-4 h-4 text-primary" />
@@ -1493,55 +1893,64 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
                     <p className="text-xs text-muted-foreground">{t.date}</p>
                   </div>
                 </div>
-              ))}
+              )) : (
+                <p className="text-sm text-muted-foreground">Sem movimentações registradas.</p>
+              )}
             </div>
           </Card>
 
           {/* Interview info */}
-          <Card className="p-5 lg:col-span-2">
-            <h3 className="font-bold text-foreground mb-4">Dados da Entrevista</h3>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <p className="text-muted-foreground mb-0.5">ID da Entrevista</p>
-                <p className="font-mono font-semibold text-foreground">{interview.id}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground mb-0.5">Data</p>
-                <p className="font-semibold text-foreground">{interview.date}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground mb-0.5">Avaliador Responsável</p>
-                <p className="font-semibold text-foreground">{interview.evaluator === "—" ? "Não atribuído" : interview.evaluator}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground mb-0.5">Score Final</p>
-                {interview.score !== null
-                  ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{interview.score}</Badge>
-                  : <span className="text-muted-foreground">Aguardando avaliação</span>}
-              </div>
-            </div>
-
-            {/* Score criteria — only if completed */}
-            {interview.score !== null && (
-              <div className="mt-5 pt-5 border-t border-border">
-                <p className="font-semibold text-foreground mb-3 text-sm">Scores por Critério</p>
-                <div className="space-y-2.5">
-                  {criteriaScores.map(s => (
-                    <div key={s.name} className="flex items-center gap-3">
-                      <span className="text-xs text-foreground w-24 shrink-0">{s.name}</span>
-                      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                        <div className={`h-1.5 rounded-full ${s.score >= 8 ? "bg-green-500" : s.score >= 6 ? "bg-blue-500" : "bg-amber-500"}`}
-                          style={{ width: `${s.score * 10}%` }} />
-                      </div>
-                      <span className={`text-xs font-bold w-5 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
-                        {s.score}
-                      </span>
-                    </div>
-                  ))}
+          {interview ? (
+            <Card className="p-5 lg:col-span-2">
+              <h3 className="font-bold text-foreground mb-4">Dados da Entrevista</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-muted-foreground mb-0.5">ID da Entrevista</p>
+                  <p className="font-mono font-semibold text-foreground">{interview.id}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground mb-0.5">Data/hora de envio</p>
+                  <p className="font-semibold text-foreground">{interview.date}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground mb-0.5">Avaliador Responsável</p>
+                  <p className="font-semibold text-foreground">{interview.evaluator === "—" ? "Não atribuído" : interview.evaluator}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground mb-0.5">Score Final</p>
+                  {interview.score !== null
+                    ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{formatScore(interview.score)}</Badge>
+                    : <span className="text-muted-foreground">Aguardando avaliação</span>}
                 </div>
               </div>
-            )}
-          </Card>
+
+              {/* Score criteria — only if completed */}
+              {interview.score !== null && (
+                <div className="mt-5 pt-5 border-t border-border">
+                  <p className="font-semibold text-foreground mb-3 text-sm">Scores por Critério</p>
+                  <div className="space-y-2.5">
+                    {criteriaScores.map(s => (
+                      <div key={s.name} className="flex items-center gap-3">
+                        <span className="text-xs text-foreground w-24 shrink-0">{s.name}</span>
+                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className={`h-1.5 rounded-full ${s.score >= 8 ? "bg-green-500" : s.score >= 6 ? "bg-blue-500" : "bg-amber-500"}`}
+                            style={{ width: `${s.score * 10}%` }} />
+                        </div>
+                        <span className={`text-xs font-bold w-5 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
+                          {formatScore(s.score)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Card>
+          ) : (
+            <Card className="p-5 lg:col-span-2">
+              <h3 className="font-bold text-foreground mb-2">Histórico de entrevistas</h3>
+              <p className="text-sm text-muted-foreground">Este candidato ainda não possui entrevistas enviadas.</p>
+            </Card>
+          )}
         </div>
 
         {/* Actions */}
@@ -1549,7 +1958,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           <Btn variant="outline" onClick={() => onNavigate("admin-candidates")}>
             Voltar à Lista
           </Btn>
-          {candidate.status !== "Concluído" && (
+          {realInterview && candidateDisplay.status !== "Concluído" && candidateDisplay.status !== "Avaliada" && (
             <Btn variant="primary" onClick={() => onNavigate("admin-assign")}>
               <UserCheck className="w-3.5 h-3.5" /> Atribuir Avaliador
             </Btn>
@@ -1755,7 +2164,7 @@ const ADMIN_ONBOARDING_STEPS = [
   },
 ];
 
-export function AdminOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function AdminOnboardingScreen({ onNavigate, onComplete }: { onNavigate: NavFn; onComplete: () => void }) {
   const [step, setStep] = useState(0);
   const current = ADMIN_ONBOARDING_STEPS[step];
   const Icon = current.icon;
@@ -1792,7 +2201,7 @@ export function AdminOnboardingScreen({ onNavigate }: { onNavigate: NavFn }) {
                 </Btn>
               )}
               {isLast ? (
-                <Btn variant="primary" className="flex-1" onClick={() => onNavigate("admin-dashboard")}>
+                <Btn variant="primary" className="flex-1" onClick={onComplete}>
                   Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
                 </Btn>
               ) : (
