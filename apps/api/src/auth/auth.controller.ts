@@ -60,7 +60,7 @@ export class AuthController {
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
 
-    await this.authService.logout(refreshToken);
+    await this.authService.logout(refreshToken ?? '');
 
     res.clearCookie('access_token');
     res.clearCookie('refresh_token');
@@ -76,7 +76,7 @@ export class AuthController {
   ) {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
 
-    const { token } = await this.authService.refresh(refreshToken);
+    const { token } = await this.authService.refresh(refreshToken ?? '');
 
     res.cookie('access_token', token, {
       httpOnly: true,
