@@ -1,6 +1,6 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useState, useRef, useEffect, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -17,10 +17,10 @@ import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarC
 import { DevelopmentContent } from "./components/development-screen";
 import { DiscTestScreen } from "./components/disc-test-screen";
 import {
-  AccountDropdown, NotificationDropdown,
   CANDIDATE_ACCOUNT, CANDIDATE_NOTIFS,
   type AccountConfig,
 } from "./components/header-popovers";
+import { ProfileShell, type ProfileShellNavItem } from "./components/shared/profile-shell";
 import { RHConnectLogo } from "./components/brand/rh-connect-logo";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
 import {
@@ -402,7 +402,7 @@ function StatCard({ value, label, icon: Icon, color }: {
 
 // ─── Authenticated Layout ─────────────────────────────────────────────────────
 
-const NAV_ITEMS = [
+const NAV_ITEMS: ProfileShellNavItem[] = [
   { icon: Home,      label: "Dashboard",    screen: "dashboard" as Screen },
   { icon: User,      label: "Meu Perfil",   screen: "profile" as Screen },
   { icon: History,   label: "Histórico",       screen: "interview-history" as Screen },
@@ -412,194 +412,6 @@ const NAV_ITEMS = [
   { icon: Settings,  label: "Configurações",screen: "settings" as Screen },
 ];
 
-function SidebarContent({
-  current, onNavigate, collapsed, onToggleCollapse, onClose, account = CANDIDATE_ACCOUNT, isMobile = false,
-}: {
-  current: Screen;
-  onNavigate: (s: Screen) => void;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-  onClose: () => void;
-  account?: AccountConfig;
-  isMobile?: boolean;
-}) {
-  const [showLogout, setShowLogout] = useState(false);
-
-  return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden" style={{ backgroundColor: "#021025" }}>
-      {/* Logout confirmation modal */}
-      {showLogout && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,38,82,0.92)" }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-[240px] text-center shadow-2xl">
-            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-3">
-              <LogOut className="w-6 h-6 text-red-500" />
-            </div>
-            <p className="font-bold text-foreground text-sm mb-1">Sair da conta?</p>
-            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">Você precisará fazer login novamente para acessar o sistema.</p>
-            <div className="space-y-2">
-              <button
-                onClick={() => { setShowLogout(false); onNavigate("landing"); }}
-                className="w-full py-2 bg-red-500 text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-colors"
-              >
-                Sair
-              </button>
-              <button
-                onClick={() => setShowLogout(false)}
-                className="w-full py-2 bg-muted text-foreground rounded-xl text-sm font-semibold hover:bg-slate-200 transition-colors"
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Logo */}
-      <div className={`flex h-[65px] shrink-0 items-center overflow-hidden border-b border-white/10 ${collapsed ? "justify-center px-2" : "px-5"}`}>
-        {collapsed ? (
-          /* Símbolo RH completo, proporções originais preservadas, sem corte */
-          <svg viewBox="0 0 57.9158 31.8399" className="h-6 w-auto shrink-0" fill="none" style={{ maxWidth: "100%" }}>
-            <path d="M1.0034 1.3239C4.19431 1.26744 7.53747 1.31544 10.7388 1.3171L13.8914 1.31592C15.0575 1.3152 16.0381 1.29485 17.1979 1.46852C18.4141 1.65309 19.5909 2.03957 20.6795 2.61198C22.3936 3.51994 23.7867 5.08479 24.4693 6.88707C26.3808 11.9338 24.3617 17.5553 18.9677 19.175C19.1319 19.4606 19.3617 19.7205 19.5774 19.9692C18.8881 20.2148 18.0855 20.5988 17.3944 20.8665C16.373 21.2621 15.2788 21.6839 14.2793 22.1223C14.1998 21.98 14.0812 21.8379 13.9862 21.7017L13.2789 20.704C12.4177 19.5076 11.5368 18.3256 10.6363 17.1584C10.3775 16.8194 9.82044 16.1522 9.62468 15.8325C9.60416 15.536 9.62367 15.1421 9.64111 14.8468L13.0637 14.8484C13.6093 14.85 14.1573 14.8542 14.7028 14.8538C16.6991 14.8523 18.5663 13.9476 19.0304 11.8736C19.1035 11.5127 19.1394 11.1454 19.1377 10.7773C19.1334 9.65289 18.8533 8.72409 18.0428 7.91988C16.471 6.3604 14.2713 6.6455 12.2439 6.64022C10.4186 6.63171 8.5933 6.6333 6.76805 6.645L6.77191 22.7675C5.8437 23.2198 5.29824 23.9889 4.86325 24.9001C4.02954 26.6465 4.92463 29.1508 6.75606 29.93L6.74287 30.5193C4.83248 30.5654 2.82778 30.5185 0.905471 30.5299C0.886613 29.7373 0.900454 28.8871 0.899898 28.0911L0.900929 23.1983L0.901946 5.99575C0.902089 5.59104 0.871983 1.45066 0.920229 1.33522L1.0034 1.3239Z" fill="white" />
-            <path d="M50.6285 13.5512C50.6892 13.5585 50.8577 13.7627 50.9153 13.8205C51.848 14.7552 53.056 15.0623 54.3359 14.8798L54.3328 30.5336C53.6704 30.5255 53.0004 30.5308 52.3371 30.5308L48.5672 30.5285L48.5663 19.139L48.568 15.9289C48.5688 15.4009 48.5932 14.6078 48.5504 14.0965C49.0848 13.9134 50.0709 13.6519 50.6285 13.5512Z" fill="#1560FE" />
-            <path d="M30.4151 1.32058C32.3018 1.28932 34.2709 1.31786 36.1634 1.32312L36.1609 13.9794C35.6975 14.1455 35.1815 14.2957 34.7078 14.4516C33.5841 14.8691 32.4519 15.263 31.3118 15.6329C31.0093 15.7336 30.7212 15.8682 30.4193 15.9575C30.4338 15.4828 30.4168 14.906 30.4168 14.4224L30.4176 11.1625L30.4151 1.32058Z" fill="#1560FE" />
-            <path d="M36.0993 17.8545L36.1281 17.8577C36.193 17.9506 36.1672 19.9964 36.167 20.2632L36.1664 24.5015L36.1647 28.2418C36.1642 28.9951 36.1765 29.7872 36.1505 30.5371L30.4908 30.5318C30.4776 30.5284 30.4528 30.5086 30.4399 30.4997C30.3955 30.3014 30.4156 29.6383 30.417 29.3959L30.4175 27.6969L30.412 19.8174C30.8737 19.6743 31.2684 19.5036 31.7184 19.3454L34.3787 18.4325C34.9849 18.2254 35.4758 18.0381 36.0993 17.8545Z" fill="#1560FE" />
-            <path d="M10.8072 24.6718C11.53 24.387 12.2869 24.0327 13.0109 23.7348C15.0809 22.867 17.164 22.0307 19.2594 21.2262L23.4165 19.6475C24.1919 19.3525 25.0403 19.0024 25.8149 18.721L28.9872 17.5691C29.4554 17.404 29.9392 17.2693 30.4037 17.0953C30.4513 17.2569 30.4348 18.4825 30.4345 18.743C28.9003 19.3456 27.3123 19.8391 25.7829 20.4528C24.5529 20.9463 23.2984 21.3842 22.0658 21.8621C20.0068 22.6514 17.9547 23.4584 15.9097 24.2829C14.4274 24.8839 12.9404 25.5146 11.4514 26.0995C11.4358 26.8248 11.2554 27.5673 10.7601 28.1209C9.72883 29.2741 8.01062 29.3171 6.87421 28.2946C6.3777 27.8486 6.08134 27.2219 6.05171 26.5553C5.94771 24.4258 8.25483 22.9148 10.109 24.0925C10.3818 24.2657 10.5706 24.4545 10.8072 24.6718Z" fill="white" />
-            <path d="M21.7371 22.941C21.9043 23.0858 22.7947 24.3675 22.9641 24.6095L24.4678 26.7166C25.3639 27.973 26.3832 29.2422 27.2286 30.5261L21.7872 30.5278L20.1057 30.5306C19.8739 30.2731 19.7375 30.0167 19.5418 29.7404C18.5666 28.3641 17.6018 26.9809 16.6268 25.6046C16.4986 25.4237 16.374 25.2546 16.2742 25.0549C16.8003 24.8744 17.3137 24.6801 17.8284 24.4691C19.122 23.9389 20.4466 23.4784 21.7371 22.941Z" fill="white" />
-            <path d="M48.6542 1.32713C50.5303 1.29183 52.4535 1.32787 54.336 1.31976L54.3313 6.75147C52.9553 6.67053 52.5013 6.84509 51.3772 7.51585C50.4883 8.10961 50.0073 8.98816 49.7158 9.98612C49.3438 10.1079 48.9404 10.1887 48.5556 10.2583C48.6246 7.44075 48.5315 4.58479 48.5558 1.7646C48.557 1.64786 48.5461 1.45345 48.5838 1.34559L48.6542 1.32713Z" fill="#1560FE" />
-            <path d="M30.4035 17.0884C30.797 16.8805 31.5279 16.666 31.9774 16.5087L35.1059 15.4309L41.0946 13.4652C43.5224 12.6933 45.9384 11.9827 48.4075 11.3523C48.8371 11.2426 49.2983 11.1574 49.7195 11.034C49.8073 11.4521 50.0284 12.1341 50.1846 12.5495C48.8726 12.9316 47.5444 13.2742 46.2277 13.6409C45.977 13.7107 45.7198 13.7645 45.4683 13.8354C43.8516 14.3026 42.2436 14.7995 40.6454 15.3259C38.3571 16.0591 36.078 16.8025 33.8031 17.5791C32.6871 17.9601 31.5626 18.4023 30.4342 18.7361C30.4345 18.4756 30.451 17.2501 30.4035 17.0884Z" fill="#1560FE" />
-            <path d="M53.2854 7.48461C55.1541 7.22913 56.8761 8.53826 57.1282 10.4075C57.38 12.2771 56.065 13.9951 54.1946 14.2424C52.3304 14.4887 50.6175 13.1811 50.3664 11.3176C50.1153 9.45383 51.4222 7.73945 53.2854 7.48461Z" fill="#1560FE" stroke="white" strokeWidth="1.51237" />
-          </svg>
-        ) : (
-          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-            <div className="flex min-w-[160px] flex-col gap-0.5 overflow-hidden">
-              <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
-              <p className="text-[11px] text-white/40">Candidato</p>
-            </div>
-
-            {isMobile && (
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/50 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
-                aria-label="Fechar menu"
-                title="Fechar menu"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Nav */}
-      <nav className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {NAV_ITEMS.map((item) => {
-          const active = current === item.screen;
-          return (
-            <button
-              key={item.label}
-              onClick={() => { item.screen && onNavigate(item.screen); onClose(); }}
-              title={collapsed ? item.label : undefined}
-                className={`flex w-full min-w-0 max-w-full items-center overflow-hidden rounded-xl text-left text-sm font-medium transition-colors
-                ${collapsed ? "justify-center p-2.5" : "gap-3 px-3.5 py-2.5"}
-                ${active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/10 hover:text-white/80"}`}
-            >
-              <item.icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
-              {active && !collapsed && <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" />}
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Collapse toggle — desktop/notebook only, hidden in mobile drawer */}
-      {!isMobile && (
-          <div className="shrink-0 border-t border-white/10 p-3">
-          <button
-            onClick={onToggleCollapse}
-            title={collapsed ? "Expandir menu" : undefined}
-              className={`flex w-full min-w-0 items-center overflow-hidden rounded-xl py-2 text-white/40 transition-colors hover:bg-white/10 hover:text-white/70
-              ${collapsed ? "justify-center px-2" : "gap-2 px-3"}`}
-          >
-            {collapsed
-              ? <ChevronRight className="w-4 h-4" />
-              : <><ChevronLeft className="w-4 h-4" /><span className="text-xs">Recolher menu</span></>}
-          </button>
-        </div>
-      )}
-
-      {/* User */}
-      <div className={`shrink-0 overflow-hidden border-t border-white/10 p-3 ${collapsed ? "flex justify-center" : ""}`}>
-        {collapsed ? (
-          <div className={`w-8 h-8 ${account.avatarClass} rounded-full flex items-center justify-center text-white text-xs font-bold`}>
-            {account.initials}
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 px-2">
-            <div className={`w-8 h-8 ${account.avatarClass} rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0`}>
-              {account.initials}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-semibold truncate">{account.name}</p>
-              <p className="text-white/40 text-xs truncate">{account.email}</p>
-            </div>
-            <button
-              onClick={() => setShowLogout(true)}
-              className="text-white/30 hover:text-white/60 transition-colors shrink-0"
-              title="Sair"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TopBar({
-  title, subtitle, actions, onNavigate, account = CANDIDATE_ACCOUNT, onOpenMenu,
-}: {
-  title: string; subtitle?: string; actions?: React.ReactNode;
-  onNavigate: (s: Screen) => void;
-  account?: AccountConfig;
-  onOpenMenu?: () => void;
-}) {
-  return (
-    <div className="bg-white border-b border-border px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between shrink-0 gap-3">
-      <div className="flex min-w-0 items-center gap-3">
-        {onOpenMenu && (
-          <button
-            type="button"
-            onClick={onOpenMenu}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
-            aria-label="Abrir menu"
-            title="Abrir menu"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        )}
-
-        <div className="min-w-0">
-          <h1 className="text-base sm:text-lg font-bold text-foreground truncate">{title}</h1>
-          {subtitle && <p className="text-xs text-muted-foreground mt-0.5 truncate hidden sm:block">{subtitle}</p>}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {actions && <div className="hidden sm:flex items-center gap-2">{actions}</div>}
-        <NotificationDropdown
-          notifs={CANDIDATE_NOTIFS}
-          viewAllScreen="notifications"
-          onNavigate={onNavigate as (s: string) => void}
-        />
-        <AccountDropdown
-          config={account}
-          onNavigate={onNavigate as (s: string) => void}
-        />
-      </div>
-    </div>
-  );
-}
-
 function AuthLayout({
   current, onNavigate, title, subtitle, actions, account, children,
 }: {
@@ -608,17 +420,6 @@ function AuthLayout({
   account?: AccountConfig;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(() => {
-    const saved = sessionStorage.getItem("sb-collapsed");
-
-    if (saved) {
-      return saved === "1";
-    }
-
-    return window.matchMedia("(min-width: 1024px) and (max-width: 1365px)").matches;
-  });
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const toggleCollapsed = () => setCollapsed(c => { sessionStorage.setItem("sb-collapsed", c ? "0" : "1"); return !c; });
   const activeSession = getMockAuthSession();
   const resolvedAccount = account ?? (
     activeSession.authenticated && activeSession.user?.role === "CANDIDATE"
@@ -626,115 +427,21 @@ function AuthLayout({
       : CANDIDATE_ACCOUNT
   );
 
-  useEffect(() => {
-    if (!drawerOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setDrawerOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [drawerOpen]);
-
-  useEffect(() => {
-    if (!drawerOpen) return;
-
-    const previousOverflow = document.body.style.overflow;
-    const previousPaddingRight = document.body.style.paddingRight;
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-
-    document.body.style.overflow = "hidden";
-    if (scrollbarWidth > 0) {
-      document.body.style.paddingRight = `${scrollbarWidth}px`;
-    }
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.body.style.paddingRight = previousPaddingRight;
-    };
-  }, [drawerOpen]);
-
-  useEffect(() => {
-    if (!drawerOpen) return;
-
-    const mediaQuery = window.matchMedia("(min-width: 1024px)");
-    const closeDrawerOnDesktop = () => {
-      if (mediaQuery.matches) {
-        setDrawerOpen(false);
-      }
-    };
-
-    closeDrawerOnDesktop();
-    mediaQuery.addEventListener("change", closeDrawerOnDesktop);
-
-    return () => {
-      mediaQuery.removeEventListener("change", closeDrawerOnDesktop);
-    };
-  }, [drawerOpen]);
-
   return (
-    <div
-      className="relative min-h-screen w-full overflow-x-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-200 lg:ease-out"
-      style={{ gridTemplateColumns: collapsed ? "4rem minmax(0, 1fr)" : "15rem minmax(0, 1fr)" }}
+    <ProfileShell
+      current={current}
+      navItems={NAV_ITEMS}
+      profileLabel="Candidato"
+      account={resolvedAccount}
+      notifications={CANDIDATE_NOTIFS}
+      notificationViewAllScreen="notifications"
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+      onNavigate={(screen) => onNavigate(screen as Screen)}
     >
-      {/* Desktop/notebook: sidebar no fluxo normal do layout */}
-      <aside
-        className={`hidden min-w-0 overflow-hidden bg-[#021025] lg:fixed lg:bottom-0 lg:left-0 lg:top-0 lg:z-30 lg:flex lg:w-[var(--sidebar-width)] lg:flex-col lg:transition-[width] lg:duration-200 lg:ease-out ${collapsed ? "shadow-none" : "shadow-2xl"}`}
-        style={{ "--sidebar-width": collapsed ? "4rem" : "15rem" } as CSSProperties}
-      >
-        <SidebarContent
-          current={current}
-          onNavigate={onNavigate}
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapsed}
-          onClose={() => {}}
-          account={resolvedAccount}
-          isMobile={false}
-        />
-      </aside>
-
-      {/* Mobile/tablet: backdrop + drawer fora do fluxo */}
-      <div
-        aria-hidden={!drawerOpen}
-        onClick={() => setDrawerOpen(false)}
-        className={`fixed inset-0 top-0 z-40 bg-black/50 backdrop-blur-[1px] transition-opacity duration-200 lg:hidden ${drawerOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
-      />
-
-      <aside
-        className={`fixed bottom-0 left-0 top-0 z-50 flex w-[min(280px,85vw)] flex-col overflow-hidden bg-[#021025] shadow-2xl transition-transform duration-[220ms] ease-out lg:hidden ${drawerOpen ? "translate-x-0" : "-translate-x-full"}`}
-      >
-        <SidebarContent
-          current={current}
-          onNavigate={onNavigate}
-          collapsed={false}
-          onToggleCollapse={() => {}}
-          onClose={() => setDrawerOpen(false)}
-          account={resolvedAccount}
-          isMobile
-        />
-      </aside>
-
-      {/* Conteúdo principal — reajusta horizontalmente conforme a sidebar */}
-      <div className="flex min-w-0 flex-1 flex-col lg:col-start-2">
-        <TopBar
-          title={title}
-          subtitle={subtitle}
-          actions={actions}
-          onNavigate={onNavigate}
-          account={resolvedAccount}
-          onOpenMenu={() => setDrawerOpen(true)}
-        />
-        <main className="min-w-0 flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
-          {children}
-        </main>
-      </div>
-    </div>
+      {children}
+    </ProfileShell>
   );
 }
 
@@ -2842,6 +2549,8 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
 
 // ─── Fase A: ENT-001 Nova entrevista ─────────────────────────────────────────
 
+const DEMO_JOB_URL = "https://www.empregare.com/pt-br/vaga/desenvolvedor-full-stack-junior";
+
 function InterviewSetupScreen({
   onNavigate,
   draft,
@@ -2851,7 +2560,7 @@ function InterviewSetupScreen({
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
 }) {
-  const [url, setUrl] = useState(draft.context?.sourceUrl ?? "");
+  const [url, setUrl] = useState(draft.context?.sourceUrl ?? DEMO_JOB_URL);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(Boolean(draft.context));
@@ -2897,7 +2606,7 @@ function InterviewSetupScreen({
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-1">URL da vaga</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            A integração Python/Flask ainda não está conectada. Nesta etapa, a análise abaixo é um mock explícito usando o contrato temporário do Front.
+            Cole o link da vaga para preparar uma entrevista contextualizada.
           </p>
           <div className="flex flex-col sm:flex-row gap-3">
             <Input
@@ -2953,7 +2662,7 @@ function InterviewSetupScreen({
               <label className="flex items-start gap-3 cursor-pointer">
                 <input type="checkbox" className="mt-0.5 rounded shrink-0" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
                 <span className="text-sm text-foreground leading-relaxed">
-                  Confirmo que este contexto será usado para configurar minha entrevista textual simulada. As 5 perguntas estão mockadas nesta etapa e serão substituídas pela chamada Python/Groq quando o contrato final for conectado.
+                  Confirmo que este contexto será usado para configurar minha entrevista textual simulada.
                 </span>
               </label>
             </Card>
@@ -3388,92 +3097,588 @@ function ResetPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
 // ─── Fase C: LEG-001 Termos de Uso ───────────────────────────────────────────
 
-function getLegalBackScreen(session: MockAuthSession): Screen {
-  if (!session.authenticated || !session.user) return "landing";
+type LegalSection = {
+  title: string;
+  body: ReactNode;
+};
 
-  const backByRole: Record<MockUserRole, Screen> = {
-    CANDIDATE: "settings",
-    EVALUATOR: "eval-settings",
-    ADMIN: "admin-settings",
-  };
+function LegalPageLayout({
+  title,
+  updatedAt,
+  introduction,
+  session,
+  onNavigate,
+  children,
+  actions,
+}: {
+  title: string;
+  updatedAt: string;
+  introduction: string;
+  session: MockAuthSession;
+  onNavigate: (s: Screen) => void;
+  children: ReactNode;
+  actions: ReactNode;
+}) {
+  const routerNavigate = useNavigate();
+  const location = useLocation();
+  const state = location.state as { from?: string } | null;
+  const fallbackBackPath = getPathForScreen("landing");
+  const backPath = state?.from || fallbackBackPath;
+  const handleBack = () => routerNavigate(backPath);
 
-  return backByRole[session.user.role];
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-background to-blue-50/40 text-foreground">
+      <header className="border-b border-border/70 bg-white/85 backdrop-blur">
+        <div className="mx-auto grid w-full max-w-[840px] grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-4 sm:px-6">
+          <div className="flex justify-start">
+            <Btn variant="outline" size="sm" onClick={handleBack}>
+              <ChevronLeft className="h-4 w-4" />
+              Voltar
+            </Btn>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate("landing")}
+            className="cursor-pointer rounded-lg transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            aria-label="Ir para a página inicial"
+          >
+            <RHConnectLogo className="h-9" />
+          </button>
+          <div />
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+        <div className="mx-auto w-full max-w-[840px]">
+          <div className="mb-9 space-y-4">
+            <Badge variant="info">Documento institucional</Badge>
+            <div className="space-y-3">
+              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-foreground sm:text-4xl">
+                {title}
+              </h1>
+              <p className="text-sm font-semibold text-muted-foreground">{updatedAt}</p>
+              <p className="max-w-3xl text-base leading-7 text-muted-foreground">{introduction}</p>
+            </div>
+          </div>
+
+          {children}
+
+          <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-border pt-6">
+            {actions}
+            {!(session.authenticated && Boolean(session.user)) && (
+              <Btn variant="primary" onClick={() => onNavigate("register")}>
+                Criar conta
+              </Btn>
+            )}
+            <Btn variant="outline" onClick={handleBack}>
+              Voltar
+            </Btn>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function LegalSections({ sections }: { sections: LegalSection[] }) {
+  return (
+    <div className="space-y-4 sm:space-y-5">
+      {sections.map((section) => (
+        <section key={section.title} className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+          <h2 className="mb-3 text-lg font-bold leading-snug text-foreground">{section.title}</h2>
+          <div className="space-y-3 text-sm leading-7 text-muted-foreground">{section.body}</div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function PendingInstitutionalAlert({ children }: { children: ReactNode }) {
+  return (
+    <Alert variant="warning" className="mt-4 rounded-2xl">
+      <AlertCircle className="h-4 w-4" />
+      <div className="text-sm leading-6">{children}</div>
+    </Alert>
+  );
+}
+
+const institutionalContactItems = [
+  ["Responsável", "Pendente de definição institucional"],
+  ["CNPJ", "Pendente de definição institucional"],
+  ["E-mail de contato", "Pendente de definição institucional"],
+  ["Endereço", "Pendente de definição institucional"],
+  ["Site oficial", "Pendente de definição institucional"],
+];
+
+const privacyControllerItems = [
+  ["Controlador", "Pendente de definição institucional"],
+  ["CNPJ", "Pendente de definição institucional"],
+  ["E-mail de privacidade", "Pendente de definição institucional"],
+  ["Encarregado/DPO, quando aplicável", "Pendente de definição institucional"],
+  ["Endereço", "Pendente de definição institucional"],
+];
+
+function LegalInfoList({ items }: { items: string[][] }) {
+  return (
+    <dl className="grid gap-3 sm:grid-cols-2">
+      {items.map(([label, value]) => (
+        <div key={label} className="rounded-xl bg-muted/50 p-3">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
+          <dd className="mt-1 font-semibold text-foreground">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 function TermsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
-  const isAuthenticated = session.authenticated && Boolean(session.user);
-  const backScreen = getLegalBackScreen(session);
+  const sections: LegalSection[] = [
+    {
+      title: "1. Sobre o RH Connect",
+      body: (
+        <p>
+          O RH Connect é uma plataforma voltada ao treinamento de candidatos para entrevistas de emprego. A plataforma
+          oferece recursos para organização do perfil profissional, prática de entrevistas, envio de respostas e
+          recebimento de relatório após avaliação humana autorizada.
+        </p>
+      ),
+    },
+    {
+      title: "2. Perfis de acesso",
+      body: (
+        <p>
+          A plataforma possui perfis de Candidato, Avaliador e Administrador. Cada perfil acessa funcionalidades
+          compatíveis com sua finalidade, como realização de entrevistas, avaliação humana ou gestão operacional.
+        </p>
+      ),
+    },
+    {
+      title: "3. Cadastro e conta",
+      body: (
+        <p>
+          O usuário deve fornecer informações corretas no cadastro e manter a confidencialidade de suas credenciais de
+          acesso. A conta é pessoal e deve ser utilizada somente pelo próprio usuário autorizado.
+        </p>
+      ),
+    },
+    {
+      title: "4. Perfil profissional",
+      body: (
+        <p>
+          O candidato pode informar dados profissionais, formação, experiências, habilidades e preferências de atuação.
+          Essas informações ajudam a contextualizar a jornada dentro da plataforma e devem refletir dados verdadeiros.
+        </p>
+      ),
+    },
+    {
+      title: "5. Entrevistas",
+      body: (
+        <p>
+          Na versão atual, as entrevistas são realizadas por respostas textuais. O candidato deve revisar suas respostas
+          antes do envio, pois o material enviado será usado para avaliação humana e geração do relatório.
+        </p>
+      ),
+    },
+    {
+      title: "6. Ditado por voz",
+      body: (
+        <p>
+          Quando disponível no navegador, o ditado por voz pode auxiliar o candidato a transformar fala em texto. Nesta
+          versão, o RH Connect não armazena arquivo de áudio decorrente desse recurso.
+        </p>
+      ),
+    },
+    {
+      title: "7. Avaliação humana",
+      body: (
+        <p>
+          A avaliação final das entrevistas é realizada por avaliador humano autorizado. A pontuação e o relatório
+          apresentados ao candidato decorrem dessa análise humana.
+        </p>
+      ),
+    },
+    {
+      title: "8. Prazo de avaliação",
+      body: (
+        <p>
+          O prazo de avaliação pode variar conforme disponibilidade operacional e volume de entrevistas. Quando houver
+          uma estimativa ou status de acompanhamento disponível, ela terá finalidade informativa.
+        </p>
+      ),
+    },
+    {
+      title: "9. Inteligência Artificial",
+      body: (
+        <>
+          <p>
+            O RH Connect prevê a incorporação futura de recursos de Inteligência Artificial como parte da evolução da
+            plataforma, incluindo funcionalidades de apoio à geração de perguntas, recomendações, análise de conteúdo e
+            desenvolvimento profissional.
+          </p>
+          <p>
+            Também poderá ser realizado futuramente o treinamento, ajuste ou aperfeiçoamento de modelos de Inteligência
+            Artificial destinados ao funcionamento e evolução do RH Connect.
+          </p>
+          <p>
+            Quando essas atividades envolverem dados pessoais, o tratamento deverá observar a legislação aplicável, com
+            transparência quanto às finalidades, categorias de dados utilizadas, bases legais, medidas de proteção,
+            fornecedores envolvidos e direitos dos titulares.
+          </p>
+          <p>
+            A utilização atual da plataforma não representa autorização automática para uso dos dados pessoais do usuário
+            no treinamento de modelos de IA.
+          </p>
+          <p>
+            Quando a participação em treinamento ou aperfeiçoamento de modelos envolver dados pessoais de Candidatos,
+            essa finalidade deverá ser apresentada de forma específica, destacada e facultativa.
+          </p>
+          <p>
+            A recusa em participar do treinamento de IA não deverá impedir o acesso às funcionalidades essenciais da
+            Plataforma que não dependam dessa finalidade.
+          </p>
+          <p>
+            Sempre que tecnicamente adequado, o RH Connect deverá priorizar medidas de minimização, anonimização,
+            pseudonimização ou outras medidas destinadas a reduzir a exposição de dados pessoais.
+          </p>
+        </>
+      ),
+    },
+    {
+      title: "10. Uso adequado da plataforma",
+      body: (
+        <p>
+          O usuário deve utilizar o RH Connect de forma ética, respeitosa e compatível com sua finalidade educacional.
+          É proibido inserir conteúdo ofensivo, discriminatório, ilegal ou que viole direitos de terceiros.
+        </p>
+      ),
+    },
+    {
+      title: "11. Disponibilidade e evolução",
+      body: (
+        <p>
+          A plataforma pode receber melhorias, ajustes e manutenções. Funcionalidades podem evoluir conforme decisões de
+          produto, requisitos institucionais e necessidades técnicas.
+        </p>
+      ),
+    },
+    {
+      title: "12. Privacidade e proteção de dados",
+      body: (
+        <p>
+          O tratamento de dados pessoais é descrito na Política de Privacidade do RH Connect. O uso da plataforma deve
+          observar a legislação aplicável de proteção de dados e os direitos dos titulares.
+        </p>
+      ),
+    },
+    {
+      title: "13. Encerramento e suspensão",
+      body: (
+        <p>
+          O acesso poderá ser encerrado ou suspenso em caso de uso inadequado, violação destes Termos, necessidade
+          operacional ou solicitação aplicável do próprio usuário, conforme regras da organização responsável.
+        </p>
+      ),
+    },
+    {
+      title: "14. Ausência de garantia de resultados",
+      body: (
+        <p>
+          O RH Connect é uma ferramenta de preparação e desenvolvimento. A plataforma não atua como agência de emprego,
+          não intermedeia contratações e não garante aprovação em processos seletivos.
+        </p>
+      ),
+    },
+    {
+      title: "15. Atualizações destes Termos",
+      body: (
+        <p>
+          Estes Termos podem ser atualizados para refletir alterações legais, institucionais ou funcionais. A data de
+          atualização indica a versão vigente apresentada ao usuário.
+        </p>
+      ),
+    },
+    {
+      title: "16. Identificação e contato",
+      body: (
+        <>
+          <LegalInfoList items={institutionalContactItems} />
+          <PendingInstitutionalAlert>
+            Pendência para publicação definitiva: estas informações deverão ser substituídas pelos dados oficiais
+            fornecidos pela organização responsável antes da publicação definitiva do RH Connect.
+          </PendingInstitutionalAlert>
+        </>
+      ),
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-3xl mx-auto px-4 py-10 sm:py-14">
-        <button onClick={() => onNavigate(backScreen)} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-          {isAuthenticated ? "Voltar para configurações" : "Voltar à página inicial"}
-        </button>
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-2">Termos de Uso</h1>
-        <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
-        <div className="space-y-6 text-sm text-foreground leading-relaxed">
-          {[
-            { titulo: "1. Finalidade", texto: "O RH Connect é uma plataforma educacional de treinamento para entrevistas de emprego. O sistema não garante aprovação em processos seletivos reais e não substitui orientação profissional especializada." },
-            { titulo: "2. Responsabilidades do usuário", texto: "O usuário deve fornecer informações verdadeiras, utilizar a plataforma de forma ética e respeitar as regras de conduta estabelecidas. É proibido compartilhar conteúdo impróprio, ofensivo ou que viole direitos de terceiros." },
-            { titulo: "3. Respostas textuais e ditado", texto: "As entrevistas simuladas usam respostas textuais. Quando disponível, o microfone pode ser usado pontualmente pelo navegador para transcrever fala em texto, sem armazenamento de áudio pelo RH Connect nesta etapa." },
-            { titulo: "4. Envio das respostas", texto: "As respostas enviadas são acessadas por avaliadores autorizados para fins de avaliação humana e geração do relatório de desempenho." },
-            { titulo: "5. Limitações do serviço", texto: "O RH Connect é disponibilizado sem garantia de disponibilidade contínua. O sistema pode passar por manutenções programadas ou não programadas." },
-            { titulo: "6. Propriedade intelectual", texto: "Todo o conteúdo da plataforma, incluindo perguntas, critérios de avaliação e materiais de apoio, pertence ao RH Connect e não pode ser reproduzido sem autorização." },
-            { titulo: "7. Alteração dos termos", texto: "Estes termos podem ser atualizados a qualquer momento. Os usuários serão notificados sobre mudanças relevantes e poderão revisar os novos termos antes de continuar utilizando a plataforma." },
-            { titulo: "8. Contato", texto: "Para dúvidas sobre estes termos, entre em contato pelo e-mail: contato@rhconnect.com.br" },
-          ].map(s => (
-            <section key={s.titulo}>
-              <h2 className="font-bold text-base mb-2">{s.titulo}</h2>
-              <p className="text-muted-foreground">{s.texto}</p>
-            </section>
-          ))}
-        </div>
-        <div className="mt-10 pt-6 border-t border-border flex flex-wrap gap-3">
-          {!isAuthenticated && <Btn variant="primary" onClick={() => onNavigate("register")}>Criar conta</Btn>}
-          <Btn variant="outline" onClick={() => onNavigate("privacy")}>Ver Política de Privacidade</Btn>
-        </div>
-      </div>
-    </div>
+    <LegalPageLayout
+      title="Termos de Uso do RH Connect"
+      updatedAt="Última atualização: 14 de setembro de 2026"
+      introduction="Estes Termos estabelecem as condições para utilização do RH Connect. Ao criar uma conta e utilizar a plataforma, o usuário declara ter acesso a estes Termos e à Política de Privacidade."
+      session={session}
+      onNavigate={onNavigate}
+      actions={<Btn variant="outline" onClick={() => onNavigate("privacy")}>Ver Política de Privacidade</Btn>}
+    >
+      <LegalSections sections={sections} />
+    </LegalPageLayout>
   );
 }
 
 // ─── Fase C: LEG-002 Política de Privacidade ─────────────────────────────────
 
 function PrivacyScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
-  const isAuthenticated = session.authenticated && Boolean(session.user);
-  const backScreen = getLegalBackScreen(session);
+  const sections: LegalSection[] = [
+    {
+      title: "1. Responsável pelo tratamento",
+      body: (
+        <>
+          <LegalInfoList items={privacyControllerItems} />
+          <PendingInstitutionalAlert>
+            Pendência para publicação definitiva: os dados oficiais do controlador e dos canais de privacidade deverão
+            substituir estas indicações antes da utilização definitiva da plataforma.
+          </PendingInstitutionalAlert>
+        </>
+      ),
+    },
+    {
+      title: "2. Quais dados podem ser tratados",
+      body: (
+        <p>
+          Podem ser tratados dados de identificação, contato, credenciais de acesso, informações profissionais inseridas
+          pelo usuário, respostas textuais das entrevistas, avaliações humanas, relatórios, preferências de uso e dados
+          técnicos necessários ao funcionamento da plataforma.
+        </p>
+      ),
+    },
+    {
+      title: "3. Ditado por voz",
+      body: (
+        <p>
+          O ditado por voz, quando utilizado, depende de recursos disponíveis no navegador do usuário para converter fala
+          em texto. Nesta versão, o RH Connect não armazena arquivo de áudio gerado por esse recurso.
+        </p>
+      ),
+    },
+    {
+      title: "4. O que não faz parte da versão atual",
+      body: (
+        <p>
+          A versão atual não inclui entrevista em vídeo, armazenamento de gravação de vídeo, análise automática final ou
+          uso de dados pessoais para treinamento de Inteligência Artificial.
+        </p>
+      ),
+    },
+    {
+      title: "5. Para que os dados são utilizados",
+      body: (
+        <p>
+          Os dados são utilizados para criar e manter a conta, permitir o preenchimento do perfil profissional, preparar
+          entrevistas contextualizadas, registrar respostas, viabilizar avaliação humana e apresentar relatório ao
+          candidato.
+        </p>
+      ),
+    },
+    {
+      title: "6. Bases legais",
+      body: (
+        <p>
+          As bases legais aplicáveis podem incluir execução de contrato ou procedimentos preliminares, consentimento
+          quando necessário, cumprimento de obrigação legal ou regulatória e legítimo interesse, conforme a finalidade de
+          cada tratamento.
+        </p>
+      ),
+    },
+    {
+      title: "7. Avaliação humana",
+      body: (
+        <p>
+          A avaliação final é realizada por avaliador humano autorizado. A pontuação e o relatório disponibilizados ao
+          candidato derivam dessa análise humana.
+        </p>
+      ),
+    },
+    {
+      title: "8. Inteligência Artificial no futuro",
+      body: (
+        <>
+          <p>
+            O RH Connect prevê a incorporação futura de recursos de Inteligência Artificial como parte da evolução da
+            plataforma, incluindo funcionalidades de apoio à geração de perguntas, recomendações, análise de conteúdo e
+            desenvolvimento profissional.
+          </p>
+          <p>
+            Esses recursos serão implementados de forma progressiva e deverão observar transparência, finalidade
+            específica, minimização de dados e base legal adequada para cada operação de tratamento.
+          </p>
+          <div className="space-y-3">
+            <h3 className="text-base font-bold text-foreground">8.1. Treinamento e aperfeiçoamento de modelos de IA</h3>
+            <p>
+              O RH Connect poderá futuramente realizar treinamento, ajuste ou aperfeiçoamento de modelos de Inteligência
+              Artificial destinados ao funcionamento e evolução da plataforma.
+            </p>
+            <p>
+              Quando essa atividade envolver dados pessoais de Candidatos, a participação dependerá de autorização
+              específica, destacada e facultativa, apresentada separadamente das funcionalidades essenciais da Plataforma.
+            </p>
+            <p>
+              A simples utilização do RH Connect não será considerada autorização para utilização dos dados pessoais do
+              Candidato no treinamento de modelos de IA.
+            </p>
+            <p>Antes da autorização, deverão ser apresentadas informações claras sobre:</p>
+            <ul className="list-disc space-y-2 pl-5">
+              <li>categorias de dados que poderão ser utilizadas;</li>
+              <li>finalidade do treinamento;</li>
+              <li>forma de utilização dos dados;</li>
+              <li>período de retenção aplicável;</li>
+              <li>fornecedores ou operadores envolvidos, quando houver;</li>
+              <li>eventuais transferências internacionais;</li>
+              <li>medidas de proteção adotadas;</li>
+              <li>possibilidade de revogação da autorização, quando aplicável.</li>
+            </ul>
+            <p>
+              A recusa em autorizar a participação no treinamento de IA não deverá impedir o acesso às funcionalidades
+              essenciais do RH Connect que não dependam dessa finalidade.
+            </p>
+            <p>
+              Sempre que tecnicamente adequado, deverão ser adotadas medidas de minimização, anonimização,
+              pseudonimização ou outras técnicas destinadas a reduzir a exposição de dados pessoais.
+            </p>
+          </div>
+        </>
+      ),
+    },
+    {
+      title: "9. Compartilhamento de dados",
+      body: (
+        <p>
+          Os dados podem ser acessados por usuários autorizados de acordo com seu perfil e finalidade dentro da
+          plataforma. Compartilhamentos adicionais dependerão de necessidade operacional, obrigação legal ou autorização
+          aplicável.
+        </p>
+      ),
+    },
+    {
+      title: "10. Armazenamento local e tecnologias semelhantes",
+      body: (
+        <p>
+          A plataforma pode utilizar armazenamento local do navegador e tecnologias semelhantes para manter sessão,
+          preferências e dados necessários ao funcionamento da experiência atual.
+        </p>
+      ),
+    },
+    {
+      title: "11. Retenção e exclusão",
+      body: (
+        <p>
+          Os dados serão mantidos pelo período necessário às finalidades informadas, observadas obrigações legais,
+          necessidade operacional e solicitações aplicáveis dos titulares.
+        </p>
+      ),
+    },
+    {
+      title: "12. Segurança",
+      body: (
+        <p>
+          O RH Connect deve adotar medidas proporcionais para proteger os dados pessoais, considerando a natureza das
+          informações tratadas, os riscos envolvidos e a evolução da plataforma.
+        </p>
+      ),
+    },
+    {
+      title: "13. Incidentes de segurança",
+      body: (
+        <p>
+          Caso ocorra incidente de segurança que possa acarretar risco ou dano relevante aos titulares, a organização
+          responsável deverá avaliar as medidas cabíveis e comunicações necessárias.
+        </p>
+      ),
+    },
+    {
+      title: "14. Direitos dos titulares",
+      body: (
+        <p>
+          Os titulares podem solicitar confirmação de tratamento, acesso, correção, portabilidade, anonimização,
+          bloqueio, eliminação, informação sobre compartilhamento e revogação de consentimento, conforme legislação
+          aplicável.
+        </p>
+      ),
+    },
+    {
+      title: "15. Como exercer seus direitos",
+      body: (
+        <p>
+          Os canais oficiais para exercício de direitos serão informados pela organização responsável. Até a publicação
+          definitiva, esses dados institucionais permanecem pendentes de definição.
+        </p>
+      ),
+    },
+    {
+      title: "16. Usuários menores de idade",
+      body: (
+        <p>
+          O uso por menores de idade deverá observar as regras institucionais aplicáveis e a legislação vigente,
+          incluindo eventual necessidade de autorização do responsável legal.
+        </p>
+      ),
+    },
+    {
+      title: "17. Links de vagas e serviços externos",
+      body: (
+        <p>
+          O usuário pode informar links de vagas ou acessar referências externas. O RH Connect não controla políticas,
+          conteúdos ou práticas de privacidade de sites e serviços de terceiros.
+        </p>
+      ),
+    },
+    {
+      title: "18. Atualizações desta Política",
+      body: (
+        <p>
+          Esta Política pode ser atualizada para refletir mudanças legais, institucionais ou funcionais. A data de
+          atualização indica a versão apresentada ao usuário.
+        </p>
+      ),
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-3xl mx-auto px-4 py-10 sm:py-14">
-        <button onClick={() => onNavigate(backScreen)} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8 transition-colors">
-          {isAuthenticated ? "Voltar para configurações" : "Voltar à página inicial"}
-        </button>
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-2">Política de Privacidade</h1>
-        <p className="text-sm text-muted-foreground mb-8">RH Connect · Versão 1.0 · Última atualização: julho de 2026</p>
-        <div className="space-y-6 text-sm text-foreground leading-relaxed">
+    <LegalPageLayout
+      title="Política de Privacidade do RH Connect"
+      updatedAt="Última atualização: 14 de setembro de 2026"
+      introduction="O RH Connect reconhece a importância da privacidade e da proteção de dados pessoais. Esta Política explica quais informações podem ser tratadas, para quais finalidades e quais direitos estão disponíveis aos titulares."
+      session={session}
+      onNavigate={onNavigate}
+      actions={<Btn variant="outline" onClick={() => onNavigate("terms")}>Ver Termos de Uso</Btn>}
+    >
+      <Card className="mb-6 border-blue-100 bg-blue-50/70 p-5 shadow-sm sm:p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-primary shadow-sm">
+            <Shield className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-foreground">Resumo da versão atual</h2>
+            <p className="text-sm text-muted-foreground">Transparência sobre o funcionamento vigente da plataforma.</p>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
           {[
-            { titulo: "1. Dados coletados", texto: "Coletamos nome, e-mail, dados profissionais fornecidos pelo usuário, contexto da vaga, respostas textuais das entrevistas simuladas e informações técnicas de uso da plataforma." },
-            { titulo: "2. Finalidade do uso", texto: "Os dados são utilizados exclusivamente para personalizar as perguntas de entrevista, realizar a avaliação humana das respostas e gerar o relatório de desempenho do candidato." },
-            { titulo: "3. Quem acessa", texto: "Apenas avaliadores humanos autorizados têm acesso às respostas das entrevistas. O acesso é registrado e auditado. Dados pessoais não são compartilhados com terceiros sem consentimento." },
-            { titulo: "4. Armazenamento e retenção", texto: "Os dados são armazenados em servidores seguros. O prazo de retenção será definido pela equipe responsável e comunicado ao usuário. O usuário pode solicitar a exclusão a qualquer momento." },
-            { titulo: "5. Consentimento para IA", texto: "A autorização para avaliação humana NÃO representa automaticamente autorização para uso dos dados no treinamento de Inteligência Artificial. Esse consentimento é separado, opcional e pode ser revogado." },
-            { titulo: "6. Direitos do usuário", texto: "O usuário tem direito a acessar seus dados, corrigir informações, solicitar cópia, revogar consentimentos e solicitar exclusão da conta e dos dados associados." },
-            { titulo: "7. Contato", texto: "Para exercer seus direitos ou tirar dúvidas sobre privacidade: privacidade@rhconnect.com.br" },
-          ].map(s => (
-            <section key={s.titulo}>
-              <h2 className="font-bold text-base mb-2">{s.titulo}</h2>
-              <p className="text-muted-foreground">{s.texto}</p>
-            </section>
+            "Entrevistas em texto",
+            "Avaliação humana",
+            "Ditado por voz sem armazenamento de áudio",
+            "Sem entrevista em vídeo",
+            "Recursos de IA previstos para evolução futura",
+          ].map((item) => (
+            <div key={item} className="flex items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-sm font-semibold text-blue-900">
+              <CheckCircle className="h-4 w-4 shrink-0 text-blue-600" />
+              <span>{item}</span>
+            </div>
           ))}
         </div>
-        <div className="mt-10 pt-6 border-t border-border flex flex-wrap gap-3">
-          {!isAuthenticated && <Btn variant="primary" onClick={() => onNavigate("register")}>Criar conta</Btn>}
-          <Btn variant="outline" onClick={() => onNavigate("terms")}>Ver Termos de Uso</Btn>
-        </div>
-      </div>
-    </div>
+      </Card>
+
+      <LegalSections sections={sections} />
+    </LegalPageLayout>
   );
 }
 
@@ -4570,7 +4775,17 @@ function AppRoutes() {
       return;
     }
 
-    routerNavigate(getPathForScreen(screen));
+    const targetPath = getPathForScreen(screen);
+    if (screen === "terms" || screen === "privacy") {
+      const state = location.state as { from?: string } | null;
+      const isCurrentLegalPage = location.pathname === getPathForScreen("terms") || location.pathname === getPathForScreen("privacy");
+      const currentPath = `${location.pathname}${location.search}`;
+      const from = isCurrentLegalPage ? state?.from : currentPath;
+      routerNavigate(targetPath, { state: { from: from || getPathForScreen("landing") } });
+      return;
+    }
+
+    routerNavigate(targetPath);
   };
   const completeOnboardingAndNavigate = (screen: Screen) => {
     setSession(completeMockOnboarding());
@@ -4590,8 +4805,8 @@ function AppRoutes() {
     if (!result.ok) {
       return result;
     }
-    setSession(result.session);
-    routerNavigate(getEntryPathForSession(result.session));
+    saveRememberedLoginEmail(result.candidate.email);
+    routerNavigate("/login");
     return { ok: true as const };
   };
   const protect = (role: MockUserRole, children: ReactNode) => (

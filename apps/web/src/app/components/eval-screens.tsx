@@ -18,7 +18,7 @@ import {
   startEvaluation,
 } from "../services/interviews-service";
 import {
-  Home, Clock, History, BookOpen, Settings, LogOut,
+  Home, Clock, History, BookOpen, Settings,
   ChevronLeft, ChevronRight, Bell, CheckCircle,
   Star, Award, Target, TrendingUp,
   Filter, Eye, FileText,
@@ -26,10 +26,11 @@ import {
   MessageSquare, Info, Users, ArrowRight, Zap, Lock,
 } from "lucide-react";
 import {
-  AccountDropdown, NotificationDropdown,
   EVAL_ACCOUNT, EVAL_NOTIFS,
 } from "./header-popovers";
+import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
 import { Input } from "./ui/input";
 import { SearchInput } from "./ui/search-input";
 import { PasswordInput } from "./ui/password-input";
@@ -130,7 +131,7 @@ function StatCard({ value, label, icon: Icon, color }: {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-const EVAL_NAV = [
+const EVAL_NAV: ProfileShellNavItem[] = [
   { icon: Home,        label: "Dashboard",         screen: "eval-dashboard" },
   { icon: Layers,      label: "Fila de Avaliações", screen: "eval-queue" },
   { icon: Clock,       label: "Em Andamento",       screen: "eval-active" },
@@ -139,146 +140,25 @@ const EVAL_NAV = [
   { icon: Settings,    label: "Configurações",      screen: "eval-settings" },
 ];
 
-function EvalSidebarContent({
-  current, onNavigate, collapsed, onToggleCollapse,
-}: {
-  current: string; onNavigate: NavFn; collapsed: boolean; onToggleCollapse: () => void;
-}) {
-  const [showLogout, setShowLogout] = useState(false);
-  return (
-    <div className="flex flex-col h-full relative" style={{ backgroundColor: "#021025" }}>
-      {showLogout && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,38,82,0.92)" }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-[240px] text-center shadow-2xl">
-            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-3">
-              <LogOut className="w-6 h-6 text-red-500" />
-            </div>
-            <p className="font-bold text-foreground text-sm mb-1">Sair da conta?</p>
-            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">Você precisará fazer login novamente.</p>
-            <div className="space-y-2">
-              <button onClick={() => { setShowLogout(false); onNavigate("landing"); }}
-                className="w-full py-2 bg-red-500 text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-colors">Sair</button>
-              <button onClick={() => setShowLogout(false)}
-                className="w-full py-2 bg-muted text-foreground rounded-xl text-sm font-semibold hover:bg-slate-200 transition-colors">Cancelar</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Logo */}
-      <div className={`border-b border-white/10 flex items-center ${collapsed ? "px-2 py-4 justify-center" : "px-5 py-4"}`}>
-        {collapsed ? (
-          <svg viewBox="0 0 57.9158 31.8399" className="h-6 w-auto shrink-0" fill="none">
-            <path d="M1.0034 1.3239C4.19431 1.26744 7.53747 1.31544 10.7388 1.3171L13.8914 1.31592C15.0575 1.3152 16.0381 1.29485 17.1979 1.46852C18.4141 1.65309 19.5909 2.03957 20.6795 2.61198C22.3936 3.51994 23.7867 5.08479 24.4693 6.88707C26.3808 11.9338 24.3617 17.5553 18.9677 19.175C19.1319 19.4606 19.3617 19.7205 19.5774 19.9692C18.8881 20.2148 18.0855 20.5988 17.3944 20.8665C16.373 21.2621 15.2788 21.6839 14.2793 22.1223C14.1998 21.98 14.0812 21.8379 13.9862 21.7017L13.2789 20.704C12.4177 19.5076 11.5368 18.3256 10.6363 17.1584C10.3775 16.8194 9.82044 16.1522 9.62468 15.8325C9.60416 15.536 9.62367 15.1421 9.64111 14.8468L13.0637 14.8484C13.6093 14.85 14.1573 14.8542 14.7028 14.8538C16.6991 14.8523 18.5663 13.9476 19.0304 11.8736C19.1035 11.5127 19.1394 11.1454 19.1377 10.7773C19.1334 9.65289 18.8533 8.72409 18.0428 7.91988C16.471 6.3604 14.2713 6.6455 12.2439 6.64022C10.4186 6.63171 8.5933 6.6333 6.76805 6.645L6.77191 22.7675C5.8437 23.2198 5.29824 23.9889 4.86325 24.9001C4.02954 26.6465 4.92463 29.1508 6.75606 29.93L6.74287 30.5193C4.83248 30.5654 2.82778 30.5185 0.905471 30.5299C0.886613 29.7373 0.900454 28.8871 0.899898 28.0911L0.900929 23.1983L0.901946 5.99575C0.902089 5.59104 0.871983 1.45066 0.920229 1.33522L1.0034 1.3239Z" fill="white" />
-            <path d="M50.6285 13.5512C50.6892 13.5585 50.8577 13.7627 50.9153 13.8205C51.848 14.7552 53.056 15.0623 54.3359 14.8798L54.3328 30.5336C53.6704 30.5255 53.0004 30.5308 52.3371 30.5308L48.5672 30.5285L48.5663 19.139L48.568 15.9289C48.5688 15.4009 48.5932 14.6078 48.5504 14.0965C49.0848 13.9134 50.0709 13.6519 50.6285 13.5512Z" fill="#1560FE" />
-            <path d="M30.4151 1.32058C32.3018 1.28932 34.2709 1.31786 36.1634 1.32312L36.1609 13.9794C35.6975 14.1455 35.1815 14.2957 34.7078 14.4516C33.5841 14.8691 32.4519 15.263 31.3118 15.6329C31.0093 15.7336 30.7212 15.8682 30.4193 15.9575C30.4338 15.4828 30.4168 14.906 30.4168 14.4224L30.4176 11.1625L30.4151 1.32058Z" fill="#1560FE" />
-            <path d="M36.0993 17.8545L36.1281 17.8577C36.193 17.9506 36.1672 19.9964 36.167 20.2632L36.1664 24.5015L36.1647 28.2418C36.1642 28.9951 36.1765 29.7872 36.1505 30.5371L30.4908 30.5318C30.4776 30.5284 30.4528 30.5086 30.4399 30.4997C30.3955 30.3014 30.4156 29.6383 30.417 29.3959L30.4175 27.6969L30.412 19.8174C30.8737 19.6743 31.2684 19.5036 31.7184 19.3454L34.3787 18.4325C34.9849 18.2254 35.4758 18.0381 36.0993 17.8545Z" fill="#1560FE" />
-            <path d="M10.8072 24.6718C11.53 24.387 12.2869 24.0327 13.0109 23.7348C15.0809 22.867 17.164 22.0307 19.2594 21.2262L23.4165 19.6475C24.1919 19.3525 25.0403 19.0024 25.8149 18.721L28.9872 17.5691C29.4554 17.404 29.9392 17.2693 30.4037 17.0953C30.4513 17.2569 30.4348 18.4825 30.4345 18.743C28.9003 19.3456 27.3123 19.8391 25.7829 20.4528C24.5529 20.9463 23.2984 21.3842 22.0658 21.8621C20.0068 22.6514 17.9547 23.4584 15.9097 24.2829C14.4274 24.8839 12.9404 25.5146 11.4514 26.0995C11.4358 26.8248 11.2554 27.5673 10.7601 28.1209C9.72883 29.2741 8.01062 29.3171 6.87421 28.2946C6.3777 27.8486 6.08134 27.2219 6.05171 26.5553C5.94771 24.4258 8.25483 22.9148 10.109 24.0925C10.3818 24.2657 10.5706 24.4545 10.8072 24.6718Z" fill="white" />
-            <path d="M21.7371 22.941C21.9043 23.0858 22.7947 24.3675 22.9641 24.6095L24.4678 26.7166C25.3639 27.973 26.3832 29.2422 27.2286 30.5261L21.7872 30.5278L20.1057 30.5306C19.8739 30.2731 19.7375 30.0167 19.5418 29.7404C18.5666 28.3641 17.6018 26.9809 16.6268 25.6046C16.4986 25.4237 16.374 25.2546 16.2742 25.0549C16.8003 24.8744 17.3137 24.6801 17.8284 24.4691C19.122 23.9389 20.4466 23.4784 21.7371 22.941Z" fill="white" />
-            <path d="M48.6542 1.32713C50.5303 1.29183 52.4535 1.32787 54.336 1.31976L54.3313 6.75147C52.9553 6.67053 52.5013 6.84509 51.3772 7.51585C50.4883 8.10961 50.0073 8.98816 49.7158 9.98612C49.3438 10.1079 48.9404 10.1887 48.5556 10.2583C48.6246 7.44075 48.5315 4.58479 48.5558 1.7646C48.557 1.64786 48.5461 1.45345 48.5838 1.34559L48.6542 1.32713Z" fill="#1560FE" />
-            <path d="M30.4035 17.0884C30.797 16.8805 31.5279 16.666 31.9774 16.5087L35.1059 15.4309L41.0946 13.4652C43.5224 12.6933 45.9384 11.9827 48.4075 11.3523C48.8371 11.2426 49.2983 11.1574 49.7195 11.034C49.8073 11.4521 50.0284 12.1341 50.1846 12.5495C48.8726 12.9316 47.5444 13.2742 46.2277 13.6409C45.977 13.7107 45.7198 13.7645 45.4683 13.8354C43.8516 14.3026 42.2436 14.7995 40.6454 15.3259C38.3571 16.0591 36.078 16.8025 33.8031 17.5791C32.6871 17.9601 31.5626 18.4023 30.4342 18.7361C30.4345 18.4756 30.451 17.2501 30.4035 17.0884Z" fill="#1560FE" />
-            <path d="M53.2854 7.48461C55.1541 7.22913 56.8761 8.53826 57.1282 10.4075C57.38 12.2771 56.065 13.9951 54.1946 14.2424C52.3304 14.4887 50.6175 13.1811 50.3664 11.3176C50.1153 9.45383 51.4222 7.73945 53.2854 7.48461Z" fill="#1560FE" stroke="white" strokeWidth="1.51237" />
-          </svg>
-        ) : (
-          <div className="flex flex-col gap-0.5 min-w-0">
-            <RHConnectLogo variant="inverse" className="h-7 w-auto max-w-[150px]" />
-            <p className="text-white/40 text-[11px]">Avaliador</p>
-          </div>
-        )}
-      </div>
-
-      {/* Nav */}
-      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {EVAL_NAV.map((item) => {
-          const active = current === item.screen;
-          return (
-            <button key={item.label} onClick={() => onNavigate(item.screen)}
-              title={collapsed ? item.label : undefined}
-              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all text-left
-                ${collapsed ? "justify-center p-2.5" : "gap-3 px-3.5 py-2.5"}
-                ${active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/10 hover:text-white/80"}`}>
-              <item.icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="flex-1">{item.label}</span>}
-              {active && !collapsed && <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" />}
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Collapse toggle */}
-      <div className="p-3 border-t border-white/10">
-        <button onClick={onToggleCollapse}
-          className={`w-full flex items-center rounded-xl py-2 text-white/40 hover:text-white/70 hover:bg-white/10 transition-all duration-[220ms]
-            ${collapsed ? "justify-center px-2" : "gap-2 px-3"}`}>
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <><ChevronLeft className="w-4 h-4" /><span className="text-xs">Recolher menu</span></>}
-        </button>
-      </div>
-
-      {/* User */}
-      <div className={`p-3 border-t border-white/10 ${collapsed ? "flex justify-center" : ""}`}>
-        {collapsed ? (
-          <div className="w-8 h-8 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center text-white text-xs font-bold">CA</div>
-        ) : (
-          <div className="flex items-center gap-3 px-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">CA</div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-semibold truncate">Carlos Andrade</p>
-              <p className="text-white/40 text-xs truncate">Avaliador humano</p>
-            </div>
-            <button onClick={() => setShowLogout(true)} className="text-white/30 hover:text-white/60 transition-colors shrink-0" title="Sair">
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function EvalTopBar({ title, subtitle, actions, onNavigate }: {
-  title: string; subtitle?: string; actions?: React.ReactNode; onNavigate: NavFn;
-}) {
-  return (
-    <div className="bg-white border-b border-border px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between shrink-0 gap-3">
-      <div className="min-w-0">
-        <h1 className="text-base sm:text-lg font-bold text-foreground truncate">{title}</h1>
-        {subtitle && <p className="text-xs text-muted-foreground mt-0.5 truncate hidden sm:block">{subtitle}</p>}
-      </div>
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        {actions && <div className="hidden sm:flex items-center gap-2">{actions}</div>}
-        <NotificationDropdown
-          notifs={EVAL_NOTIFS}
-          onNavigate={onNavigate}
-        />
-        <AccountDropdown
-          config={EVAL_ACCOUNT}
-          onNavigate={onNavigate}
-        />
-      </div>
-    </div>
-  );
-}
-
 function EvalLayout({ current, onNavigate, title, subtitle, actions, children }: {
   current: string; onNavigate: NavFn;
   title: string; subtitle?: string; actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(() => sessionStorage.getItem("sb-collapsed") === "1");
-  const toggleCollapsed = () => setCollapsed(c => { sessionStorage.setItem("sb-collapsed", c ? "0" : "1"); return !c; });
   return (
-    <div className="flex w-full">
-      <aside className={`flex flex-col shrink-0 sticky self-start transition-[width] duration-[220ms] ease-in-out ${collapsed ? "w-16" : "w-60"}`}
-        style={{ backgroundColor: "#021025", top: 0, height: "100vh" }}>
-        <EvalSidebarContent current={current} onNavigate={onNavigate} collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
-      </aside>
-      <div className="flex-1 min-w-0 flex flex-col">
-        <EvalTopBar title={title} subtitle={subtitle} actions={actions} onNavigate={onNavigate} />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 bg-background overflow-y-auto">
-          {children}
-        </main>
-      </div>
-    </div>
+    <ProfileShell
+      current={current}
+      navItems={EVAL_NAV}
+      profileLabel="Avaliador"
+      account={EVAL_ACCOUNT}
+      notifications={EVAL_NOTIFS}
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+      onNavigate={onNavigate}
+    >
+      {children}
+    </ProfileShell>
   );
 }
 
@@ -303,17 +183,18 @@ const QUEUE_ITEMS = [
 ];
 
 const HISTORY_ITEMS = [
-  { id: "#E-0036", candidate: "Lucas Ferreira",   job: "Analista de TI",               date: "09/08/2026", score: 8.4, time: "22 min", status: "completed" as const },
-  { id: "#E-0035", candidate: "Ana Rodrigues",    job: "Analista de Recrutamento e Seleção", date: "08/08/2026", score: 7.1, time: "19 min", status: "completed" as const },
-  { id: "#E-0034", candidate: "Diego Santos",     job: "Técnico em Informática",        date: "08/08/2026", score: 6.8, time: "24 min", status: "completed" as const },
-  { id: "#E-0033", candidate: "Camila Nunes",     job: "Secretária Executiva",          date: "07/08/2026", score: 9.1, time: "17 min", status: "completed" as const },
-  { id: "#E-0032", candidate: "Thiago Barbosa",   job: "Desenvolvedor Full Stack",     date: "07/08/2026", score: 7.9, time: "21 min", status: "completed" as const },
-  { id: "#E-0031", candidate: "Juliana Pires",    job: "Assessora Executiva",           date: "06/08/2026", score: 8.6, time: "20 min", status: "completed" as const },
+  { id: "#E-0036", candidate: "Lucas Ferreira",   job: "Analista de TI",               date: "09/08/2026", score: 8.4, status: "completed" as const },
+  { id: "#E-0035", candidate: "Ana Rodrigues",    job: "Analista de Recrutamento e Seleção", date: "08/08/2026", score: 7.1, status: "completed" as const },
+  { id: "#E-0034", candidate: "Diego Santos",     job: "Técnico em Informática",        date: "08/08/2026", score: 6.8, status: "completed" as const },
+  { id: "#E-0033", candidate: "Camila Nunes",     job: "Secretária Executiva",          date: "07/08/2026", score: 9.1, status: "completed" as const },
+  { id: "#E-0032", candidate: "Thiago Barbosa",   job: "Desenvolvedor Full Stack",     date: "07/08/2026", score: 7.9, status: "completed" as const },
+  { id: "#E-0031", candidate: "Juliana Pires",    job: "Assessora Executiva",           date: "06/08/2026", score: 8.6, status: "completed" as const },
 ];
 
 function formatDateTime(value?: string) {
   if (!value) return "—";
-  return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  const date = new Date(value);
+  return `${date.toLocaleDateString("pt-BR")} às ${date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 function mapInterviewToQueueItem(interview: ReturnType<typeof getAssignedInterviews>[number]) {
@@ -515,9 +396,8 @@ export function EvalDashboardScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATO
       id: interview.id,
       candidate: interview.candidateName,
       job: interview.context.title,
-      date: evaluation.completedAt ? new Date(evaluation.completedAt).toLocaleDateString("pt-BR") : "—",
+      date: evaluation.completedAt ? formatDateTime(evaluation.completedAt) : "—",
       score: getAverageScore(evaluation.scores) ?? 0,
-      time: "—",
       status: "completed" as const,
       realId: interview.id,
     })),
@@ -1103,9 +983,8 @@ export function EvalHistoryScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.
       id: interview.id,
       candidate: interview.candidateName,
       job: interview.context.title,
-      date: evaluation.completedAt ? new Date(evaluation.completedAt).toLocaleDateString("pt-BR") : "—",
+      date: evaluation.completedAt ? formatDateTime(evaluation.completedAt) : "—",
       score: getAverageScore(evaluation.scores) ?? 0,
-      time: "—",
       status: "completed" as const,
       realId: interview.id,
     })),
@@ -1139,9 +1018,8 @@ export function EvalHistoryScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Vaga</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Data</th>
+                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Concluída em</th>
                   <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Tempo</th>
                   <th className="py-3 px-5" />
                 </tr>
               </thead>
@@ -1155,7 +1033,6 @@ export function EvalHistoryScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.
                     <td className="py-3.5 px-4">
                       <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{formatScore(item.score)}</Badge>
                     </td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{item.time}</td>
                     <td className="py-3.5 px-5">
                       <button onClick={() => item.realId ? routerNavigate(`/evaluator/evaluations/${item.realId}/success`) : onNavigate("eval-done")} className="text-muted-foreground hover:text-primary transition-colors"><Eye className="w-4 h-4" /></button>
                     </td>
@@ -1552,48 +1429,58 @@ export function EvalOnboardingScreen({ onNavigate, onComplete }: { onNavigate: N
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
       <EvalLogoHeader />
-      <div className="flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md">
-          {/* Step indicator */}
-          <div className="flex items-center justify-center gap-2 mb-8">
-            {EVAL_ONBOARDING_STEPS.map((s, i) => (
-              <div key={s.id} className={`h-1.5 rounded-full transition-all duration-300 ${i === step ? "w-8 bg-teal-500" : i < step ? "w-4 bg-teal-300" : "w-4 bg-muted"}`} />
-            ))}
+      <div className="flex-1 flex items-center justify-center px-4 py-6 sm:py-8">
+        <div className="relative flex w-full max-w-6xl flex-col items-center gap-6 lg:min-h-[640px] lg:justify-center">
+          <div className="flex justify-center lg:absolute lg:bottom-0 lg:left-0 lg:z-0">
+            <img
+              src={niloOnboarding}
+              alt="Nilo, guia visual do RH Connect"
+              className="h-[260px] w-auto object-contain drop-shadow-2xl sm:h-[300px] lg:h-[clamp(520px,58vh,600px)]"
+              draggable={false}
+            />
           </div>
 
-          <div className="bg-white rounded-2xl border border-border shadow-sm p-6 sm:p-8">
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white text-lg font-bold">CA</div>
-              <div className={`w-12 h-12 rounded-2xl ${current.color} flex items-center justify-center`}>
-                <Icon className="w-6 h-6" />
+          <div className="relative z-10 w-full max-w-md">
+            {/* Step indicator */}
+            <div className="flex items-center justify-center gap-2 mb-8">
+              {EVAL_ONBOARDING_STEPS.map((s, i) => (
+                <div key={s.id} className={`h-1.5 rounded-full transition-all duration-300 ${i === step ? "w-8 bg-teal-500" : i < step ? "w-4 bg-teal-300" : "w-4 bg-muted"}`} />
+              ))}
+            </div>
+
+            <div className="bg-white rounded-2xl border border-border shadow-sm p-6 sm:p-8">
+              <div className="flex items-center gap-4 mb-6">
+                <div className={`w-12 h-12 rounded-2xl ${current.color} flex items-center justify-center`}>
+                  <Icon className="w-6 h-6" />
+                </div>
+              </div>
+
+              <h2 className="text-xl font-bold text-foreground mb-1">{current.title}</h2>
+              <p className="text-sm text-muted-foreground mb-5">{current.subtitle}</p>
+              <div className="mb-8">{current.content}</div>
+
+              <div className="flex items-center gap-3">
+                {step > 0 && (
+                  <Btn variant="outline" onClick={() => setStep(s => s - 1)}>
+                    Voltar
+                  </Btn>
+                )}
+                {isLast ? (
+                  <Btn variant="primary" className="flex-1" onClick={onComplete}>
+                    Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
+                  </Btn>
+                ) : (
+                  <Btn variant="primary" className="flex-1" onClick={() => setStep(s => s + 1)}>
+                    Próximo <ChevronRight className="w-3.5 h-3.5" />
+                  </Btn>
+                )}
               </div>
             </div>
 
-            <h2 className="text-xl font-bold text-foreground mb-1">{current.title}</h2>
-            <p className="text-sm text-muted-foreground mb-5">{current.subtitle}</p>
-            <div className="mb-8">{current.content}</div>
-
-            <div className="flex items-center gap-3">
-              {step > 0 && (
-                <Btn variant="outline" onClick={() => setStep(s => s - 1)}>
-                  Voltar
-                </Btn>
-              )}
-              {isLast ? (
-                <Btn variant="primary" className="flex-1" onClick={onComplete}>
-                  Ir para o Dashboard <ArrowRight className="w-3.5 h-3.5" />
-                </Btn>
-              ) : (
-                <Btn variant="primary" className="flex-1" onClick={() => setStep(s => s + 1)}>
-                  Próximo <ChevronRight className="w-3.5 h-3.5" />
-                </Btn>
-              )}
-            </div>
+            <p className="text-center text-xs text-muted-foreground mt-4">
+              Passo {step + 1} de {EVAL_ONBOARDING_STEPS.length}
+            </p>
           </div>
-
-          <p className="text-center text-xs text-muted-foreground mt-4">
-            Passo {step + 1} de {EVAL_ONBOARDING_STEPS.length}
-          </p>
         </div>
       </div>
     </div>
