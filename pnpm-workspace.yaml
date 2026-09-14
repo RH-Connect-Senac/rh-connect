@@ -5,6 +5,7 @@ packages:
 allowBuilds:
   '@prisma/client': false
   '@prisma/engines': false
+  '@scarf/scarf': set this to true or false
   '@tailwindcss/oxide': true
   esbuild: true
   prisma: false
