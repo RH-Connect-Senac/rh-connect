@@ -13,7 +13,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
-  ) { }
+  ) {}
 
   private toPublicUser(user: {
     user_id: number;
@@ -202,9 +202,7 @@ export class AuthService {
 
     const rawToken = randomBytes(32).toString('hex');
 
-    const tokenHash = createHash('sha256')
-      .update(rawToken)
-      .digest('hex');
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
@@ -245,13 +243,8 @@ export class AuthService {
     };
   }
 
-  async activateEvaluator(dto: {
-    token: string;
-    password: string;
-  }) {
-    const tokenHash = createHash('sha256')
-      .update(dto.token)
-      .digest('hex');
+  async activateEvaluator(dto: { token: string; password: string }) {
+    const tokenHash = createHash('sha256').update(dto.token).digest('hex');
 
     const activationToken =
       await this.prisma.account_activation_token.findUnique({

@@ -3,9 +3,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 allowBuilds:
+  '@parcel/watcher': true
   '@prisma/client': false
   '@prisma/engines': false
-  '@scarf/scarf': set this to true or false
+  '@scarf/scarf': true
   '@tailwindcss/oxide': true
   esbuild: true
   prisma: false

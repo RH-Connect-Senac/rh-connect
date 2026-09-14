@@ -23,7 +23,7 @@ import { RolesGuard } from './guards/roles.guard';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) { }
+  constructor(private readonly authService: AuthService) {}
 
   @Post('register')
   register(@Body() dto: RegisterDto) {
@@ -36,8 +36,7 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { user, token, refreshToken } =
-      await this.authService.login(dto);
+    const { user, token, refreshToken } = await this.authService.login(dto);
 
     res.cookie('access_token', token, {
       httpOnly: true,
@@ -58,11 +57,8 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(200)
-  async logout(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const refreshToken = req.cookies?.refresh_token;
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const refreshToken = req.cookies?.refresh_token as string | undefined;
 
     await this.authService.logout(refreshToken);
 
@@ -78,7 +74,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const refreshToken = req.cookies?.refresh_token;
+    const refreshToken = req.cookies?.refresh_token as string | undefined;
 
     const { token } = await this.authService.refresh(refreshToken);
 
@@ -137,4 +133,3 @@ export class AuthController {
     return this.authService.completeOnboarding(user.id);
   }
 }
-
