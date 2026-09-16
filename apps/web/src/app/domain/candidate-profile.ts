@@ -33,9 +33,6 @@ export type CandidateExperience = {
 export type CandidateProfile = {
   version: typeof CANDIDATE_PROFILE_VERSION;
   candidateId: string;
-  phone: string;
-  city: string;
-  state: string;
   professionalSummary: string;
   areaId: string;
   subareaId: string;

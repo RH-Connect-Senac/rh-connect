@@ -23,9 +23,6 @@ function createEmptyCandidateProfile(candidateId: string): CandidateProfile {
   return {
     version: CANDIDATE_PROFILE_VERSION,
     candidateId,
-    phone: "",
-    city: "",
-    state: "",
     professionalSummary: "",
     areaId: "",
     subareaId: "",
@@ -44,8 +41,6 @@ function createEmptyCandidateProfile(candidateId: string): CandidateProfile {
 function createDemoCandidateProfile(): CandidateProfile {
   return {
     ...createEmptyCandidateProfile(DEFAULT_CANDIDATE.id),
-    city: "São Paulo",
-    state: "SP",
     professionalSummary: "Profissional em busca da primeira oportunidade na área de Tecnologia da Informação.",
     areaId: "information-technology",
     subareaId: "frontend-development",
@@ -143,9 +138,6 @@ function normalizeProfile(value: unknown): CandidateProfile | null {
   return {
     version: CANDIDATE_PROFILE_VERSION,
     candidateId: profile.candidateId,
-    phone: normalizeString(profile.phone),
-    city: normalizeString(profile.city),
-    state: normalizeString(profile.state),
     professionalSummary: normalizeString(profile.professionalSummary),
     areaId: normalizeString(profile.areaId),
     subareaId: normalizeString(profile.subareaId),
@@ -312,9 +304,6 @@ export function saveCandidateProfile(candidateId: string, patch: CandidateProfil
 
 export function getCandidateProfileCompleteness(profile: CandidateProfile) {
   const fields = [
-    profile.phone,
-    profile.city,
-    profile.state,
     profile.professionalSummary,
     profile.areaId,
     profile.subareaId,
@@ -330,4 +319,15 @@ export function getCandidateProfileCompleteness(profile: CandidateProfile) {
 
   const filled = fields.filter((value) => value.trim().length > 0).length;
   return Math.round((filled / fields.length) * 100);
+}
+
+export function isCandidateProfileReadyForInterview(profile: CandidateProfile) {
+  return [
+    profile.areaId,
+    profile.subareaId,
+    profile.desiredRole,
+    profile.seniority,
+    profile.contractType,
+    profile.professionalSummary,
+  ].every((value) => value.trim().length > 0);
 }

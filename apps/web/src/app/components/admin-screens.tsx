@@ -1608,9 +1608,6 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           : undefined
       ) ?? candidateProfile.subareaId
     : "";
-  const locationLabel = candidateProfile
-    ? [candidateProfile.city, candidateProfile.state].filter(Boolean).join(" / ")
-    : "";
   const notInformed = "Não informado";
 
   return (
@@ -1659,8 +1656,6 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
             {[
-              { label: "Telefone", value: candidateProfile?.phone },
-              { label: "Cidade/UF", value: locationLabel },
               { label: "Área", value: professionalArea },
               { label: "Subárea", value: professionalSubarea },
               { label: "Cargo desejado", value: candidateProfile?.desiredRole },

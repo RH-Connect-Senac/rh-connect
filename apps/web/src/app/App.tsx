@@ -106,6 +106,7 @@ import {
 import {
   getCandidateProfile,
   getCandidateProfileCompleteness,
+  isCandidateProfileReadyForInterview,
   saveCandidateProfile,
 } from "./services/candidate-profile-service";
 import type {
@@ -962,12 +963,19 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
       toast.error("Preencha pelo menos um dado da formação antes de adicionar.");
       return;
     }
-    updateProfile({ formations: [...profile.formations, { ...newFormation, id: `formation-${Date.now()}` }] });
+    const formations = [...profile.formations, { ...newFormation, id: `formation-${Date.now()}` }];
+    const saved = saveCandidateProfile(candidateIdentity.id, { formations });
+    setProfile((current) => ({ ...current, formations: saved.formations, updatedAt: saved.updatedAt }));
     setNewFormation({ title: "", institution: "", level: "", status: "", startDate: "", endDate: "" });
+    toast.success("Formação adicionada.");
   };
 
   const removeFormation = (id: string) => {
-    updateProfile({ formations: profile.formations.filter((item) => item.id !== id) });
+    const saved = saveCandidateProfile(candidateIdentity.id, {
+      formations: profile.formations.filter((item) => item.id !== id),
+    });
+    setProfile((current) => ({ ...current, formations: saved.formations, updatedAt: saved.updatedAt }));
+    toast.success("Formação removida.");
   };
 
   const updateCourse = (id: string, patch: Partial<CandidateCourse>) => {
@@ -979,12 +987,19 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
       toast.error("Preencha pelo menos um dado do curso antes de adicionar.");
       return;
     }
-    updateProfile({ courses: [...profile.courses, { ...newCourse, id: `course-${Date.now()}` }] });
+    const courses = [...profile.courses, { ...newCourse, id: `course-${Date.now()}` }];
+    const saved = saveCandidateProfile(candidateIdentity.id, { courses });
+    setProfile((current) => ({ ...current, courses: saved.courses, updatedAt: saved.updatedAt }));
     setNewCourse({ name: "", institution: "", workload: "", completedAt: "" });
+    toast.success("Curso adicionado.");
   };
 
   const removeCourse = (id: string) => {
-    updateProfile({ courses: profile.courses.filter((item) => item.id !== id) });
+    const saved = saveCandidateProfile(candidateIdentity.id, {
+      courses: profile.courses.filter((item) => item.id !== id),
+    });
+    setProfile((current) => ({ ...current, courses: saved.courses, updatedAt: saved.updatedAt }));
+    toast.success("Curso removido.");
   };
 
   const updateExperience = (id: string, patch: Partial<CandidateExperience>) => {
@@ -996,12 +1011,19 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
       toast.error("Preencha pelo menos um dado da experiência antes de adicionar.");
       return;
     }
-    updateProfile({ experiences: [...profile.experiences, { ...newExperience, id: `experience-${Date.now()}` }] });
+    const experiences = [...profile.experiences, { ...newExperience, id: `experience-${Date.now()}` }];
+    const saved = saveCandidateProfile(candidateIdentity.id, { experiences });
+    setProfile((current) => ({ ...current, experiences: saved.experiences, updatedAt: saved.updatedAt }));
     setNewExperience({ company: "", role: "", startDate: "", endDate: "", current: false, description: "" });
+    toast.success("Experiência adicionada.");
   };
 
   const removeExperience = (id: string) => {
-    updateProfile({ experiences: profile.experiences.filter((item) => item.id !== id) });
+    const saved = saveCandidateProfile(candidateIdentity.id, {
+      experiences: profile.experiences.filter((item) => item.id !== id),
+    });
+    setProfile((current) => ({ ...current, experiences: saved.experiences, updatedAt: saved.updatedAt }));
+    toast.success("Experiência removida.");
   };
 
   const addSkill = (kind: "technicalSkills" | "behavioralSkills", value: string) => {
@@ -1015,21 +1037,33 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
       toast.error("Essa habilidade já foi adicionada.");
       return;
     }
-    if (kind === "technicalSkills") {
-      updateProfile({ technicalSkills: [...profile.technicalSkills, skill] });
-    } else {
-      updateProfile({ behavioralSkills: [...profile.behavioralSkills, skill] });
-    }
+    const patch = kind === "technicalSkills"
+      ? { technicalSkills: [...profile.technicalSkills, skill] }
+      : { behavioralSkills: [...profile.behavioralSkills, skill] };
+    const saved = saveCandidateProfile(candidateIdentity.id, patch);
+    setProfile((current) => ({
+      ...current,
+      technicalSkills: saved.technicalSkills,
+      behavioralSkills: saved.behavioralSkills,
+      updatedAt: saved.updatedAt,
+    }));
     if (kind === "technicalSkills") setNewTechnicalSkill("");
     if (kind === "behavioralSkills") setNewBehavioralSkill("");
+    toast.success("Habilidade adicionada.");
   };
 
   const removeSkill = (kind: "technicalSkills" | "behavioralSkills", value: string) => {
-    if (kind === "technicalSkills") {
-      updateProfile({ technicalSkills: profile.technicalSkills.filter((item) => item !== value) });
-    } else {
-      updateProfile({ behavioralSkills: profile.behavioralSkills.filter((item) => item !== value) });
-    }
+    const patch = kind === "technicalSkills"
+      ? { technicalSkills: profile.technicalSkills.filter((item) => item !== value) }
+      : { behavioralSkills: profile.behavioralSkills.filter((item) => item !== value) };
+    const saved = saveCandidateProfile(candidateIdentity.id, patch);
+    setProfile((current) => ({
+      ...current,
+      technicalSkills: saved.technicalSkills,
+      behavioralSkills: saved.behavioralSkills,
+      updatedAt: saved.updatedAt,
+    }));
+    toast.success("Habilidade removida.");
   };
 
   const sections = [
@@ -1075,10 +1109,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="font-bold text-foreground text-lg">{candidateIdentity.name}</h2>
-              <p className="text-muted-foreground text-sm">
-                {candidateIdentity.email}
-                {(profile.city || profile.state) && ` · ${[profile.city, profile.state].filter(Boolean).join(", ")}`}
-              </p>
+              <p className="text-muted-foreground text-sm">{candidateIdentity.email}</p>
               <p className="text-xs text-muted-foreground mt-1 italic">
                 {profile.professionalSummary ? `"${profile.professionalSummary}"` : "Resumo profissional ainda não preenchido."}
               </p>
@@ -2555,11 +2586,17 @@ function InterviewSetupScreen({
   onNavigate,
   draft,
   setDraft,
+  session,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+  session: MockAuthSession;
 }) {
+  const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
+  const candidateIdentity = getCandidateIdentity(session);
+  const candidateProfile = getCandidateProfile(candidateIdentity.id, candidateUser);
+  const profileReadyForInterview = isCandidateProfileReadyForInterview(candidateProfile);
   const [url, setUrl] = useState(draft.context?.sourceUrl ?? DEMO_JOB_URL);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
   const [error, setError] = useState("");
@@ -2594,6 +2631,36 @@ function InterviewSetupScreen({
       setGenerating(false);
     }
   };
+
+  if (!profileReadyForInterview) {
+    return (
+      <AuthLayout
+        current="interview-setup"
+        onNavigate={onNavigate}
+        title="Nova entrevista"
+        subtitle="Complete seu contexto profissional para começar"
+      >
+        <Card className="w-full max-w-2xl p-5 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+              <AlertCircle className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="font-bold text-foreground">Complete as informações essenciais do seu perfil</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Precisamos de algumas informações profissionais para contextualizar melhor sua entrevista.
+              </p>
+              <div className="mt-5">
+                <Btn variant="primary" onClick={() => onNavigate("profile")}>
+                  Completar perfil
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </AuthLayout>
+    );
+  }
 
   return (
     <AuthLayout
@@ -3735,9 +3802,8 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
   const account = getCandidateAccountConfig(candidateUser);
-  const [settingsProfile, setSettingsProfile] = useState<CandidateProfile>(() => getCandidateProfile(candidateIdentity.id, candidateUser));
   const [tab, setTab] = useState<SettingsTab>("conta");
-  const [notifs, setNotifs] = useState({ resultado: true, novidades: false, dicas: true, email: true, sms: false });
+  const [notifs, setNotifs] = useState({ resultado: true, novidades: false, dicas: true, email: true });
   const [consentIA, setConsentIA] = useState(false);
   const [modal, setModal] = useState<null | "senha" | "revogar-ia" | "excluir-dados" | "excluir-conta" | "conta-excluida" | "senha-alterada">(null);
   const [senhaEtapa, setSenhaEtapa] = useState<"form" | "confirmado">("form");
@@ -3751,24 +3817,6 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
     ["dados","Dados e respostas"],
     ["excluir","Excluir conta"],
   ];
-
-  useEffect(() => {
-    setSettingsProfile(getCandidateProfile(candidateIdentity.id, candidateUser));
-  }, [candidateIdentity.id, candidateUser?.id]);
-
-  const updateSettingsProfile = (patch: CandidateProfilePatch) => {
-    setSettingsProfile((current) => ({ ...current, ...patch }));
-  };
-
-  const handleSaveAccountSettings = () => {
-    const saved = saveCandidateProfile(candidateIdentity.id, {
-      phone: settingsProfile.phone,
-      city: settingsProfile.city,
-      state: settingsProfile.state,
-    });
-    setSettingsProfile(saved);
-    toast.success("Dados de contato salvos.");
-  };
 
   return (
     <AuthLayout
@@ -3823,28 +3871,8 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
               </div>
               <Field label="Nome completo" defaultValue={candidateIdentity.name} />
               <Field label="E-mail" type="email" defaultValue={candidateIdentity.email} hint="Você receberá um e-mail de verificação para confirmar a alteração." />
-              <Field
-                label="Telefone"
-                placeholder="(61) 99999-9999"
-                value={settingsProfile.phone}
-                onChange={(event) => updateSettingsProfile({ phone: event.target.value })}
-              />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field
-                  label="Cidade"
-                  placeholder="Brasília"
-                  value={settingsProfile.city}
-                  onChange={(event) => updateSettingsProfile({ city: event.target.value })}
-                />
-                <FieldSelect
-                  label="Estado"
-                  options={["DF","SP","RJ","MG","RS","BA","PR","SC","GO","CE","PE","AM"]}
-                  value={settingsProfile.state}
-                  onChange={(event) => updateSettingsProfile({ state: event.target.value })}
-                />
-              </div>
               <div className="flex gap-3 pt-2">
-                <Btn variant="primary" onClick={handleSaveAccountSettings}>Salvar alterações</Btn>
+                <Btn variant="primary">Salvar alterações</Btn>
                 <Btn variant="outline">Cancelar</Btn>
               </div>
             </Card>
@@ -3927,7 +3955,6 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                 <div className="space-y-1">
                   {[
                     { key: "email" as const, label: "E-mail", desc: candidateIdentity.email },
-                    { key: "sms" as const,   label: "SMS",    desc: settingsProfile.phone ? `${settingsProfile.phone} — opcional` : "Telefone não informado — opcional" },
                   ].map(n => (
                     <div key={n.key} className="flex items-center justify-between gap-4 py-3 border-b border-border last:border-0">
                       <div>
@@ -3951,7 +3978,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                   <p className="text-xs text-muted-foreground">Entenda como seus dados são usados no RH Connect.</p>
                 </div>
                 {[
-                  { titulo: "Dados do perfil", desc: "Nome, e-mail e telefone são usados para identificação na plataforma.", badge: "Necessário" },
+                  { titulo: "Dados do perfil", desc: "Nome e e-mail são usados para identificação na plataforma.", badge: "Necessário" },
                   { titulo: "Respostas de entrevista", desc: "Armazenadas com segurança e acessadas exclusivamente por avaliadores autorizados.", badge: "Necessário" },
                   { titulo: "Histórico de entrevistas", desc: "Mantido na conta para consulta de relatórios e evolução.", badge: "Necessário" },
                   { titulo: "Dados analíticos", desc: "Uso interno para melhoria da plataforma. Não inclui identificação pessoal.", badge: "Opcional" },
@@ -4109,7 +4136,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                 <h3 className="font-bold text-foreground">O que acontece ao excluir sua conta</h3>
                 <div className="space-y-2">
                   {[
-                    "Seus dados cadastrais (nome, e-mail, telefone) serão removidos permanentemente.",
+                    "Seus dados cadastrais (nome e e-mail) serão removidos permanentemente.",
                     "Seu histórico de entrevistas e relatórios serão excluídos.",
                     "As respostas textuais elegíveis serão removidas conforme política de retenção.",
                     "Todos os consentimentos serão automaticamente revogados.",
@@ -4838,7 +4865,7 @@ function AppRoutes() {
           <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
