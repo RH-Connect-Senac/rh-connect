@@ -1,7 +1,7 @@
 /** RH Connect — Telas do Avaliador */
 
 import { useState, useEffect } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import type { EvaluationScores } from "../domain/interviews";
 import { DEFAULT_EVALUATOR } from "../mocks/interviews";
@@ -18,12 +18,18 @@ import {
   startEvaluation,
 } from "../services/interviews-service";
 import {
+  activateEvaluatorInvite,
+  resolveEvaluatorInvite,
+  type EvaluatorInvite,
+  type EvaluatorInviteStatus,
+} from "../services/evaluator-invite-service";
+import {
   Home, Clock, History, BookOpen, Settings,
   ChevronLeft, ChevronRight, Bell, CheckCircle,
   Star, Award, Target, TrendingUp,
   Filter, Eye, FileText,
   Edit2, Send, Download, BarChart2, Layers, RefreshCw,
-  MessageSquare, Info, Users, ArrowRight, Zap, Lock,
+  MessageSquare, Info, Users, ArrowRight, Zap, Lock, AlertCircle,
 } from "lucide-react";
 import {
   EVAL_ACCOUNT, EVAL_NOTIFS,
@@ -1193,23 +1199,57 @@ function EvalLogoHeader({ onNavigate }: { onNavigate?: NavFn }) {
 }
 
 export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get("token");
   const [senha, setSenha] = useState("");
   const [confirmar, setConfirmar] = useState("");
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [mostrarConfirmacao, setMostrarConfirmacao] = useState(false);
   const [ativado, setAtivado] = useState(false);
+  const [inviteStatus, setInviteStatus] = useState<EvaluatorInviteStatus | "loading">("loading");
+  const [inviteDetails, setInviteDetails] = useState<EvaluatorInvite | null>(null);
+  const [inviteMessage, setInviteMessage] = useState("");
 
   const strength = senha.length === 0 ? 0 : senha.length < 6 ? 1 : senha.length < 10 ? 2 : /[^a-zA-Z0-9]/.test(senha) ? 4 : 3;
   const strengthLabel = ["", "Fraca", "Média", "Forte", "Muito forte"][strength];
   const strengthColor = ["", "bg-red-400", "bg-amber-400", "bg-green-400", "bg-green-500"][strength];
 
-  const inviteDetails = {
-    name: "Patricia Gomes",
-    email: "patricia.gomes@gmail.com",
-  };
+  useEffect(() => {
+    let active = true;
 
-  const handleActivate = () => {
-    setAtivado(true);
+    setInviteStatus("loading");
+    setInviteDetails(null);
+    setInviteMessage("");
+    setAtivado(false);
+
+    void resolveEvaluatorInvite(token).then((result) => {
+      if (!active) return;
+
+      if (result.status === "valid") {
+        setInviteStatus("valid");
+        setInviteDetails(result.invite);
+        return;
+      }
+
+      setInviteStatus(result.status);
+      setInviteMessage(result.message);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  const handleActivate = async () => {
+    if (!token || senha.length < 8 || senha !== confirmar) return;
+    const result = await activateEvaluatorInvite(token, senha);
+    if (result.status === "activated") {
+      setAtivado(true);
+      return;
+    }
+
+    setInviteStatus(result.status);
+    setInviteMessage(result.message);
   };
 
   if (ativado) {
@@ -1234,6 +1274,45 @@ export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
     );
   }
 
+  if (inviteStatus === "loading") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
+        <EvalLogoHeader onNavigate={onNavigate} />
+        <div className="flex-1 flex items-center justify-center px-4 py-8">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-border shadow-sm p-8 text-center">
+            <RefreshCw className="w-8 h-8 text-teal-600 mx-auto mb-4 animate-spin" />
+            <h2 className="text-xl font-bold text-foreground mb-2">Validando convite</h2>
+            <p className="text-sm text-muted-foreground">
+              Aguarde enquanto verificamos o link de ativação.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (inviteStatus !== "valid" || !inviteDetails) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
+        <EvalLogoHeader onNavigate={onNavigate} />
+        <div className="flex-1 flex items-center justify-center px-4 py-8">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-border shadow-sm p-8 text-center">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
+              <AlertCircle className="w-8 h-8 text-red-600" />
+            </div>
+            <h2 className="text-xl font-bold text-foreground mb-2">Não foi possível ativar a conta</h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              {inviteMessage || "Verifique o link recebido ou solicite um novo convite ao administrador."}
+            </p>
+            <Btn variant="primary" className="w-full" onClick={() => onNavigate("auth")}>
+              Ir para o login <ArrowRight className="w-3.5 h-3.5" />
+            </Btn>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-teal-50 flex flex-col">
       <EvalLogoHeader onNavigate={onNavigate} />
@@ -1248,7 +1327,7 @@ export function EvalActivateScreen({ onNavigate }: { onNavigate: NavFn }) {
               <div>
                 <p className="text-sm font-bold text-foreground">Convite recebido</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Convite enviado para <strong>{inviteDetails.name}</strong> ({inviteDetails.email}) pelo <strong>SENAC-DF</strong>.
+                  Convite enviado para <strong>{inviteDetails.name}</strong> ({inviteDetails.email}) pelo <strong>{inviteDetails.organization}</strong>.
                 </p>
               </div>
             </div>
