@@ -8,6 +8,7 @@ import {
   HttpCode,
   UseGuards,
   Put,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 import type { Response, Request } from 'express';
@@ -54,7 +55,6 @@ export class AuthController {
 
     return user;
   }
-
   @Post('logout')
   @HttpCode(200)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {

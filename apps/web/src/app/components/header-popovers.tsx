@@ -66,7 +66,7 @@ export const ADMIN_ACCOUNT: AccountConfig = {
 export const CANDIDATE_NOTIFS: NotifItem[] = [
   { id: "n1", title: "Avaliação concluída",     desc: "Sua entrevista para Desenvolvedor Full Stack foi avaliada.", time: "Agora",   unread: true,  screen: "report" },
   { id: "n2", title: "Feedback disponível",      desc: "Confira o relatório detalhado do seu desempenho.",       time: "2h",     unread: true,  screen: "report" },
-  { id: "n3", title: "Entrevista atualizada",    desc: "Status da entrevista para Dev Full Stack foi alterado.", time: "Ontem",  unread: false, screen: "pending" },
+  { id: "n3", title: "Entrevista atualizada",    desc: "Status da entrevista para Desenvolvedor Full Stack foi alterado.", time: "Ontem",  unread: false, screen: "pending" },
   { id: "n4", title: "Aviso da plataforma",      desc: "Novas vagas disponíveis nas áreas oficiais da V1.",      time: "2 dias", unread: false },
 ];
 
