@@ -626,6 +626,7 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Gestão de Avaliadores ───────────────────────────────────────────
 
 export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
   const [showAdd, setShowAdd] = useState(false);
   const [inviteSent, setInviteSent] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -677,7 +678,7 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
               </p>
             </div>
             <button
-              onClick={() => onNavigate("eval-activate")}
+              onClick={() => routerNavigate("/evaluator/activate?token=demo-patricia")}
               className="text-xs text-green-700 underline underline-offset-2 hover:text-green-900 shrink-0 font-medium">
               Ver simulação da ativação
             </button>
