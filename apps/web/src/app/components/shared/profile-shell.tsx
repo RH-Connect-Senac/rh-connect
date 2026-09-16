@@ -76,7 +76,7 @@ function ProfileSidebarContent({
                 type="button"
                 onClick={() => {
                   setShowLogout(false);
-                  onNavigate("landing");
+                  onNavigate("auth");
                 }}
                 className="w-full rounded-xl bg-red-500 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600"
               >
