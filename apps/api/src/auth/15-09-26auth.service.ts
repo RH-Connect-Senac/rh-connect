@@ -1,10 +1,14 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
-const refreshToken = randomBytes(64).toString('hex');
 
+@Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
@@ -87,6 +91,8 @@ export class AuthService {
       email: user.email,
       role: user.user_role,
     });
+
+    const refreshToken = randomBytes(64).toString('hex');
 
     const refreshTokenHash = createHash('sha256')
       .update(refreshToken)

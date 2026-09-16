@@ -8,6 +8,7 @@ import {
   HttpCode,
   UseGuards,
   Put,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 import type { Response, Request } from 'express';
@@ -54,13 +55,14 @@ export class AuthController {
 
     return user;
   }
-
   @Post('logout')
   @HttpCode(200)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
 
-    await this.authService.logout(refreshToken);
+    if (refreshToken) {
+      await this.authService.logout(refreshToken);
+    }
 
     res.clearCookie('access_token');
     res.clearCookie('refresh_token');
@@ -75,6 +77,10 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token não encontrado');
+    }
 
     const { token } = await this.authService.refresh(refreshToken);
 
