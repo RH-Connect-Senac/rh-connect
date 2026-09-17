@@ -4363,7 +4363,7 @@ function ExternalResourceCard({ resource }: { resource: ExternalLearningResource
       </div>
       <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
         <UIBadge variant="primary">{resource.area ?? "Cachola"}</UIBadge>
-        <Btn variant="outline" size="sm" onClick={handleOpen}>Abrir Cachola</Btn>
+        <Btn variant="outline" size="sm" onClick={handleOpen}>Acessar na Cachola</Btn>
       </div>
     </Card>
   );
@@ -4474,7 +4474,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
         )}
 
         {/* Fonte complementar: Cachola */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingCacholaResources || cacholaResources.length > 0) && (
+        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && cacholaResources.length > 0 && (
           <section>
             <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
               <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares da Cachola
