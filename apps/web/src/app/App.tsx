@@ -1,6 +1,6 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useState, useRef, useEffect, useContext, createContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -79,7 +79,6 @@ import {
   toggleMaterialFavorite,
 } from "./services/materials-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
-import { DEFAULT_CANDIDATE } from "./mocks/interviews";
 import {
   getAvailableCandidateReports,
   getAverageScore,
@@ -92,16 +91,16 @@ import {
 } from "./services/interviews-service";
 import {
   clearRememberedLoginEmail,
-  completeMockOnboarding,
+  completeOnboarding as completeOnboardingApi,
+  fetchCurrentUser,
   getRememberedLoginEmail,
-  getMockAuthSession,
-  loginMockWithCredentials,
-  logoutMockUser,
-  registerMockCandidate,
+  loginWithCredentials as loginWithCredentialsApi,
+  logoutUser as logoutUserApi,
+  registerCandidate as registerCandidateApi,
   saveRememberedLoginEmail,
-  type MockAuthSession,
-  type MockAuthUser,
-  type MockUserRole,
+  type AuthSession,
+  type AuthUser,
+  type UserRole,
 } from "./services/auth-service";
 import {
   getCandidateProfile,
@@ -130,49 +129,49 @@ const AUTH_SCREENS: Screen[] = [
   "admin-questions","admin-question-form","admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
 ];
 
-const DASHBOARD_BY_ROLE: Record<MockUserRole, string> = {
+const DASHBOARD_BY_ROLE: Record<UserRole, string> = {
   CANDIDATE: "/candidate/dashboard",
   EVALUATOR: "/evaluator/dashboard",
   ADMIN: "/admin/dashboard",
 };
 
-const ONBOARDING_BY_ROLE: Record<MockUserRole, string> = {
+const ONBOARDING_BY_ROLE: Record<UserRole, string> = {
   CANDIDATE: "/candidate/onboarding",
   EVALUATOR: "/evaluator/onboarding",
   ADMIN: "/admin/onboarding",
 };
 
-function getCandidateIdentity(session: MockAuthSession) {
+function getCandidateIdentity(session: AuthSession) {
   const user = session.user;
   if (session.authenticated && user?.role === "CANDIDATE") {
     return {
-      id: user.id === "candidate-demo" ? DEFAULT_CANDIDATE.id : user.id,
+      id: user.id,
       name: user.name,
       email: user.email,
     };
   }
 
-  return DEFAULT_CANDIDATE;
+  return { id: "", name: "", email: "" };
 }
 
-function getEvaluatorIdentity(session: MockAuthSession) {
+function getEvaluatorIdentity(session: AuthSession) {
   const user = session.user;
   if (session.authenticated && user?.role === "EVALUATOR") {
     return {
-      id: user.id === "evaluator-demo" ? "evaluator-carlos-andrade" : user.id,
+      id: user.id,
       name: user.name,
     };
   }
 
-  return { id: "evaluator-carlos-andrade", name: "Carlos Andrade" };
+  return { id: "", name: "" };
 }
 
-function getEntryPathForSession(session: MockAuthSession) {
+function getEntryPathForSession(session: AuthSession) {
   if (!session.authenticated || !session.user) return "/login";
   return session.user.onboardingCompleted ? DASHBOARD_BY_ROLE[session.user.role] : ONBOARDING_BY_ROLE[session.user.role];
 }
 
-function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
+function isOnboardingPathForRole(pathname: string, role: UserRole) {
   return pathname === ONBOARDING_BY_ROLE[role];
 }
 
@@ -297,7 +296,7 @@ function getInitials(name: string) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
 }
 
-function getCandidateAccountConfig(user?: MockAuthUser | null): AccountConfig {
+function getCandidateAccountConfig(user?: AuthUser | null): AccountConfig {
   if (!user) return CANDIDATE_ACCOUNT;
   return {
     ...CANDIDATE_ACCOUNT,
@@ -413,6 +412,8 @@ const NAV_ITEMS: ProfileShellNavItem[] = [
   { icon: Settings,  label: "Configurações",screen: "settings" as Screen },
 ];
 
+const SessionContext = createContext<AuthSession>({ authenticated: false, user: null });
+
 function AuthLayout({
   current, onNavigate, title, subtitle, actions, account, children,
 }: {
@@ -421,7 +422,7 @@ function AuthLayout({
   account?: AccountConfig;
   children: React.ReactNode;
 }) {
-  const activeSession = getMockAuthSession();
+  const activeSession = useContext(SessionContext);
   const resolvedAccount = account ?? (
     activeSession.authenticated && activeSession.user?.role === "CANDIDATE"
       ? getCandidateAccountConfig(activeSession.user)
@@ -461,8 +462,8 @@ function AuthScreen({
   initialTab = "register",
 }: {
   onNavigate: (s: Screen) => void;
-  onLoginWithCredentials: (email: string, password: string) => { ok: true } | { ok: false; message: string };
-  onRegister: (data: { name: string; email: string; password: string }) => { ok: true } | { ok: false; message: string };
+  onLoginWithCredentials: (email: string, password: string) => Promise<{ ok: true } | { ok: false; message: string }>;
+  onRegister: (data: { name: string; email: string; password: string }) => Promise<{ ok: true } | { ok: false; message: string }>;
   initialTab?: "login" | "register";
 }) {
   const [tab, setTab] = useState<"login" | "register">(initialTab);
@@ -476,6 +477,7 @@ function AuthScreen({
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
   const [registerAcceptedTerms, setRegisterAcceptedTerms] = useState(false);
   const [registerError, setRegisterError] = useState("");
+  const [pendingAuth, setPendingAuth] = useState(false);
   const authNavigate = useNavigate();
 
   useEffect(() => {
@@ -489,8 +491,12 @@ function AuthScreen({
     authNavigate(nextTab === "login" ? "/login" : "/register");
   };
 
-  const handleLoginSubmit = () => {
-    const result = onLoginWithCredentials(loginEmail, loginPassword);
+  const handleLoginSubmit = async () => {
+    if (pendingAuth) return;
+    setPendingAuth(true);
+    setLoginError("");
+    const result = await onLoginWithCredentials(loginEmail, loginPassword);
+    setPendingAuth(false);
     if (!result.ok) {
       setLoginError(result.message);
       return;
@@ -503,7 +509,7 @@ function AuthScreen({
     }
   };
 
-  const handleRegisterSubmit = () => {
+  const handleRegisterSubmit = async () => {
     const name = registerName.trim();
     const email = registerEmail.trim().toLowerCase();
     const password = registerPassword;
@@ -535,7 +541,10 @@ function AuthScreen({
     }
 
     setRegisterError("");
-    const result = onRegister({ name, email, password });
+    if (pendingAuth) return;
+    setPendingAuth(true);
+    const result = await onRegister({ name, email, password });
+    setPendingAuth(false);
     if (!result.ok) {
       setRegisterError(result.message);
     }
@@ -624,8 +633,8 @@ function AuthScreen({
                   </div>
                   <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit}>
-                  Entrar na plataforma
+                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit} disabled={pendingAuth}>
+                  {pendingAuth ? "Entrando..." : "Entrar na plataforma"}
                 </Btn>
               </div>
             ) : (
@@ -701,8 +710,8 @@ function AuthScreen({
                     {registerError}
                   </Alert>
                 )}
-                <Btn variant="primary" className="w-full !py-3" onClick={handleRegisterSubmit}>
-                  Criar minha conta
+                <Btn variant="primary" className="w-full !py-3" onClick={handleRegisterSubmit} disabled={pendingAuth}>
+                  {pendingAuth ? "Criando conta..." : "Criar minha conta"}
                 </Btn>
               </div>
             )}
@@ -723,10 +732,9 @@ function AuthScreen({
 
 // ─── Screen 3: Dashboard ──────────────────────────────────────────────────────
 
-function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const routerNavigate = useNavigate();
   const candidateUser = session.user;
-  const isDemoCandidate = candidateUser?.id === "candidate-demo";
   const candidateIdentity = getCandidateIdentity(session);
   const candidateId = candidateIdentity.id;
   const account = getCandidateAccountConfig(candidateUser);
@@ -740,25 +748,17 @@ function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     .map((item) => getAverageScore(item.evaluation?.scores))
     .filter((score): score is number => score !== null)
     .sort((a, b) => b - a)[0];
-  const RECENT = [
-    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const, interviewId: undefined as string | undefined },
-    { vaga: "Analista de RH",                  empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const, interviewId: undefined as string | undefined },
-    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const, interviewId: undefined as string | undefined },
-  ];
-  const recentItems = [
-    ...candidateInterviews.slice(0, 3).map((interview) => {
-      const report = getReportByInterviewId(interview.id);
-      return {
-        vaga: interview.context.title,
-        empresa: interview.context.company,
-        data: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
-        status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
-        badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
-        interviewId: interview.id,
-      };
-    }),
-    ...(isDemoCandidate ? RECENT : []),
-  ].slice(0, 3);
+  const recentItems = candidateInterviews.slice(0, 3).map((interview) => {
+    const report = getReportByInterviewId(interview.id);
+    return {
+      vaga: interview.context.title,
+      empresa: interview.context.company,
+      data: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+      status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
+      badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
+      interviewId: interview.id,
+    };
+  });
 
   return (
     <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
@@ -783,10 +783,10 @@ function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value={candidateInterviews.length || (isDemoCandidate ? 3 : 0)} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-        <StatCard value={pendingCount || (isDemoCandidate ? 1 : 0)} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
-        <StatCard value={availableReports.length || (isDemoCandidate ? 1 : 0)} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
-        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : isDemoCandidate ? "7,8" : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
+        <StatCard value={candidateInterviews.length} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+        <StatCard value={pendingCount} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
+        <StatCard value={availableReports.length} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
+        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
@@ -875,7 +875,7 @@ function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
 // ─── Screen 4: Perfil Profissional ────────────────────────────────────────────
 
-function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
   const account = getCandidateAccountConfig(candidateUser);
@@ -1920,7 +1920,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
 
 // ─── Screen 10: Avaliação Pendente ────────────────────────────────────────────
 
-function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
   const interview = getInterviewById(id);
@@ -2046,7 +2046,7 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
 
 // ─── Screen 11: Resultado e Relatório ─────────────────────────────────────────
 
-function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const { id } = useParams();
   const interview = getInterviewById(id);
   const evaluation = getEvaluationByInterviewId(id);
@@ -2459,10 +2459,9 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
 
 // ─── Fase A: CAN-007 Histórico de Entrevistas ─────────────────────────────────
 
-function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const routerNavigate = useNavigate();
   const candidateIdentity = getCandidateIdentity(session);
-  const isDemoCandidate = session.user?.id === "candidate-demo";
   const candidateInterviews = getCandidateInterviews(candidateIdentity.id);
   type CandidateHistoryItem = {
     id: string;
@@ -2476,12 +2475,7 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
     badge: "success" | "warning" | "default";
     realId?: string;
   };
-  const HISTORICO: CandidateHistoryItem[] = [
-    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const, realId: undefined as string | undefined },
-    { id: "E002", vaga: "Analista de RH",                  empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const, realId: undefined as string | undefined },
-    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const, realId: undefined as string | undefined },
-  ];
-  const realHistory = candidateInterviews.map((interview) => {
+  const historyItems: CandidateHistoryItem[] = candidateInterviews.map((interview) => {
     const report = getReportByInterviewId(interview.id);
     const evaluation = getEvaluationByInterviewId(interview.id);
     const average = getAverageScore(evaluation?.scores);
@@ -2500,7 +2494,6 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
       realId: interview.id,
     };
   });
-  const historyItems = [...realHistory, ...(isDemoCandidate ? HISTORICO : [])];
 
   const [filtro, setFiltro] = useState("Todos");
   const filtered = historyItems.filter(h => {
@@ -2591,7 +2584,7 @@ function InterviewSetupScreen({
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
-  session: MockAuthSession;
+  session: AuthSession;
 }) {
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
@@ -2840,7 +2833,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
 
 // ─── Fase A: ENT-008 Confirmação de Envio ─────────────────────────────────────
 
-function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; session: MockAuthSession }) {
+function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; session: AuthSession }) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
@@ -3181,7 +3174,7 @@ function LegalPageLayout({
   title: string;
   updatedAt: string;
   introduction: string;
-  session: MockAuthSession;
+  session: AuthSession;
   onNavigate: (s: Screen) => void;
   children: ReactNode;
   actions: ReactNode;
@@ -3298,7 +3291,7 @@ function LegalInfoList({ items }: { items: string[][] }) {
   );
 }
 
-function TermsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function TermsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const sections: LegalSection[] = [
     {
       title: "1. Sobre o RH Connect",
@@ -3494,7 +3487,7 @@ function TermsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void;
 
 // ─── Fase C: LEG-002 Política de Privacidade ─────────────────────────────────
 
-function PrivacyScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function PrivacyScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const sections: LegalSection[] = [
     {
       title: "1. Responsável pelo tratamento",
@@ -3798,7 +3791,7 @@ function ConfirmModal({
   );
 }
 
-function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: AuthSession }) {
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
   const account = getCandidateAccountConfig(candidateUser);
@@ -4753,8 +4746,8 @@ function ProtectedRoute({
   role,
   children,
 }: {
-  session: MockAuthSession;
-  role: MockUserRole;
+  session: AuthSession;
+  role: UserRole;
   children: ReactNode;
 }) {
   const location = useLocation();
@@ -4782,7 +4775,7 @@ function ProtectedRoute({
   return <>{children}</>;
 }
 
-function PublicAuthRoute({ session, children }: { session: MockAuthSession; children: ReactNode }) {
+function PublicAuthRoute({ session, children }: { session: AuthSession; children: ReactNode }) {
   if (session.authenticated && session.user?.accountStatus === "ACTIVE") {
     return <Navigate to={getEntryPathForSession(session)} replace />;
   }
@@ -4793,12 +4786,36 @@ function PublicAuthRoute({ session, children }: { session: MockAuthSession; chil
 function AppRoutes() {
   const routerNavigate = useNavigate();
   const location = useLocation();
-  const [session, setSession] = useState(() => getMockAuthSession());
+  const [session, setSession] = useState<AuthSession>({ authenticated: false, user: null });
+  const [sessionRestored, setSessionRestored] = useState(false);
   const [interviewDraft, setInterviewDraft] = useState(createEmptyInterviewDraft);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((user) => {
+        if (cancelled) return;
+        setSession(user ? { authenticated: true, user } : { authenticated: false, user: null });
+      })
+      .catch(() => {
+        if (!cancelled) setSession({ authenticated: false, user: null });
+      })
+      .finally(() => {
+        if (!cancelled) setSessionRestored(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    await logoutUserApi();
+    setSession({ authenticated: false, user: null });
+  };
+
   const navigate = (screen: Screen) => {
     if ((screen === "auth" || screen === "landing") && session.authenticated) {
-      setSession(logoutMockUser());
-      routerNavigate("/login");
+      void handleLogout().then(() => routerNavigate("/login"));
       return;
     }
 
@@ -4814,12 +4831,16 @@ function AppRoutes() {
 
     routerNavigate(targetPath);
   };
-  const completeOnboardingAndNavigate = (screen: Screen) => {
-    setSession(completeMockOnboarding());
-    routerNavigate(getPathForScreen(screen));
+  const completeOnboardingAndNavigate = async (screen: Screen, role: UserRole) => {
+    try {
+      const user = await completeOnboardingApi(role);
+      setSession({ authenticated: true, user });
+    } finally {
+      routerNavigate(getPathForScreen(screen));
+    }
   };
-  const loginWithCredentials = (email: string, password: string) => {
-    const result = loginMockWithCredentials(email, password);
+  const handleLogin = async (email: string, password: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const result = await loginWithCredentialsApi(email, password);
     if (!result.ok) {
       return result;
     }
@@ -4827,89 +4848,104 @@ function AppRoutes() {
     routerNavigate(getEntryPathForSession(result.session));
     return { ok: true as const };
   };
-  const registerCandidate = (data: { name: string; email: string; password: string }) => {
-    const result = registerMockCandidate(data);
+  const handleRegister = async (data: { name: string; email: string; password: string }): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const result = await registerCandidateApi(data);
     if (!result.ok) {
       return result;
     }
-    saveRememberedLoginEmail(result.candidate.email);
-    routerNavigate("/login");
+    saveRememberedLoginEmail(result.user.email);
+    const loginResult = await loginWithCredentialsApi(result.user.email, data.password);
+    if (loginResult.ok) {
+      setSession(loginResult.session);
+      routerNavigate(getEntryPathForSession(loginResult.session));
+    } else {
+      routerNavigate("/login");
+    }
     return { ok: true as const };
   };
-  const protect = (role: MockUserRole, children: ReactNode) => (
+  const protect = (role: UserRole, children: ReactNode) => (
     <ProtectedRoute session={session} role={role}>{children}</ProtectedRoute>
   );
   const evaluatorIdentity = getEvaluatorIdentity(session);
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <Toaster position="top-center" richColors />
-      <div className="flex-1 flex flex-col">
-        <Routes>
-          <Route path="/" element={<LandingScreen onNavigate={navigate} />} />
-          <Route path="/login" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={loginWithCredentials} onRegister={registerCandidate} initialTab="login" /></PublicAuthRoute>} />
-          <Route path="/register" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={loginWithCredentials} onRegister={registerCandidate} initialTab="register" /></PublicAuthRoute>} />
-          <Route path="/terms" element={<TermsScreen onNavigate={navigate} session={session} />} />
-          <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} session={session} />} />
-          <Route path="/verify-email" element={<EmailVerifyScreen onNavigate={navigate} />} />
-          <Route path="/forgot-password" element={<ForgotPasswordScreen onNavigate={navigate} />} />
-          <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
+    <SessionContext.Provider value={session}>
+      <div className="flex flex-col min-h-screen">
+        <Toaster position="top-center" richColors />
+        <div className="flex-1 flex flex-col">
+          {sessionRestored ? (
+            <Routes>
+              <Route path="/" element={<LandingScreen onNavigate={navigate} />} />
+              <Route path="/login" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={handleLogin} onRegister={handleRegister} initialTab="login" /></PublicAuthRoute>} />
+              <Route path="/register" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={handleLogin} onRegister={handleRegister} initialTab="register" /></PublicAuthRoute>} />
+              <Route path="/terms" element={<TermsScreen onNavigate={navigate} session={session} />} />
+              <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} session={session} />} />
+              <Route path="/verify-email" element={<EmailVerifyScreen onNavigate={navigate} />} />
+              <Route path="/forgot-password" element={<ForgotPasswordScreen onNavigate={navigate} />} />
+              <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
 
-          <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard")} />)} />
-          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} />)} />
-          <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
-          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} />)} />
-          <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
+              <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard", "CANDIDATE")} />)} />
+              <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} />)} />
+              <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
+              <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
+              <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} />)} />
+              <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} />)} />
+              <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
+              <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} />)} />
+              <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
+              <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
+              <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} />)} />
+              <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
+              <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
+              <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+              <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
+              <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} />)} />
+              <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
+              <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
+              <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
 
-          <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
-          <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
-          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} />)} />
-          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
-          <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />
+              <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
+              <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard", "EVALUATOR")} />)} />
+              <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+              <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+              <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+              <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+              <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+              <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} />)} />
+              <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+              <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
+              <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />
 
-          <Route path="/admin/onboarding" element={protect("ADMIN", <AdminOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("admin-dashboard")} />)} />
-          <Route path="/admin/dashboard" element={protect("ADMIN", <AdminDashboardScreen onNavigate={navigate} />)} />
-          <Route path="/admin/candidates" element={protect("ADMIN", <AdminCandidatesScreen onNavigate={navigate} />)} />
-          <Route path="/admin/candidates/:id" element={protect("ADMIN", <AdminCandidateDetailScreen onNavigate={navigate} />)} />
-          <Route path="/admin/evaluators" element={protect("ADMIN", <AdminEvaluatorsScreen onNavigate={navigate} />)} />
-          <Route path="/admin/evaluators/new" element={protect("ADMIN", <AdminEvaluatorFormScreen onNavigate={navigate} />)} />
-          <Route path="/admin/interviews" element={protect("ADMIN", <AdminInterviewsScreen onNavigate={navigate} />)} />
-          <Route path="/admin/assignments" element={protect("ADMIN", <AdminAssignScreen onNavigate={navigate} />)} />
-          <Route path="/admin/questions" element={protect("ADMIN", <AdminQuestionsScreen onNavigate={navigate} />)} />
-          <Route path="/admin/questions/new" element={protect("ADMIN", <AdminQuestionFormScreen onNavigate={navigate} />)} />
-          <Route path="/admin/roles" element={protect("ADMIN", <AdminRolesScreen onNavigate={navigate} />)} />
-          <Route path="/admin/criteria" element={protect("ADMIN", <AdminCriteriaScreen onNavigate={navigate} />)} />
-          <Route path="/admin/consents" element={protect("ADMIN", <AdminConsentScreen onNavigate={navigate} />)} />
-          <Route path="/admin/audit" element={protect("ADMIN", <AdminAuditScreen onNavigate={navigate} />)} />
-          <Route path="/admin/settings" element={protect("ADMIN", <AdminSettingsScreen onNavigate={navigate} />)} />
+              <Route path="/admin/onboarding" element={protect("ADMIN", <AdminOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("admin-dashboard", "ADMIN")} />)} />
+              <Route path="/admin/dashboard" element={protect("ADMIN", <AdminDashboardScreen onNavigate={navigate} />)} />
+              <Route path="/admin/candidates" element={protect("ADMIN", <AdminCandidatesScreen onNavigate={navigate} />)} />
+              <Route path="/admin/candidates/:id" element={protect("ADMIN", <AdminCandidateDetailScreen onNavigate={navigate} />)} />
+              <Route path="/admin/evaluators" element={protect("ADMIN", <AdminEvaluatorsScreen onNavigate={navigate} />)} />
+              <Route path="/admin/evaluators/new" element={protect("ADMIN", <AdminEvaluatorFormScreen onNavigate={navigate} />)} />
+              <Route path="/admin/interviews" element={protect("ADMIN", <AdminInterviewsScreen onNavigate={navigate} />)} />
+              <Route path="/admin/assignments" element={protect("ADMIN", <AdminAssignScreen onNavigate={navigate} />)} />
+              <Route path="/admin/questions" element={protect("ADMIN", <AdminQuestionsScreen onNavigate={navigate} />)} />
+              <Route path="/admin/questions/new" element={protect("ADMIN", <AdminQuestionFormScreen onNavigate={navigate} />)} />
+              <Route path="/admin/roles" element={protect("ADMIN", <AdminRolesScreen onNavigate={navigate} />)} />
+              <Route path="/admin/criteria" element={protect("ADMIN", <AdminCriteriaScreen onNavigate={navigate} />)} />
+              <Route path="/admin/consents" element={protect("ADMIN", <AdminConsentScreen onNavigate={navigate} />)} />
+              <Route path="/admin/audit" element={protect("ADMIN", <AdminAuditScreen onNavigate={navigate} />)} />
+              <Route path="/admin/settings" element={protect("ADMIN", <AdminSettingsScreen onNavigate={navigate} />)} />
 
-          <Route path="/candidate" element={protect("CANDIDATE", <Navigate to="/candidate/dashboard" replace />)} />
-          <Route path="/evaluator" element={protect("EVALUATOR", <Navigate to="/evaluator/dashboard" replace />)} />
-          <Route path="/admin" element={protect("ADMIN", <Navigate to="/admin/dashboard" replace />)} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+              <Route path="/candidate" element={protect("CANDIDATE", <Navigate to="/candidate/dashboard" replace />)} />
+              <Route path="/evaluator" element={protect("EVALUATOR", <Navigate to="/evaluator/dashboard" replace />)} />
+              <Route path="/admin" element={protect("ADMIN", <Navigate to="/admin/dashboard" replace />)} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          ) : (
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 text-muted-foreground">
+              <Spinner className="h-8 w-8" />
+              <p className="text-sm">Restaurando sua sessão...</p>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </SessionContext.Provider>
   );
 }
 

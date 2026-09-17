@@ -61,3 +61,7 @@ temp/
 # Keep the documentation and SHA-256 in Git, but do not version the ZIP itself.
 docs/00-fontes-originais/prototipo-01/*.zip
 apps/api/cookies.txt
+
+# Local docker compose (not versioned)
+docker-compose.yml
+docker-compose.*.yml

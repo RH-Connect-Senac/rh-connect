@@ -8,8 +8,7 @@ import {
   type CandidateProfilePatch,
   type CandidateProfilesStorage,
 } from "../domain/candidate-profile";
-import { DEFAULT_CANDIDATE } from "../mocks/interviews";
-import type { MockAuthUser } from "./auth-service";
+import type { AuthUser } from "./auth-service";
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -34,35 +33,6 @@ function createEmptyCandidateProfile(candidateId: string): CandidateProfile {
     experiences: [],
     technicalSkills: [],
     behavioralSkills: [],
-    updatedAt: nowIso(),
-  };
-}
-
-function createDemoCandidateProfile(): CandidateProfile {
-  return {
-    ...createEmptyCandidateProfile(DEFAULT_CANDIDATE.id),
-    professionalSummary: "Profissional em busca da primeira oportunidade na área de Tecnologia da Informação.",
-    areaId: "information-technology",
-    subareaId: "frontend-development",
-    desiredRole: "Desenvolvedor Front-end",
-    seniority: "Júnior",
-    contractType: "CLT",
-    formations: [
-      {
-        id: "demo-formation-ads",
-        title: "Análise e Desenvolvimento de Sistemas",
-        institution: "SENAC-DF",
-        level: "Tecnólogo",
-        status: "Em andamento",
-        startDate: "2025",
-        endDate: "2026",
-        period: "2025 – 2026",
-      },
-    ],
-    courses: [],
-    experiences: [],
-    technicalSkills: ["JavaScript", "React", "Git", "Testes", "SQL", "Comunicação técnica"],
-    behavioralSkills: ["Comunicação", "Trabalho em equipe", "Criatividade", "Proatividade"],
     updatedAt: nowIso(),
   };
 }
@@ -222,7 +192,7 @@ function cleanExperiences(values: CandidateExperience[]) {
 function createInitialStorage(): CandidateProfilesStorage {
   return {
     version: CANDIDATE_PROFILE_VERSION,
-    profiles: [createDemoCandidateProfile()],
+    profiles: [],
   };
 }
 
@@ -254,20 +224,16 @@ function saveStorage(storage: CandidateProfilesStorage) {
   window.localStorage.setItem(CANDIDATE_PROFILE_STORAGE_KEY, JSON.stringify(storage));
 }
 
-function resolveProfileSeed(candidateId: string, sessionUser?: Pick<MockAuthUser, "id" | "role"> | null) {
-  if (candidateId === DEFAULT_CANDIDATE.id || sessionUser?.id === "candidate-demo") {
-    return createDemoCandidateProfile();
-  }
-
+function resolveProfileSeed(candidateId: string) {
   return createEmptyCandidateProfile(candidateId);
 }
 
-export function getCandidateProfile(candidateId: string, sessionUser?: Pick<MockAuthUser, "id" | "role"> | null) {
+export function getCandidateProfile(candidateId: string, sessionUser?: Pick<AuthUser, "id" | "role"> | null) {
   const storage = readStorage();
   const existing = storage.profiles.find((profile) => profile.candidateId === candidateId);
   if (existing) return existing;
 
-  const profile = resolveProfileSeed(candidateId, sessionUser);
+  const profile = resolveProfileSeed(candidateId);
   saveStorage({
     version: CANDIDATE_PROFILE_VERSION,
     profiles: [...storage.profiles, profile],

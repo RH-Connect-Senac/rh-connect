@@ -3,11 +3,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
-import { DEFAULT_CANDIDATE } from "../mocks/interviews";
-import {
-  getMockCandidateAccounts,
-  type MockAccountStatus,
-} from "../services/auth-service";
+import type { AccountStatus } from "../services/auth-service";
 import { getCandidateProfile } from "../services/candidate-profile-service";
 import {
   assignInterview,
@@ -161,34 +157,19 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 // ─── Shared mock data ─────────────────────────────────────────────────────────
 
 const CANDIDATES = [
-  { id: "#C-001", name: "Fernanda Oliveira", email: "fernanda.o@gmail.com", job: "Desenvolvedor Front-end", date: "11/08/2026", status: "Aguardando" as const, score: null },
-  { id: "#C-002", name: "Rafael Mendes",     email: "rafael.m@gmail.com",   job: "Desenvolvedor Full Stack",       date: "11/08/2026", status: "Em avaliação" as const, score: null },
-  { id: "#C-003", name: "Isabela Costa",     email: "isabela.c@gmail.com",  job: "Analista de Recrutamento e Seleção", date: "10/08/2026", status: "Concluído" as const, score: 8.4 },
-  { id: "#C-004", name: "Paulo Carvalho",    email: "paulo.c@gmail.com",    job: "Designer UX/UI",       date: "10/08/2026", status: "Concluído" as const, score: 7.1 },
-  { id: "#C-005", name: "Mariana Souza",     email: "mariana.s@gmail.com",  job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, score: 9.0 },
-  { id: "#C-006", name: "Lucas Ferreira",    email: "lucas.f@gmail.com",    job: "Analista de TI",       date: "09/08/2026", status: "Concluído" as const, score: 6.8 },
-];
+] as Array<{ id: string; name: string; email: string; job: string; date: string; status: "Aguardando" | "Em avaliação" | "Concluído"; score: number | null }>;
 
 const EVALUATORS = [
-  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
-  { id: "evaluator-beatriz-lima", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
-  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
-  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
-];
+] as Array<{ id: string; name: string; email: string; area: string; pending: number; done: number; avg: number; status: "Ativo" | "Férias" }>;
 
 const INTERVIEWS = [
-  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedor Front-end", submittedAt: "2026-08-11T09:18:00-03:00", status: "Aguardando" as const, evaluator: "—",              score: null },
-  { id: "#E-0040", candidate: "Rafael Mendes",     job: "Desenvolvedor Full Stack",        submittedAt: "2026-08-11T14:05:00-03:00", status: "Em avaliação" as const, evaluator: "Carlos A.",     score: null },
-  { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", submittedAt: "2026-08-10T10:40:00-03:00", status: "Concluído" as const, evaluator: "Beatriz L.",     score: 8.4 },
-  { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",        submittedAt: "2026-08-10T15:25:00-03:00", status: "Concluído" as const, evaluator: "Carlos A.",     score: 7.1 },
-  { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",       submittedAt: "2026-08-09T11:10:00-03:00", status: "Concluído" as const, evaluator: "Camila D.",     score: 9.0 },
-];
+] as Array<{ id: string; candidate: string; job: string; submittedAt: string; status: "Aguardando" | "Em avaliação" | "Concluído"; evaluator: string; score: number | null }>;
 
 type AdminCandidateRow = {
   id: string;
   name: string;
   email: string;
-  accountStatus: MockAccountStatus;
+  accountStatus: AccountStatus;
   onboardingLabel: string;
   createdAt?: string;
 };
@@ -236,18 +217,6 @@ function createAdminCandidateRows(): AdminCandidateRow[] {
     });
   });
 
-  getMockCandidateAccounts().forEach((candidate) => {
-    const candidateId = candidate.id === "candidate-demo" ? DEFAULT_CANDIDATE.id : candidate.id;
-    candidatesByKey.set(candidateId, {
-      id: candidateId,
-      name: candidate.name,
-      email: candidate.email,
-      accountStatus: candidate.accountStatus,
-      onboardingLabel: candidate.onboardingCompleted ? "Concluído" : "Pendente",
-      createdAt: candidate.createdAt,
-    });
-  });
-
   return Array.from(candidatesByKey.values());
 }
 
@@ -290,14 +259,7 @@ function createAdminInterviewRows(): AdminInterviewRow[] {
 }
 
 const QUESTIONS_DATA = [
-  { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica",  uses: 247, active: true },
-  { id: 2, text: "Descreva uma situação em que precisou lidar com um prazo apertado.", category: "Comportamental", difficulty: "Intermediária", uses: 231, active: true },
-  { id: 3, text: "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?", category: "Perfil", difficulty: "Básica", uses: 218, active: true },
-  { id: 4, text: "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.", category: "Comportamental", difficulty: "Intermediária", uses: 205, active: true },
-  { id: 5, text: "Onde você se vê profissionalmente daqui a três anos?", category: "Carreira", difficulty: "Básica", uses: 198, active: true },
-  { id: 6, text: "Como você lida com situações de conflito no ambiente de trabalho?", category: "Comportamental", difficulty: "Avançada", uses: 124, active: true },
-  { id: 7, text: "Descreva um projeto ou iniciativa do qual você se orgulha.", category: "Experiência", difficulty: "Intermediária", uses: 98, active: false },
-];
+] as Array<{ id: number; text: string; category: string; difficulty: string; uses: number; active: boolean }>;
 
 // ─── Screen: Dashboard Administrativo ────────────────────────────────────────
 
@@ -540,17 +502,19 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
   );
 
   const statusVariant = {
+    PENDING_VERIFICATION: "warning",
     ACTIVE: "success",
     INVITED: "warning",
     BLOCKED: "error",
     INACTIVE: "default",
-  } satisfies Record<MockAccountStatus, "default" | "success" | "warning" | "error" | "info" | "purple">;
+  } satisfies Record<AccountStatus, "default" | "success" | "warning" | "error" | "info" | "purple">;
   const statusLabel = {
+    PENDING_VERIFICATION: "Em verificação",
     ACTIVE: "Ativa",
     INVITED: "Convidada",
     BLOCKED: "Bloqueada",
     INACTIVE: "Inativa",
-  } satisfies Record<MockAccountStatus, string>;
+  } satisfies Record<AccountStatus, string>;
 
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
@@ -567,14 +531,14 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
             className="bg-white"
           />
           <div className="flex gap-2 flex-wrap">
-            {["all","ACTIVE","INVITED","BLOCKED","INACTIVE"].map(s => (
+            {["all","ACTIVE","INVITED","BLOCKED","INACTIVE","PENDING_VERIFICATION"].map(s => (
               <FilterChip
                 key={s}
                 onClick={() => setStatus(s)}
                 selected={status === s}
                 className={status === s ? "py-2" : "bg-white py-2 hover:bg-muted"}
               >
-                {s === "all" ? "Todos" : statusLabel[s as MockAccountStatus]}
+                {s === "all" ? "Todos" : statusLabel[s as AccountStatus]}
               </FilterChip>
             ))}
           </div>
@@ -626,7 +590,6 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Gestão de Avaliadores ───────────────────────────────────────────
 
 export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const routerNavigate = useNavigate();
   const [showAdd, setShowAdd] = useState(false);
   const [inviteSent, setInviteSent] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -678,7 +641,7 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
               </p>
             </div>
             <button
-              onClick={() => routerNavigate("/evaluator/activate?token=demo-patricia")}
+              onClick={() => onNavigate("eval-activate")}
               className="text-xs text-green-700 underline underline-offset-2 hover:text-green-900 shrink-0 font-medium">
               Ver simulação da ativação
             </button>

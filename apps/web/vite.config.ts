@@ -76,6 +76,18 @@ export default defineConfig({
      * Mantém o comportamento adequado atrás do Nginx.
      */
     cors: false,
+
+    /*
+     * Proxy da API: o navegador fala com /rhconnect/api e o Vite
+     * repassa para o NestJS (mesmo domínio => cookies httpOnly fluem).
+     */
+    proxy: {
+      '/rhconnect/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/rhconnect\/api/, '/api'),
+      },
+    },
   },
 
   preview: {

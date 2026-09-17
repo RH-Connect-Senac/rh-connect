@@ -1,10 +1,14 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
-const refreshToken = randomBytes(64).toString('hex');
 
+@Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
@@ -88,6 +92,8 @@ export class AuthService {
       role: user.user_role,
     });
 
+    const refreshToken = randomBytes(64).toString('hex');
+
     const refreshTokenHash = createHash('sha256')
       .update(refreshToken)
       .digest('hex');
@@ -110,7 +116,7 @@ export class AuthService {
     };
   }
 
-  async refresh(refreshToken: string) {
+  async refresh(refreshToken: string | undefined) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token não informado');
     }
@@ -152,7 +158,7 @@ export class AuthService {
     };
   }
 
-  async logout(refreshToken: string) {
+  async logout(refreshToken: string | undefined) {
     if (!refreshToken) {
       return;
     }
