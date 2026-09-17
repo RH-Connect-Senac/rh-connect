@@ -70,6 +70,27 @@ model evaluator_profile {
   @@index([user_id], map: "idx_evaluator_profile_user_id")
 }
 
+model external_learning_resource {
+  resource_id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source                String   @db.VarChar(50)
+  external_key          String   @unique @db.VarChar(128)
+  title                 String   @db.VarChar(400)
+  resource_type         String   @db.VarChar(50)
+  section               String?  @db.VarChar(200)
+  area                  String?  @db.VarChar(120)
+  url                   String?  @db.Text
+  cover_url             String?  @db.Text
+  direct_link_available Boolean  @default(false)
+  is_active             Boolean  @default(true)
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([source], map: "idx_external_learning_resource_source")
+  @@index([area], map: "idx_external_learning_resource_area")
+  @@index([resource_type], map: "idx_external_learning_resource_type")
+  @@index([is_active], map: "idx_external_learning_resource_active")
+}
+
 model session {
   session_id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id            Int
