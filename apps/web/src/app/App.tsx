@@ -78,6 +78,10 @@ import {
   openMaterial,
   toggleMaterialFavorite,
 } from "./services/materials-service";
+import {
+  listCacholaResources,
+  type ExternalLearningResource,
+} from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
 import { DEFAULT_CANDIDATE } from "./mocks/interviews";
 import {
@@ -4326,15 +4330,82 @@ function MaterialCard({
   );
 }
 
+function ExternalResourceCard({ resource }: { resource: ExternalLearningResource }) {
+  const handleOpen = () => {
+    if (!resource.url) {
+      toast.info("Este recurso abre pela plataforma Cachola.");
+      return;
+    }
+
+    window.open(resource.url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 flex flex-col gap-3 hover:shadow-md transition-all">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+            <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">
+              {resource.resourceType}
+            </UIBadge>
+            <span className="text-[11px] text-muted-foreground">Cachola Senac</span>
+          </div>
+          <p className="font-bold text-foreground text-sm leading-snug mb-1">{resource.title}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+            {resource.section && resource.section !== "Sem seção"
+              ? resource.section
+              : "Conteúdo complementar da biblioteca digital Cachola para ampliar sua preparação."}
+          </p>
+        </div>
+        <div className="p-1.5 rounded-lg text-muted-foreground shrink-0">
+          <BookOpen className="w-4 h-4" />
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
+        <UIBadge variant="primary">{resource.area ?? "Cachola"}</UIBadge>
+        <Btn variant="outline" size="sm" onClick={handleOpen}>Abrir Cachola</Btn>
+      </div>
+    </Card>
+  );
+}
+
 function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const routerNavigate = useNavigate();
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
   const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates());
+  const [cacholaResources, setCacholaResources] = useState<ExternalLearningResource[]>([]);
+  const [loadingCacholaResources, setLoadingCacholaResources] = useState(false);
   const [showCats, setShowCats] = useState(false);
 
   const materiais = mergeMaterialsWithUserState(materialStates);
+
+  useEffect(() => {
+    let active = true;
+
+    setLoadingCacholaResources(true);
+    listCacholaResources({ limit: 3 })
+      .then((resources) => {
+        if (active) {
+          setCacholaResources(resources);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCacholaResources([]);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingCacholaResources(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates());
 
@@ -4396,6 +4467,26 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 {recentes.map(m => (
                   <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Fonte complementar: Cachola */}
+        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingCacholaResources || cacholaResources.length > 0) && (
+          <section>
+            <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
+              <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares da Cachola
+            </h2>
+            {loadingCacholaResources ? (
+              <Card className="p-4 text-sm text-muted-foreground">
+                Buscando recomendações complementares...
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {cacholaResources.map(resource => (
+                  <ExternalResourceCard key={resource.id} resource={resource} />
                 ))}
               </div>
             )}
