@@ -2,10 +2,13 @@ import type { JobInterviewContext } from "../services/interview-context-service"
 
 export type InterviewStatus =
   | "IN_PROGRESS"
+  | "PENDING_AI_EVALUATION"
   | "PENDING_EVALUATION"
   | "ASSIGNED"
   | "IN_EVALUATION"
   | "EVALUATED";
+
+export type EvaluationMode = "AI" | "HUMAN";
 
 export type EvaluationStatus = "DRAFT" | "COMPLETED";
 
@@ -24,6 +27,7 @@ export type Interview = {
   candidateName: string;
   candidateEmail: string;
   context: JobInterviewContext;
+  evaluationMode: EvaluationMode;
   status: InterviewStatus;
   answers: InterviewAnswer[];
   submittedAt?: string;
@@ -77,5 +81,6 @@ export type SubmitInterviewInput = {
   candidateName: string;
   candidateEmail: string;
   context: JobInterviewContext;
+  evaluationMode: EvaluationMode;
   answers: InterviewAnswer[];
 };

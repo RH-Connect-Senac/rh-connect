@@ -50,7 +50,10 @@ function normalizeState(parsed: unknown): InterviewsMockState {
 
   return {
     version: INTERVIEWS_MOCK_VERSION,
-    interviews: candidate.interviews,
+    interviews: candidate.interviews.map((interview) => ({
+      ...interview,
+      evaluationMode: interview.evaluationMode ?? "HUMAN",
+    })),
     evaluations: candidate.evaluations,
     reports: candidate.reports,
     assignments: candidate.assignments,
@@ -100,7 +103,8 @@ export function submitInterview(input: SubmitInterviewInput): Interview {
     candidateName: input.candidateName,
     candidateEmail: input.candidateEmail,
     context: input.context,
-    status: "PENDING_EVALUATION",
+    evaluationMode: input.evaluationMode,
+    status: input.evaluationMode === "HUMAN" ? "PENDING_EVALUATION" : "PENDING_AI_EVALUATION",
     answers: input.answers,
     submittedAt: timestamp,
     createdAt: timestamp,
@@ -330,6 +334,7 @@ export function formatScore(score?: number | null) {
 export function statusLabelFromInterview(status: Interview["status"]) {
   const labels = {
     IN_PROGRESS: "Em andamento",
+    PENDING_AI_EVALUATION: "Aguardando avaliação por IA",
     PENDING_EVALUATION: "Aguardando avaliação",
     ASSIGNED: "Atribuída",
     IN_EVALUATION: "Em avaliação",
