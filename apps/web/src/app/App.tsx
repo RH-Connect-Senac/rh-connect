@@ -1,7 +1,7 @@
 /** RH Connect — Aplicação Front-end */
 
 import { useState, useRef, useEffect, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase,
@@ -109,6 +109,7 @@ import {
   isCandidateProfileReadyForInterview,
   saveCandidateProfile,
 } from "./services/candidate-profile-service";
+import type { EvaluationMode } from "./domain/interviews";
 import type {
   CandidateCourse,
   CandidateExperience,
@@ -122,7 +123,7 @@ import type {
 const AUTH_SCREENS: Screen[] = [
   "dashboard","profile","settings","materials","notifications",
   "interview-history","development","disc-test",
-  "interview-setup","consent","prep","interview","review","interview-confirm","interview-done",
+  "interview-setup","consent","evaluation-mode","prep","interview","review","interview-confirm","interview-done",
   "pending","report",
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
   "admin-dashboard","admin-candidates","admin-candidate-detail","admin-evaluators","admin-evaluator-form",
@@ -191,6 +192,7 @@ type InterviewDraft = {
   context: JobInterviewContext | null;
   questions: InterviewQuestion[];
   answers: Record<number, string>;
+  evaluationMode: EvaluationMode | null;
 };
 
 const ANSWER_MAX_CHARS = 1000;
@@ -216,7 +218,14 @@ const createEmptyInterviewDraft = (): InterviewDraft => ({
   context: null,
   questions: [],
   answers: {},
+  evaluationMode: null,
 });
+
+function evaluationModeLabel(mode?: EvaluationMode | null) {
+  if (mode === "AI") return "Avaliação por IA";
+  if (mode === "HUMAN") return "Avaliação humana";
+  return "Não selecionada";
+}
 
 type SpeechRecognitionConstructor = new () => {
   lang: string;
@@ -1482,6 +1491,21 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
     return <DraftWizardGuard current="prep" onNavigate={onNavigate} />;
   }
 
+  if (!draft.evaluationMode) {
+    return (
+      <AuthLayout current="prep" onNavigate={onNavigate} title="Modalidade de avaliação" subtitle="Escolha necessária antes das orientações">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Escolha a modalidade antes de continuar</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            A modalidade de avaliação precisa ser definida antes de iniciar as perguntas.
+          </p>
+          <Btn variant="primary" onClick={() => onNavigate("evaluation-mode")}>Escolher modalidade</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   return (
     <AuthLayout current="prep" onNavigate={onNavigate} title="Orientações da Entrevista" subtitle="Leia as orientações antes de responder">
       <div className="w-full">
@@ -1562,15 +1586,15 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
         <Alert variant="info" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-sm text-blue-700">
-            <strong>Importante:</strong> a próxima etapa apresenta o consentimento. O texto jurídico ainda está sujeito à validação da equipe.
+            <strong>Importante:</strong> responda com calma e revise suas respostas antes de concluir o envio.
           </p>
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("interview-setup")}>Voltar</Btn>
-          <Btn variant="primary" size="lg" onClick={() => onNavigate("consent")}>
-            <span className="hidden sm:inline">Continuar para consentimento</span>
-            <span className="sm:hidden">Consentimento</span>
+          <Btn variant="outline" onClick={() => onNavigate("evaluation-mode")}>Voltar</Btn>
+          <Btn variant="primary" size="lg" onClick={() => onNavigate("interview")}>
+            <span className="hidden sm:inline">Iniciar perguntas</span>
+            <span className="sm:hidden">Perguntas</span>
             <ChevronRight className="w-5 h-5" />
           </Btn>
         </div>
@@ -1581,6 +1605,14 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
 
 // ─── Screen 8: Entrevista Simulada ────────────────────────────────────────────
 
+function getQuestionIndexFromSearchParam(value: string | null, questionCount: number) {
+  const questionNumber = Number(value);
+  if (!Number.isInteger(questionNumber) || questionNumber < 1 || questionNumber > questionCount) {
+    return 0;
+  }
+  return questionNumber - 1;
+}
+
 function InterviewScreen({
   onNavigate,
   draft,
@@ -1590,13 +1622,15 @@ function InterviewScreen({
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
 }) {
-  const [qIdx, setQIdx] = useState(0);
+  const [searchParams] = useSearchParams();
+  const questions = draft.questions;
+  const targetQuestionIndex = getQuestionIndexFromSearchParam(searchParams.get("question"), questions.length);
+  const [qIdx, setQIdx] = useState(targetQuestionIndex);
   const [speechError, setSpeechError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
   const [dictating, setDictating] = useState(false);
   const advancingRef = useRef(false);
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
-  const questions = draft.questions;
   const question = questions[qIdx];
   const answer = question ? draft.answers[question.id] ?? "" : "";
   const answerLength = answer.length;
@@ -1606,6 +1640,10 @@ function InterviewScreen({
   useEffect(() => {
     return () => recognitionRef.current?.stop();
   }, []);
+
+  useEffect(() => {
+    setQIdx((current) => current === targetQuestionIndex ? current : targetQuestionIndex);
+  }, [targetQuestionIndex]);
 
   const updateAnswer = (value: string) => {
     if (!question) return;
@@ -1694,6 +1732,21 @@ function InterviewScreen({
     return <DraftWizardGuard current="interview" onNavigate={onNavigate} />;
   }
 
+  if (!draft.evaluationMode) {
+    return (
+      <AuthLayout current="interview" onNavigate={onNavigate} title="Modalidade de avaliação" subtitle="Escolha necessária antes das perguntas">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Escolha a modalidade antes de responder</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            A entrevista só pode iniciar depois da escolha entre avaliação por IA ou avaliação humana.
+          </p>
+          <Btn variant="primary" onClick={() => onNavigate("evaluation-mode")}>Escolher modalidade</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   return (
     <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
       <div className="w-full bg-muted rounded-full h-1 mb-5">
@@ -1765,7 +1818,7 @@ function InterviewScreen({
             <div className="space-y-2">
               {questions.map((item, index) => {
                 const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const canOpenQuestion = index === qIdx || (index < qIdx && answered);
+                const canOpenQuestion = index === qIdx || answered;
                 return (
                   <button
                     key={item.id}
@@ -1811,10 +1864,14 @@ function InterviewScreen({
 // ─── Screen 9: Revisão e Envio ────────────────────────────────────────────────
 
 function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
+  const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
+  const editQuestion = (index: number) => {
+    routerNavigate(`${getPathForScreen("interview")}?question=${index + 1}`);
+  };
 
   if (!draft.context || draft.questions.length === 0) {
     return <DraftWizardGuard current="review" onNavigate={onNavigate} />;
@@ -1830,7 +1887,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   };
 
   return (
-    <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de enviar para avaliação humana">
+    <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de escolher a modalidade de avaliação">
       <div className="w-full">
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
           <Card className="p-3 sm:p-4 text-center">
@@ -1878,6 +1935,9 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
                     <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1">Resposta:</p>
                     <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
                   </div>
+                  <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} className="shrink-0">
+                    <Edit2 className="w-4 h-4" /> Editar
+                  </Btn>
                 </div>
               );
             })}
@@ -1889,7 +1949,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
           <label className="flex items-start gap-3 cursor-pointer">
             <input type="checkbox" className="mt-0.5 rounded shrink-0" checked={confirm} onChange={e => setConfirm(e.target.checked)} />
             <span className="text-sm text-foreground leading-relaxed">
-              Confirmo que revisei minhas respostas textuais e concordo com o envio para avaliação por um avaliador humano autorizado. Entendo que o envio é uma ação de difícil reversão.
+              Confirmo que revisei minhas respostas textuais e concordo com o envio para avaliação conforme a modalidade escolhida. Entendo que o envio é uma ação de difícil reversão.
             </span>
           </label>
         </Card>
@@ -1897,12 +1957,12 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
         <Alert variant="warning" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700">
-            Após o envio, suas respostas serão encaminhadas para avaliação humana. Prazo estimado de retorno: até <strong>3 dias úteis</strong>.
+            Após o envio, suas respostas serão registradas para avaliação conforme a modalidade escolhida.
           </p>
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("interview")}>
+          <Btn variant="outline" onClick={() => editQuestion(0)}>
             <Edit2 className="w-4 h-4" /> Editar respostas
           </Btn>
           <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady} onClick={handleSend}>
@@ -1928,6 +1988,24 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
   const candidateIdentity = getCandidateIdentity(session);
   const isRealPendingRoute = Boolean(id && id !== "interview-demo");
   const canAccessInterview = !isRealPendingRoute || !interview || interview.candidateId === candidateIdentity.id;
+  const evaluationMode = interview?.evaluationMode ?? "HUMAN";
+  const pendingDescription = evaluationMode === "AI"
+    ? "Sua entrevista foi recebida com sucesso e será analisada pela IA Avaliadora do RH Connect."
+    : "Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.";
+  const pendingStatusLabel = evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação";
+  const evaluationInfo = evaluationMode === "AI"
+    ? [
+        { q: "Quem avalia?",             a: "A IA Avaliadora do RH Connect analisa suas respostas considerando o contexto da vaga." },
+        { q: "Quando sai o resultado?",  a: "O relatório será disponibilizado após o processamento da avaliação." },
+        { q: "O que você vai receber?",  a: "Pontos fortes, pontos de atenção e recomendações para evoluir." },
+        { q: "Quem vê minhas respostas?", a: "Apenas perfis autorizados envolvidos no funcionamento da plataforma." },
+      ]
+    : [
+        { q: "Quem avalia?",             a: "Um avaliador humano autorizado com critérios padronizados de RH." },
+        { q: "Quanto tempo leva?",        a: "O resultado ficará disponível em até 72 horas após o envio." },
+        { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
+        { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
+      ];
   const TIMELINE = [
     { label: "Conta criada",          date: "02/07/2026",      done: true },
     { label: "Entrevista realizada",  date: "18/07/2026",      done: true },
@@ -1960,12 +2038,12 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
           </div>
           <h2 className="text-xl font-bold text-foreground mb-2">Entrevista em avaliação</h2>
           <p className="text-muted-foreground text-sm max-w-md mx-auto mb-5">
-            Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano treinado.
+            {pendingDescription}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <StatusBadge tone="warning">
               <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />
-              Em avaliação
+              {pendingStatusLabel}
             </StatusBadge>
             <span className="text-xs text-muted-foreground">· Protocolo #ENT-2026-0847</span>
           </div>
@@ -2003,12 +2081,7 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
               <Info className="w-4 h-4 text-blue-600" /> Sobre a avaliação
             </h3>
             <div className="space-y-3">
-              {[
-                { q: "Quem avalia?",             a: "Um avaliador treinado com critérios padronizados de RH." },
-                { q: "Quanto tempo leva?",        a: "Em geral, de 1 a 3 dias úteis após o envio." },
-                { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
-                { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
-              ].map(({ q, a }) => (
+              {evaluationInfo.map(({ q, a }) => (
                 <div key={q} className="p-3 bg-muted/40 rounded-xl">
                   <p className="text-xs font-bold text-foreground mb-1">{q}</p>
                   <p className="text-xs text-muted-foreground leading-relaxed">{a}</p>
@@ -2071,12 +2144,15 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
   }
 
   if (isRealReportRoute && (!report || report.status !== "AVAILABLE")) {
+    const pendingReportMessage = interview?.evaluationMode === "AI"
+      ? "O relatório ficará disponível após o processamento da avaliação por IA."
+      : "O relatório fica disponível após a conclusão da avaliação humana.";
     return (
       <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview?.context.title ?? "Entrevista em avaliação"}>
         <Card className="w-full max-w-2xl p-6 text-center">
           <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
           <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
-          <p className="text-sm text-muted-foreground mb-5">O relatório fica disponível após a conclusão da avaliação humana.</p>
+          <p className="text-sm text-muted-foreground mb-5">{pendingReportMessage}</p>
           <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
         </Card>
       </AuthLayout>
@@ -2609,7 +2685,7 @@ function InterviewSetupScreen({
     setConfirmed(false);
     try {
       const context = await analyzeJobUrl(url);
-      setDraft((current) => ({ ...current, context, questions: [], answers: {} }));
+      setDraft((current) => ({ ...current, context, questions: [], answers: {}, evaluationMode: null }));
       setStatus("success");
     } catch (err) {
       setStatus("error");
@@ -2625,8 +2701,8 @@ function InterviewSetupScreen({
     setGenerating(true);
     try {
       const questions = await generateInterviewQuestions(draft.context);
-      setDraft((current) => ({ ...current, questions, answers: {} }));
-      onNavigate("prep");
+      setDraft((current) => ({ ...current, questions, answers: {}, evaluationMode: null }));
+      onNavigate("consent");
     } finally {
       setGenerating(false);
     }
@@ -2774,7 +2850,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
             <div>
               <h3 className="font-bold text-foreground mb-1">Privacidade e uso de dados</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Para realizar a entrevista simulada, usaremos suas respostas textuais e o contexto da vaga para avaliação por um avaliador humano autorizado.
+                Para realizar a entrevista simulada, usaremos suas respostas textuais e o contexto da vaga para avaliação conforme a modalidade escolhida.
               </p>
             </div>
           </div>
@@ -2796,7 +2872,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
             <div className="flex-1">
               <p className="text-sm font-semibold text-foreground mb-1">Autorizo o uso das respostas textuais <span className="text-red-500">*</span></p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Autorizo o RH Connect a registrar minhas respostas textuais, associadas ao contexto da vaga de {draft.context?.title ?? "interesse"}, para avaliação por avaliador humano autorizado. Entendo que esta autorização é necessária para usar a entrevista simulada.
+                Autorizo o RH Connect a registrar minhas respostas textuais, associadas ao contexto da vaga de {draft.context?.title ?? "interesse"}, para avaliação conforme a modalidade escolhida. Entendo que esta autorização é necessária para usar a entrevista simulada.
               </p>
             </div>
           </label>
@@ -2824,7 +2900,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
           <Btn
             variant="primary"
             disabled={!consentRequired}
-            onClick={() => onNavigate("interview")}
+            onClick={() => onNavigate("evaluation-mode")}
             className="flex-1"
           >
             Concordar e continuar <ArrowRight className="w-4 h-4" />
@@ -2838,14 +2914,121 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
   );
 }
 
+function EvaluationModeScreen({
+  onNavigate,
+  draft,
+  setDraft,
+}: {
+  onNavigate: (s: Screen) => void;
+  draft: InterviewDraft;
+  setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+}) {
+  const evaluationMode = draft.evaluationMode;
+
+  if (!draft.context || draft.questions.length === 0) {
+    return <DraftWizardGuard current="evaluation-mode" onNavigate={onNavigate} />;
+  }
+
+  const selectEvaluationMode = (mode: EvaluationMode) => {
+    setDraft((current) => ({ ...current, evaluationMode: mode }));
+  };
+
+  return (
+    <AuthLayout
+      current="evaluation-mode"
+      onNavigate={onNavigate}
+      title="Modalidade de avaliação"
+      subtitle="Escolha como sua entrevista será avaliada"
+    >
+      <div className="w-full max-w-2xl space-y-5">
+        <Card className="p-5 sm:p-6">
+          <h3 className="font-bold text-foreground mb-2">Como você quer receber a avaliação?</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            Escolha uma modalidade antes de iniciar as perguntas. A opção selecionada será usada no envio final.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => selectEvaluationMode("AI")}
+              className={`text-left rounded-2xl border p-4 transition-all ${
+                evaluationMode === "AI"
+                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                  : "border-border bg-white hover:border-blue-200 hover:bg-blue-50/40"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${evaluationMode === "AI" ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600"}`}>
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-foreground">Avaliação por IA</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                    Receba uma análise automatizada da sua entrevista com pontos fortes, pontos de atenção e recomendações.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => selectEvaluationMode("HUMAN")}
+              className={`text-left rounded-2xl border p-4 transition-all ${
+                evaluationMode === "HUMAN"
+                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                  : "border-border bg-white hover:border-blue-200 hover:bg-blue-50/40"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${evaluationMode === "HUMAN" ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600"}`}>
+                  <User className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-foreground">Avaliação humana</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                    Sua entrevista será enviada para um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.
+                  </p>
+                </div>
+              </div>
+            </button>
+          </div>
+          {!evaluationMode && (
+            <p className="text-xs text-amber-700 mt-3">Escolha uma modalidade para continuar.</p>
+          )}
+        </Card>
+
+        <div className="flex gap-3">
+          <Btn variant="outline" onClick={() => onNavigate("consent")}>Voltar</Btn>
+          <Btn
+            variant="primary"
+            disabled={!evaluationMode}
+            onClick={() => onNavigate("prep")}
+            className="flex-1"
+          >
+            Continuar para orientações <ArrowRight className="w-4 h-4" />
+          </Btn>
+        </div>
+      </div>
+    </AuthLayout>
+  );
+}
+
 // ─── Fase A: ENT-008 Confirmação de Envio ─────────────────────────────────────
 
-function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; session: MockAuthSession }) {
+function InterviewConfirmScreen({
+  onNavigate,
+  draft,
+  session,
+}: {
+  onNavigate: (s: Screen) => void;
+  draft: InterviewDraft;
+  session: MockAuthSession;
+}) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
   const candidateIdentity = getCandidateIdentity(session);
+  const evaluationMode = draft.evaluationMode;
 
   if (!draft.context || draft.questions.length === 0) {
     return <DraftWizardGuard current="interview-confirm" onNavigate={onNavigate} />;
@@ -2856,6 +3039,10 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
       toast.error("Responda todas as perguntas antes de enviar.");
       return;
     }
+    if (!evaluationMode) {
+      toast.error("Escolha a modalidade de avaliação antes de enviar.");
+      return;
+    }
     setSending(true);
     setTimeout(() => {
       const interview = submitInterview({
@@ -2863,6 +3050,7 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
         candidateName: candidateIdentity.name,
         candidateEmail: candidateIdentity.email,
         context: draft.context!,
+        evaluationMode,
         answers: draft.questions.map((question) => ({
           questionId: question.id,
           questionText: question.text,
@@ -2880,7 +3068,7 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
       current="interview-confirm"
       onNavigate={onNavigate}
       title="Confirmar Envio"
-      subtitle="Revise antes de enviar suas respostas para avaliação"
+      subtitle="Revise antes de enviar suas respostas"
     >
       <div className="w-full max-w-2xl space-y-5">
         {/* Aviso */}
@@ -2888,7 +3076,7 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-bold text-amber-800 mb-1">Atenção: esta ação não pode ser desfeita</p>
-            <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão encaminhadas para avaliação humana. Você não poderá editar as respostas.</p>
+            <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão registradas para avaliação conforme a modalidade escolhida. Você não poderá editar as respostas.</p>
           </div>
         </Alert>
 
@@ -2945,12 +3133,29 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
           </div>
         </Card>
 
+        <Card className="p-5 sm:p-6">
+          <h3 className="font-bold text-foreground mb-4">Modalidade escolhida</h3>
+          <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+              {evaluationMode === "AI" ? <Zap className="w-4 h-4" /> : <User className="w-4 h-4" />}
+            </div>
+            <div>
+              <p className="text-sm font-bold text-foreground">{evaluationModeLabel(evaluationMode)}</p>
+              <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                {evaluationMode === "AI"
+                  ? "Receba uma análise automatizada da sua entrevista com pontos fortes, pontos de atenção e recomendações."
+                  : "Sua entrevista será enviada para um avaliador humano autorizado. O resultado ficará disponível em até 72 horas."}
+              </p>
+            </div>
+          </div>
+        </Card>
+
         <div className="flex gap-3">
           <Btn variant="outline" onClick={() => onNavigate("review")}>Revisar novamente</Btn>
           <Btn
             variant="primary"
             onClick={handleSend}
-            disabled={sending || !allAnswersReady}
+            disabled={sending || !allAnswersReady || !evaluationMode}
             className="flex-1"
           >
             {sending ? (
@@ -2971,6 +3176,21 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
   const routerNavigate = useNavigate();
   const { id } = useParams();
   const interview = getInterviewById(id);
+  const evaluationMode = interview?.evaluationMode ?? "HUMAN";
+  const doneMessage = evaluationMode === "AI"
+    ? "Suas respostas foram recebidas com sucesso e serão analisadas pela IA Avaliadora do RH Connect."
+    : "Suas respostas foram recebidas com sucesso e serão encaminhadas para avaliação por um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.";
+  const nextSteps = evaluationMode === "AI"
+    ? [
+        "A IA Avaliadora analisará suas respostas e o contexto da vaga.",
+        "Você receberá pontos fortes, pontos de atenção e recomendações.",
+        "Acompanhe o status na seção Histórico de entrevistas.",
+      ]
+    : [
+        "Um avaliador humano autorizado analisará suas respostas.",
+        "O resultado ficará disponível em até 72 horas.",
+        "Acesse o relatório na seção Histórico de entrevistas",
+      ];
   return (
     <AuthLayout
       current="interview-done"
@@ -2986,7 +3206,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
           <h2 className="text-xl sm:text-2xl font-extrabold text-foreground mb-2">Respostas enviadas!</h2>
           <p className="text-muted-foreground text-sm mb-6 leading-relaxed">
-            Suas respostas foram recebidas com sucesso e serão encaminhadas para avaliação por um avaliador humano autorizado.
+            {doneMessage}
           </p>
 
           {/* Protocolo */}
@@ -3006,7 +3226,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Status</p>
-                <StatusBadge tone="warning">Aguardando avaliação</StatusBadge>
+                <StatusBadge tone="warning">{interview?.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
               </div>
             </div>
           </div>
@@ -3015,11 +3235,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
           <div className="text-left bg-blue-50 rounded-xl p-4 mb-6">
             <p className="text-xs font-bold text-blue-700 mb-3">O que acontece agora?</p>
             <div className="space-y-2">
-              {[
-                "Um avaliador humano autorizado analisará suas respostas.",
-                "Você receberá uma notificação quando o resultado estiver disponível",
-                "Acesse o relatório na seção Histórico de entrevistas",
-              ].map((step, i) => (
+              {nextSteps.map((step, i) => (
                 <div key={i} className="flex items-start gap-2">
                   <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0 mt-0.5">{i + 1}</div>
                   <p className="text-xs text-muted-foreground">{step}</p>
@@ -4025,7 +4241,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                       </div>
                       <div>
                         <p className="text-sm font-bold text-foreground">Uso das respostas textuais para avaliação</p>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para registrar suas respostas textuais e disponibilizá-las para avaliação humana autorizada. Este consentimento é obrigatório para usar o sistema.</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para registrar suas respostas textuais e disponibilizá-las para avaliação conforme a modalidade escolhida. Este consentimento é obrigatório para usar o sistema.</p>
                         <p className="text-xs text-green-600 font-semibold mt-1.5">Autorizado em 15/07/2026</p>
                       </div>
                     </div>
@@ -4867,6 +5083,7 @@ function AppRoutes() {
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
           <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
           <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
           <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />

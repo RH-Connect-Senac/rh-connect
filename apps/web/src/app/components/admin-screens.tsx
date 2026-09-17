@@ -252,7 +252,7 @@ function createAdminCandidateRows(): AdminCandidateRow[] {
 }
 
 function statusVariantFromAdminStatus(status: string): "default" | "success" | "warning" | "error" | "info" | "purple" {
-  if (status === "Aguardando" || status === "Aguardando avaliação") return "warning";
+  if (status === "Aguardando" || status.startsWith("Aguardando avaliação")) return "warning";
   if (status === "Em avaliação" || status === "Atribuída") return "info";
   if (status === "Concluído" || status === "Avaliada") return "success";
   return "default";

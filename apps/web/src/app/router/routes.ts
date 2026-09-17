@@ -6,7 +6,7 @@ export type AppScreen =
   | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
   | "dashboard" | "profile" | "settings" | "materials" | "notifications"
   | "interview-history" | "development" | "disc-test"
-  | "interview-setup" | "consent" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
+  | "interview-setup" | "consent" | "evaluation-mode" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
   | "pending" | "report"
   | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
   | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
@@ -50,6 +50,7 @@ export const APP_ROUTES = [
   { screen: "disc-test", path: "/candidate/disc", label: "Teste DISC", group: "candidate", priority: "P2", status: "simulado", backDependency: "nao imediata", notes: "Funcionalidade independente com persistencia local temporaria." },
   { screen: "interview-setup", path: "/candidate/interviews/new", label: "Nova entrevista", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim", notes: "Recebe a URL da vaga, analisa contexto mockado e prepara as perguntas." },
   { screen: "consent", path: "/candidate/interviews/new/consent", label: "Consentimento", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
+  { screen: "evaluation-mode", path: "/candidate/interviews/new/evaluation-mode", label: "Modalidade de avaliacao", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "prep", path: "/candidate/interviews/new/preparation", label: "Orientacoes", group: "candidate", priority: "P0", status: "visual", backDependency: "nao imediata" },
   { screen: "interview", path: "/candidate/interviews/new/answers", label: "Perguntas e respostas", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "review", path: "/candidate/interviews/new/review", label: "Revisao", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim" },
