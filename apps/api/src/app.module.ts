@@ -3,14 +3,14 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
-import { InterviewsAiModule } from './interviews-ai/interviews-ai.module';
+import { ExternalResourcesModule } from './external-resources/external-resources.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     AuthModule,
-    InterviewsAiModule,
+    ExternalResourcesModule,
   ],
   controllers: [AppController],
   providers: [],

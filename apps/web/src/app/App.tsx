@@ -79,6 +79,10 @@ import {
   openMaterial,
   toggleMaterialFavorite,
 } from "./services/materials-service";
+import {
+  listCacholaResources,
+  type ExternalLearningResource,
+} from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
 import { DEFAULT_CANDIDATE } from "./mocks/interviews";
 import {
@@ -4986,6 +4990,8 @@ function sortMaterialsByLastAccess(items: MaterialCardView[]) {
     });
 }
 
+const CACHOLA_VISIBLE_STEP = 6;
+
 function MaterialCard({
   material, onFavorite, onOpen,
 }: {
@@ -4994,8 +5000,8 @@ function MaterialCard({
   onOpen: () => void;
 }) {
   return (
-    <Card className="p-4 sm:p-5 flex flex-col gap-3 hover:shadow-md transition-all">
-      <div className="flex items-start justify-between gap-3">
+    <Card className="h-full min-h-[214px] p-6 flex flex-col gap-5 hover:shadow-md transition-all">
+      <div className="flex flex-1 items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
             <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">{materialTypeLabel(material.type)}</UIBadge>
@@ -5014,9 +5020,66 @@ function MaterialCard({
           <Bookmark className={`w-4 h-4 ${material.isFavorite ? "fill-current" : ""}`} />
         </button>
       </div>
-      <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
+      <div className="mt-auto flex items-center justify-between gap-3 pt-3 border-t border-border">
         <UIBadge variant="primary">{material.category}</UIBadge>
         <Btn variant="primary" size="sm" onClick={onOpen}>Abrir material</Btn>
+      </div>
+    </Card>
+  );
+}
+
+function ExternalResourceCard({ resource }: { resource: ExternalLearningResource }) {
+  const handleOpen = () => {
+    if (!resource.url) {
+      toast.info("Este recurso abre pela plataforma Cachola.");
+      return;
+    }
+
+    window.open(resource.url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <Card className="h-full min-h-[214px] p-6 flex flex-col gap-5 hover:shadow-md transition-all">
+      <div className="flex flex-1 items-start justify-between gap-3">
+        <div className="flex flex-1 min-w-0 gap-4">
+          <div className="flex h-[72px] w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-blue-50 text-blue-600">
+            {resource.coverUrl ? (
+              <img
+                src={resource.coverUrl}
+                alt=""
+                aria-hidden="true"
+                className="h-full w-full object-cover"
+                loading="lazy"
+                onError={(event) => {
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            ) : (
+              <BookOpen className="w-4 h-4" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">
+                {resource.resourceType}
+              </UIBadge>
+              <span className="text-[11px] text-muted-foreground">Cachola Senac</span>
+            </div>
+            <p className="font-bold text-foreground text-sm leading-snug mb-1">{resource.title}</p>
+            {resource.section && resource.section !== "Sem seção" && (
+              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                {resource.section}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="p-1.5 rounded-lg text-muted-foreground shrink-0">
+          <BookOpen className="w-4 h-4" />
+        </div>
+      </div>
+      <div className="mt-auto flex items-center justify-between gap-3 pt-3 border-t border-border">
+        <UIBadge variant="primary">{resource.area ?? "Cachola"}</UIBadge>
+        <Btn variant="primary" size="sm" onClick={handleOpen}>Acessar na Cachola</Btn>
       </div>
     </Card>
   );
@@ -5028,9 +5091,40 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [categoria, setCategoria] = useState("Todas as categorias");
   const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates());
+  const [cacholaResources, setCacholaResources] = useState<ExternalLearningResource[]>([]);
+  const [loadingCacholaResources, setLoadingCacholaResources] = useState(false);
+  const [cacholaSearch, setCacholaSearch] = useState("");
+  const [selectedCacholaArea, setSelectedCacholaArea] = useState("Todos");
+  const [visibleCacholaCount, setVisibleCacholaCount] = useState(CACHOLA_VISIBLE_STEP);
   const [showCats, setShowCats] = useState(false);
 
   const materiais = mergeMaterialsWithUserState(materialStates);
+
+  useEffect(() => {
+    let active = true;
+
+    setLoadingCacholaResources(true);
+    listCacholaResources({ limit: 25 })
+      .then((resources) => {
+        if (active) {
+          setCacholaResources(resources);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCacholaResources([]);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingCacholaResources(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates());
 
@@ -5055,6 +5149,22 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
   const recomendados = materiais.filter(m => m.recommended).slice(0, 3);
   const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
+  const cacholaAreas = cacholaResources.reduce<string[]>((areas, resource) => {
+    const area = resource.area?.trim();
+    return area && !areas.includes(area) ? [...areas, area] : areas;
+  }, []);
+  const normalizedCacholaSearch = cacholaSearch.trim().toLowerCase();
+  const filteredCacholaResources = cacholaResources
+    .filter((resource) => {
+      if (!normalizedCacholaSearch) return true;
+
+      return [resource.title, resource.area, resource.resourceType]
+        .some((value) => value?.toLowerCase().includes(normalizedCacholaSearch));
+    })
+    .filter((resource) => selectedCacholaArea === "Todos" || resource.area === selectedCacholaArea);
+  const visibleCacholaResources = filteredCacholaResources.slice(0, visibleCacholaCount);
+  const hasMoreCacholaResources = visibleCacholaResources.length < filteredCacholaResources.length;
+  const resetCacholaVisibleCount = () => setVisibleCacholaCount(CACHOLA_VISIBLE_STEP);
 
   return (
     <AuthLayout
@@ -5093,6 +5203,80 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 {recentes.map(m => (
                   <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
                 ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Fonte complementar: Cachola */}
+        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingCacholaResources || cacholaResources.length > 0) && (
+          <section>
+            <div className="mb-4">
+              <h2 className="font-bold text-foreground mb-1 flex items-center gap-2">
+                <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares da Cachola
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Explore materiais complementares selecionados para apoiar seu desenvolvimento.
+              </p>
+            </div>
+            {loadingCacholaResources ? (
+              <Card className="p-4 text-sm text-muted-foreground">
+                Buscando recomendações complementares...
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                <SearchInput
+                  value={cacholaSearch}
+                  onChange={(event) => {
+                    setCacholaSearch(event.target.value);
+                    resetCacholaVisibleCount();
+                  }}
+                  onClear={() => {
+                    setCacholaSearch("");
+                    resetCacholaVisibleCount();
+                  }}
+                  placeholder="Buscar conteúdos da Cachola..."
+                  aria-label="Buscar conteúdos da Cachola"
+                />
+                <div className="flex flex-wrap gap-2">
+                  {["Todos", ...cacholaAreas].map((area) => (
+                    <FilterChip
+                      key={area}
+                      selected={selectedCacholaArea === area}
+                      onClick={() => {
+                        setSelectedCacholaArea(area);
+                        resetCacholaVisibleCount();
+                      }}
+                    >
+                      {area}
+                    </FilterChip>
+                  ))}
+                </div>
+                {filteredCacholaResources.length === 0 ? (
+                  <Card className="p-4 text-sm text-muted-foreground">
+                    Nenhum conteúdo encontrado para os filtros selecionados.
+                  </Card>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {visibleCacholaResources.map(resource => (
+                        <ExternalResourceCard key={resource.id} resource={resource} />
+                      ))}
+                    </div>
+                    {hasMoreCacholaResources && (
+                      <div className="flex justify-center pt-1">
+                        <Btn
+                          variant="primary"
+                          onClick={() => setVisibleCacholaCount((current) => current + CACHOLA_VISIBLE_STEP)}
+                          className="px-5 py-2.5 font-semibold"
+                        >
+                          Ver mais conteúdos
+                          <ChevronDown className="ml-1.5 h-4 w-4" />
+                        </Btn>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </section>
