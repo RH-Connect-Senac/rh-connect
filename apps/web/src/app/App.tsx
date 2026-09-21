@@ -3191,33 +3191,35 @@ function InterviewSetupScreen({
                     <p className="text-sm font-semibold text-foreground">{jobWorkMode}</p>
                   </div>
                 )}
-                <div>
-                  <p className="text-[11px] text-muted-foreground mb-0.5">Descrição</p>
-                  <p
-                    className="text-sm text-foreground leading-relaxed"
-                    style={
-                      descriptionIsLong && !descriptionExpanded
-                        ? {
-                          display: "-webkit-box",
-                          WebkitBoxOrient: "vertical",
-                          WebkitLineClamp: 4,
-                          overflow: "hidden",
-                        }
-                        : undefined
-                    }
-                  >
-                    {draft.context.summary}
-                  </p>
-                  {descriptionIsLong && (
-                    <button
-                      type="button"
-                      className="mt-2 text-xs font-semibold text-blue-700 hover:text-blue-800"
-                      onClick={() => setDescriptionExpanded((current) => !current)}
+                {jobDescription && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground mb-0.5">Descrição</p>
+                    <p
+                      className="text-sm text-foreground leading-relaxed"
+                      style={
+                        descriptionIsLong && !descriptionExpanded
+                          ? {
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: 4,
+                            overflow: "hidden",
+                          }
+                          : undefined
+                      }
                     >
-                      {descriptionExpanded ? "Ver menos" : "Ver mais"}
-                    </button>
-                  )}
-                </div>
+                      {draft.context.summary}
+                    </p>
+                    {descriptionIsLong && (
+                      <button
+                        type="button"
+                        className="mt-2 text-xs font-semibold text-blue-700 hover:text-blue-800"
+                        onClick={() => setDescriptionExpanded((current) => !current)}
+                      >
+                        {descriptionExpanded ? "Ver menos" : "Ver mais"}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {requirementSections.map((section) => (
                   <div key={section.title}>
                     <p className="text-[11px] text-muted-foreground mb-2">{section.title}</p>

@@ -2,8 +2,8 @@ import os
 
 from flask import Flask, jsonify, request
 
-from extrair_empregare import JobExtractionError, extract_job_context
 from groq_service import GroqService, GroqServiceError
+from job_context_adapter import JobContextAdapterError, extract_job_context
 
 
 def create_app() -> Flask:
@@ -20,7 +20,7 @@ def create_app() -> Flask:
 
         try:
             context = extract_job_context(url)
-        except JobExtractionError as exc:
+        except JobContextAdapterError as exc:
             return jsonify({"error": str(exc)}), exc.status_code
         except Exception:
             return jsonify({"error": "Erro inesperado ao extrair a vaga."}), 500
