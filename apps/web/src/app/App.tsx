@@ -23,6 +23,7 @@ import {
 import { ProfileShell, type ProfileShellNavItem } from "./components/shared/profile-shell";
 import { RHConnectLogo } from "./components/brand/rh-connect-logo";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
+import { SuggestionsScreen } from "./components/suggestions-screen";
 import {
   EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalScreenView,
   EvalReviewScreen, EvalDoneScreen, EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
@@ -5903,6 +5904,7 @@ function AppRoutes() {
           <Route path="/register" element={<PublicAuthRoute session={session}><AuthScreen onNavigate={navigate} onLoginWithCredentials={loginWithCredentials} onRegister={registerCandidate} initialTab="register" /></PublicAuthRoute>} />
           <Route path="/terms" element={<TermsScreen onNavigate={navigate} session={session} />} />
           <Route path="/privacy" element={<PrivacyScreen onNavigate={navigate} session={session} />} />
+          <Route path="/sugestoes" element={<SuggestionsScreen />} />
           <Route path="/verify-email" element={<EmailVerifyScreen onNavigate={navigate} />} />
           <Route path="/forgot-password" element={<ForgotPasswordScreen onNavigate={navigate} />} />
           <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
