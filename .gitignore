@@ -57,6 +57,13 @@ Desktop.ini
 tmp/
 temp/
 
+# Python local artifacts
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Preserved binary baseline copy.
 # Keep the documentation and SHA-256 in Git, but do not version the ZIP itself.
 docs/00-fontes-originais/prototipo-01/*.zip

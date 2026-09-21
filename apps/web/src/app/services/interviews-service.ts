@@ -4,6 +4,7 @@ import type {
   EvaluationScores,
   Interview,
   InterviewsMockState,
+  QuestionEvaluation,
   Report,
   SubmitInterviewInput,
 } from "../domain/interviews";
@@ -50,7 +51,10 @@ function normalizeState(parsed: unknown): InterviewsMockState {
 
   return {
     version: INTERVIEWS_MOCK_VERSION,
-    interviews: candidate.interviews,
+    interviews: candidate.interviews.map((interview) => ({
+      ...interview,
+      evaluationMode: interview.evaluationMode ?? "HUMAN",
+    })),
     evaluations: candidate.evaluations,
     reports: candidate.reports,
     assignments: candidate.assignments,
@@ -100,7 +104,8 @@ export function submitInterview(input: SubmitInterviewInput): Interview {
     candidateName: input.candidateName,
     candidateEmail: input.candidateEmail,
     context: input.context,
-    status: "PENDING_EVALUATION",
+    evaluationMode: input.evaluationMode,
+    status: input.evaluationMode === "HUMAN" ? "PENDING_EVALUATION" : "PENDING_AI_EVALUATION",
     answers: input.answers,
     submittedAt: timestamp,
     createdAt: timestamp,
@@ -121,6 +126,67 @@ export function submitInterview(input: SubmitInterviewInput): Interview {
   }));
 
   return interview;
+}
+
+export type CompleteAiEvaluationInput = {
+  scores: EvaluationScores;
+  overallScore: number;
+  strengths: string[];
+  improvements: string[];
+  recommendations: string[];
+  summary: string;
+  questionsEvaluation: QuestionEvaluation[];
+};
+
+export function completeAiEvaluation(interviewId: string, input: CompleteAiEvaluationInput) {
+  const timestamp = nowIso();
+  let completedEvaluation: Evaluation | null = null;
+
+  updateInterviewsState((state) => {
+    const interview = state.interviews.find((item) => item.id === interviewId);
+    if (!interview || interview.evaluationMode !== "AI") {
+      return state;
+    }
+
+    const existing = state.evaluations.find((item) => item.interviewId === interviewId);
+    completedEvaluation = {
+      id: existing?.id ?? createId("evaluation-ai"),
+      interviewId,
+      evaluatorId: "ai-evaluator",
+      evaluatorName: "IA Avaliadora",
+      status: "COMPLETED",
+      scores: input.scores,
+      comment: input.summary,
+      overallScore: input.overallScore,
+      strengths: input.strengths,
+      improvements: input.improvements,
+      recommendations: input.recommendations,
+      summary: input.summary,
+      questionsEvaluation: input.questionsEvaluation,
+      completedAt: timestamp,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    };
+
+    return {
+      ...state,
+      interviews: state.interviews.map((item) =>
+        item.id === interviewId
+          ? { ...item, status: "EVALUATED", updatedAt: timestamp }
+          : item,
+      ),
+      evaluations: existing
+        ? state.evaluations.map((item) => item.id === existing.id ? completedEvaluation! : item)
+        : [completedEvaluation!, ...state.evaluations],
+      reports: state.reports.map((report) =>
+        report.interviewId === interviewId
+          ? { ...report, evaluationId: completedEvaluation!.id, status: "AVAILABLE", generatedAt: timestamp, updatedAt: timestamp }
+          : report,
+      ),
+    };
+  });
+
+  return completedEvaluation;
 }
 
 export function getInterviewById(interviewId?: string) {
@@ -330,6 +396,7 @@ export function formatScore(score?: number | null) {
 export function statusLabelFromInterview(status: Interview["status"]) {
   const labels = {
     IN_PROGRESS: "Em andamento",
+    PENDING_AI_EVALUATION: "Aguardando avaliação por IA",
     PENDING_EVALUATION: "Aguardando avaliação",
     ASSIGNED: "Atribuída",
     IN_EVALUATION: "Em avaliação",

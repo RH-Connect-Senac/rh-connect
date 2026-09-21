@@ -1,7 +1,7 @@
 /** RH Connect — Aplicação Front-end */
 
 import { useState, useRef, useEffect, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase,
@@ -10,7 +10,7 @@ import {
   Award, TrendingUp, X, Shield, GraduationCap, Zap, BookOpen,
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
   Target, Send, Upload, Menu,
-  Heart, Bookmark, FileText, Trash2, Lock, Database,
+  Heart, Bookmark, FileText, Trash2, Lock, Database, Bot,
   ToggleLeft, ToggleRight, ChevronUp, Filter
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
@@ -59,6 +59,7 @@ import {
 } from "./router/routes";
 import {
   analyzeJobUrl,
+  evaluateInterviewWithAi,
   generateInterviewQuestions,
   type InterviewQuestion,
   type JobInterviewContext,
@@ -85,6 +86,7 @@ import {
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
 import { DEFAULT_CANDIDATE } from "./mocks/interviews";
 import {
+  completeAiEvaluation,
   getAvailableCandidateReports,
   getAverageScore,
   getCandidateInterviews,
@@ -113,6 +115,7 @@ import {
   isCandidateProfileReadyForInterview,
   saveCandidateProfile,
 } from "./services/candidate-profile-service";
+import type { EvaluationMode } from "./domain/interviews";
 import type {
   CandidateCourse,
   CandidateExperience,
@@ -126,7 +129,7 @@ import type {
 const AUTH_SCREENS: Screen[] = [
   "dashboard","profile","settings","materials","notifications",
   "interview-history","development","disc-test",
-  "interview-setup","consent","prep","interview","review","interview-confirm","interview-done",
+  "interview-setup","consent","evaluation-mode","prep","interview","review","interview-confirm","interview-done",
   "pending","report",
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
   "admin-dashboard","admin-candidates","admin-candidate-detail","admin-evaluators","admin-evaluator-form",
@@ -195,6 +198,38 @@ type InterviewDraft = {
   context: JobInterviewContext | null;
   questions: InterviewQuestion[];
   answers: Record<number, string>;
+  evaluationMode: EvaluationMode | null;
+};
+
+type InterviewDraftScreen =
+  | "interview-setup"
+  | "consent"
+  | "evaluation-mode"
+  | "prep"
+  | "interview"
+  | "review"
+  | "interview-confirm";
+
+type InterviewDraftProgress = {
+  currentScreen: InterviewDraftScreen;
+  currentQuestionIndex: number;
+};
+
+type StoredInterviewDraftEntry = {
+  draft: InterviewDraft;
+  progress: InterviewDraftProgress;
+  updatedAt: string;
+};
+
+type StoredInterviewDraftState = {
+  version: 1;
+  draftsByCandidateId: Record<string, StoredInterviewDraftEntry>;
+};
+
+const INTERVIEW_DRAFT_STORAGE_KEY = "rhconnect:interview-draft:v1";
+const DEFAULT_INTERVIEW_DRAFT_PROGRESS: InterviewDraftProgress = {
+  currentScreen: "interview-setup",
+  currentQuestionIndex: 0,
 };
 
 const ANSWER_MAX_CHARS = 1000;
@@ -220,7 +255,137 @@ const createEmptyInterviewDraft = (): InterviewDraft => ({
   context: null,
   questions: [],
   answers: {},
+  evaluationMode: null,
 });
+
+function hasActiveInterviewDraft(draft: InterviewDraft) {
+  return Boolean(
+    draft.context ||
+    draft.questions.length > 0 ||
+    Object.keys(draft.answers).length > 0 ||
+    draft.evaluationMode,
+  );
+}
+
+function isInterviewDraftInProgress(draft: InterviewDraft) {
+  return draft.questions.length === 5 && draft.questions.every((question) => Boolean(question.text?.trim()));
+}
+
+function formatInterviewDateTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+
+  const formattedDate = date.toLocaleDateString("pt-BR");
+  const hasTime = /T\d{2}:\d{2}/.test(timestamp);
+  if (!hasTime) return formattedDate;
+
+  return `${formattedDate} · ${date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function normalizeInterviewDraftProgress(value?: Partial<InterviewDraftProgress> | null): InterviewDraftProgress {
+  const allowedScreens: InterviewDraftScreen[] = ["interview-setup", "consent", "evaluation-mode", "prep", "interview", "review", "interview-confirm"];
+  return {
+    currentScreen: value?.currentScreen && allowedScreens.includes(value.currentScreen)
+      ? value.currentScreen
+      : DEFAULT_INTERVIEW_DRAFT_PROGRESS.currentScreen,
+    currentQuestionIndex: Number.isInteger(value?.currentQuestionIndex) && value!.currentQuestionIndex! >= 0
+      ? value!.currentQuestionIndex!
+      : DEFAULT_INTERVIEW_DRAFT_PROGRESS.currentQuestionIndex,
+  };
+}
+
+function normalizeStoredInterviewDraftEntry(value: unknown): StoredInterviewDraftEntry | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Partial<StoredInterviewDraftEntry>;
+  const draft = entry.draft as Partial<InterviewDraft> | undefined;
+  if (!draft || typeof draft !== "object") return null;
+
+  const normalizedDraft: InterviewDraft = {
+    interviewId: typeof draft.interviewId === "string" ? draft.interviewId : undefined,
+    context: draft.context ?? null,
+    questions: Array.isArray(draft.questions) ? draft.questions : [],
+    answers: draft.answers && typeof draft.answers === "object" && !Array.isArray(draft.answers)
+      ? draft.answers as Record<number, string>
+      : {},
+    evaluationMode: draft.evaluationMode === "AI" || draft.evaluationMode === "HUMAN" ? draft.evaluationMode : null,
+  };
+
+  if (!hasActiveInterviewDraft(normalizedDraft)) return null;
+
+  return {
+    draft: normalizedDraft,
+    progress: normalizeInterviewDraftProgress(entry.progress),
+    updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : new Date().toISOString(),
+  };
+}
+
+function readStoredInterviewDraftState(): StoredInterviewDraftState {
+  if (typeof window === "undefined") {
+    return { version: 1, draftsByCandidateId: {} };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(INTERVIEW_DRAFT_STORAGE_KEY);
+    if (!raw) return { version: 1, draftsByCandidateId: {} };
+    const parsed = JSON.parse(raw) as Partial<StoredInterviewDraftState>;
+    if (parsed.version !== 1 || !parsed.draftsByCandidateId || typeof parsed.draftsByCandidateId !== "object") {
+      return { version: 1, draftsByCandidateId: {} };
+    }
+
+    const draftsByCandidateId = Object.entries(parsed.draftsByCandidateId).reduce((acc, [candidateId, entry]) => {
+      const normalized = normalizeStoredInterviewDraftEntry(entry);
+      if (normalized) acc[candidateId] = normalized;
+      return acc;
+    }, {} as Record<string, StoredInterviewDraftEntry>);
+
+    return { version: 1, draftsByCandidateId };
+  } catch {
+    return { version: 1, draftsByCandidateId: {} };
+  }
+}
+
+function getStoredInterviewDraft(candidateId: string) {
+  return readStoredInterviewDraftState().draftsByCandidateId[candidateId] ?? null;
+}
+
+function saveStoredInterviewDraft(candidateId: string, draft: InterviewDraft, progress: InterviewDraftProgress) {
+  if (typeof window === "undefined" || !hasActiveInterviewDraft(draft)) return;
+  const state = readStoredInterviewDraftState();
+  state.draftsByCandidateId[candidateId] = {
+    draft,
+    progress: normalizeInterviewDraftProgress(progress),
+    updatedAt: new Date().toISOString(),
+  };
+  window.localStorage.setItem(INTERVIEW_DRAFT_STORAGE_KEY, JSON.stringify(state));
+}
+
+function clearStoredInterviewDraft(candidateId: string) {
+  if (typeof window === "undefined") return;
+  const state = readStoredInterviewDraftState();
+  delete state.draftsByCandidateId[candidateId];
+  if (Object.keys(state.draftsByCandidateId).length === 0) {
+    window.localStorage.removeItem(INTERVIEW_DRAFT_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(INTERVIEW_DRAFT_STORAGE_KEY, JSON.stringify(state));
+}
+
+function getInterviewDraftScreenFromPath(pathname: string): InterviewDraftScreen | null {
+  if (pathname === getPathForScreen("interview-setup")) return "interview-setup";
+  if (pathname === getPathForScreen("consent")) return "consent";
+  if (pathname === getPathForScreen("evaluation-mode")) return "evaluation-mode";
+  if (pathname === getPathForScreen("prep")) return "prep";
+  if (pathname === getPathForScreen("interview")) return "interview";
+  if (pathname === getPathForScreen("review")) return "review";
+  if (pathname === getPathForScreen("interview-confirm")) return "interview-confirm";
+  return null;
+}
+
+function evaluationModeLabel(mode?: EvaluationMode | null) {
+  if (mode === "AI") return "Avaliação por IA";
+  if (mode === "HUMAN") return "Avaliação humana";
+  return "Não selecionada";
+}
 
 type SpeechRecognitionConstructor = new () => {
   lang: string;
@@ -281,6 +446,21 @@ function Badge({ variant = "default", children }: {
     purple:  "bg-purple-100 text-purple-700",
   };
   return <UIBadge variant="neutral" className={`font-semibold ${vars[variant]}`}>{children}</UIBadge>;
+}
+
+function EvaluationModeBadge({ mode }: { mode?: EvaluationMode | null }) {
+  if (!mode) return null;
+  const Icon = mode === "AI" ? Bot : User;
+  const className = mode === "AI"
+    ? "border-blue-100 bg-blue-50 text-blue-700"
+    : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return (
+    <UIBadge variant="neutral" className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold ${className}`}>
+      <Icon className="h-3 w-3" />
+      {evaluationModeLabel(mode)}
+    </UIBadge>
+  );
 }
 
 function statusToneFromBadge(variant: "default" | "success" | "warning" | "error" | "info" | "purple") {
@@ -727,7 +907,17 @@ function AuthScreen({
 
 // ─── Screen 3: Dashboard ──────────────────────────────────────────────────────
 
-function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function DashboardScreen({
+  onNavigate,
+  session,
+  activeDraftEntry,
+  onContinueDraft,
+}: {
+  onNavigate: (s: Screen) => void;
+  session: MockAuthSession;
+  activeDraftEntry?: StoredInterviewDraftEntry | null;
+  onContinueDraft?: () => void;
+}) {
   const routerNavigate = useNavigate();
   const candidateUser = session.user;
   const isDemoCandidate = candidateUser?.id === "candidate-demo";
@@ -749,16 +939,40 @@ function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     { vaga: "Analista de RH",                  empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const, interviewId: undefined as string | undefined },
     { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const, interviewId: undefined as string | undefined },
   ];
-  const recentItems = [
+  type RecentInterviewItem = {
+    vaga: string;
+    empresa: string;
+    data: string;
+    status: string;
+    badge: "success" | "warning" | "default" | "info";
+    interviewId?: string;
+    draft?: boolean;
+    evaluationMode?: EvaluationMode | null;
+  };
+  const activeDraftRecentItem: RecentInterviewItem[] = activeDraftEntry?.draft.context
+    ? [{
+      vaga: activeDraftEntry.draft.context.title,
+      empresa: activeDraftEntry.draft.context.company,
+      data: formatInterviewDateTime(activeDraftEntry.updatedAt),
+      status: "Em andamento",
+      badge: "info",
+      draft: true,
+      evaluationMode: activeDraftEntry.draft.evaluationMode,
+    }]
+    : [];
+  const recentItems: RecentInterviewItem[] = [
+    ...activeDraftRecentItem,
     ...candidateInterviews.slice(0, 3).map((interview) => {
       const report = getReportByInterviewId(interview.id);
+      const interviewTimestamp = interview.submittedAt ?? interview.createdAt;
       return {
         vaga: interview.context.title,
         empresa: interview.context.company,
-        data: interview.submittedAt ? new Date(interview.submittedAt).toLocaleDateString("pt-BR") : new Date(interview.createdAt).toLocaleDateString("pt-BR"),
+        data: formatInterviewDateTime(interviewTimestamp),
         status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
         badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
         interviewId: interview.id,
+        evaluationMode: interview.evaluationMode,
       };
     }),
     ...(isDemoCandidate ? RECENT : []),
@@ -831,10 +1045,16 @@ function DashboardScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                         <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
                         <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <EvaluationModeBadge mode={item.evaluationMode} />
                           <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
                           {item.badge === "success" && (
                             <Btn size="sm" variant="primary" onClick={() => item.interviewId ? routerNavigate(`/candidate/reports/${item.interviewId}`) : onNavigate("report")}>
                               Ver relatório
+                            </Btn>
+                          )}
+                          {item.draft && (
+                            <Btn size="sm" variant="primary" onClick={onContinueDraft}>
+                              Continuar entrevista
                             </Btn>
                           )}
                         </div>
@@ -1486,6 +1706,21 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
     return <DraftWizardGuard current="prep" onNavigate={onNavigate} />;
   }
 
+  if (!draft.evaluationMode) {
+    return (
+      <AuthLayout current="prep" onNavigate={onNavigate} title="Modalidade de avaliação" subtitle="Escolha necessária antes das orientações">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Escolha a modalidade antes de continuar</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            A modalidade de avaliação precisa ser definida antes de iniciar as perguntas.
+          </p>
+          <Btn variant="primary" onClick={() => onNavigate("evaluation-mode")}>Escolher modalidade</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   return (
     <AuthLayout current="prep" onNavigate={onNavigate} title="Orientações da Entrevista" subtitle="Leia as orientações antes de responder">
       <div className="w-full">
@@ -1495,8 +1730,11 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
             <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
               <Briefcase className="w-5 h-5 text-blue-600" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground font-medium">Contexto confirmado</p>
+            <div className="min-w-0">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <p className="text-xs text-muted-foreground font-medium">Contexto confirmado</p>
+                <EvaluationModeBadge mode={draft.evaluationMode} />
+              </div>
               <p className="font-bold text-foreground">{context?.title ?? "Vaga em análise"}</p>
               <p className="text-sm text-muted-foreground">{context?.company ?? "Empresa não informada"}</p>
             </div>
@@ -1566,15 +1804,15 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
         <Alert variant="info" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-sm text-blue-700">
-            <strong>Importante:</strong> a próxima etapa apresenta o consentimento. O texto jurídico ainda está sujeito à validação da equipe.
+            <strong>Importante:</strong> responda com calma e revise suas respostas antes de concluir o envio.
           </p>
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("interview-setup")}>Voltar</Btn>
-          <Btn variant="primary" size="lg" onClick={() => onNavigate("consent")}>
-            <span className="hidden sm:inline">Continuar para consentimento</span>
-            <span className="sm:hidden">Consentimento</span>
+          <Btn variant="outline" onClick={() => onNavigate("evaluation-mode")}>Voltar</Btn>
+          <Btn variant="primary" size="lg" onClick={() => onNavigate("interview")}>
+            <span className="hidden sm:inline">Iniciar perguntas</span>
+            <span className="sm:hidden">Perguntas</span>
             <ChevronRight className="w-5 h-5" />
           </Btn>
         </div>
@@ -1585,22 +1823,34 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
 
 // ─── Screen 8: Entrevista Simulada ────────────────────────────────────────────
 
+function getQuestionIndexFromSearchParam(value: string | null, questionCount: number) {
+  const questionNumber = Number(value);
+  if (!Number.isInteger(questionNumber) || questionNumber < 1 || questionNumber > questionCount) {
+    return 0;
+  }
+  return questionNumber - 1;
+}
+
 function InterviewScreen({
   onNavigate,
   draft,
   setDraft,
+  onQuestionIndexChange,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+  onQuestionIndexChange?: (index: number) => void;
 }) {
-  const [qIdx, setQIdx] = useState(0);
+  const [searchParams] = useSearchParams();
+  const questions = draft.questions;
+  const targetQuestionIndex = getQuestionIndexFromSearchParam(searchParams.get("question"), questions.length);
+  const [qIdx, setQIdx] = useState(targetQuestionIndex);
   const [speechError, setSpeechError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
   const [dictating, setDictating] = useState(false);
   const advancingRef = useRef(false);
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
-  const questions = draft.questions;
   const question = questions[qIdx];
   const answer = question ? draft.answers[question.id] ?? "" : "";
   const answerLength = answer.length;
@@ -1610,6 +1860,14 @@ function InterviewScreen({
   useEffect(() => {
     return () => recognitionRef.current?.stop();
   }, []);
+
+  useEffect(() => {
+    setQIdx((current) => current === targetQuestionIndex ? current : targetQuestionIndex);
+  }, [targetQuestionIndex]);
+
+  useEffect(() => {
+    onQuestionIndexChange?.(qIdx);
+  }, [onQuestionIndexChange, qIdx]);
 
   const updateAnswer = (value: string) => {
     if (!question) return;
@@ -1698,6 +1956,23 @@ function InterviewScreen({
     return <DraftWizardGuard current="interview" onNavigate={onNavigate} />;
   }
 
+  if (!draft.evaluationMode) {
+    return (
+      <AuthLayout current="interview" onNavigate={onNavigate} title="Modalidade de avaliação" subtitle="Escolha necessária antes das perguntas">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Escolha a modalidade antes de responder</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            A entrevista só pode iniciar depois da escolha entre avaliação por IA ou avaliação humana.
+          </p>
+          <Btn variant="primary" onClick={() => onNavigate("evaluation-mode")}>Escolher modalidade</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  const requirementSections = [{ title: "Requisitos", items: draft.context.requirements }];
+
   return (
     <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
       <div className="w-full bg-muted rounded-full h-1 mb-5">
@@ -1752,13 +2027,21 @@ function InterviewScreen({
           <Card className="p-5">
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Contexto da vaga</p>
             <h3 className="font-bold text-foreground">{draft.context.title}</h3>
-            <p className="text-sm text-muted-foreground mb-3">{draft.context.company}</p>
+            <p className="text-sm text-muted-foreground mb-2">{draft.context.company}</p>
+            <div className="mb-3">
+              <EvaluationModeBadge mode={draft.evaluationMode} />
+            </div>
             <p className="text-xs text-muted-foreground leading-relaxed mb-4">{draft.context.summary}</p>
-            <div className="space-y-2">
-              {draft.context.requirements.slice(0, 4).map((requirement) => (
-                <div key={requirement} className="flex items-start gap-2 text-xs text-foreground">
-                  <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" />
-                  <span>{requirement}</span>
+            <div className="space-y-3">
+              {requirementSections.map((section) => (
+                <div key={section.title} className="space-y-2">
+                  <p className="text-[11px] font-semibold text-muted-foreground">{section.title}</p>
+                  {section.items.slice(0, 4).map((requirement) => (
+                    <div key={requirement} className="flex items-start gap-2 text-xs text-foreground">
+                      <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" />
+                      <span>{requirement}</span>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -1769,7 +2052,7 @@ function InterviewScreen({
             <div className="space-y-2">
               {questions.map((item, index) => {
                 const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const canOpenQuestion = index === qIdx || (index < qIdx && answered);
+                const canOpenQuestion = index === qIdx || answered;
                 return (
                   <button
                     key={item.id}
@@ -1815,10 +2098,14 @@ function InterviewScreen({
 // ─── Screen 9: Revisão e Envio ────────────────────────────────────────────────
 
 function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
+  const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
+  const editQuestion = (index: number) => {
+    routerNavigate(`${getPathForScreen("interview")}?question=${index + 1}`);
+  };
 
   if (!draft.context || draft.questions.length === 0) {
     return <DraftWizardGuard current="review" onNavigate={onNavigate} />;
@@ -1834,7 +2121,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   };
 
   return (
-    <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de enviar para avaliação humana">
+    <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de escolher a modalidade de avaliação">
       <div className="w-full">
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
           <Card className="p-3 sm:p-4 text-center">
@@ -1882,6 +2169,9 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
                     <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1">Resposta:</p>
                     <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
                   </div>
+                  <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} className="shrink-0">
+                    <Edit2 className="w-4 h-4" /> Editar
+                  </Btn>
                 </div>
               );
             })}
@@ -1893,7 +2183,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
           <label className="flex items-start gap-3 cursor-pointer">
             <input type="checkbox" className="mt-0.5 rounded shrink-0" checked={confirm} onChange={e => setConfirm(e.target.checked)} />
             <span className="text-sm text-foreground leading-relaxed">
-              Confirmo que revisei minhas respostas textuais e concordo com o envio para avaliação por um avaliador humano autorizado. Entendo que o envio é uma ação de difícil reversão.
+              Confirmo que revisei minhas respostas textuais e concordo com o envio para avaliação conforme a modalidade escolhida. Entendo que o envio é uma ação de difícil reversão.
             </span>
           </label>
         </Card>
@@ -1901,12 +2191,12 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
         <Alert variant="warning" className="mb-7 flex gap-3 rounded-2xl p-4">
           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700">
-            Após o envio, suas respostas serão encaminhadas para avaliação humana. Prazo estimado de retorno: até <strong>3 dias úteis</strong>.
+            Após o envio, suas respostas serão registradas para avaliação conforme a modalidade escolhida.
           </p>
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("interview")}>
+          <Btn variant="outline" onClick={() => editQuestion(0)}>
             <Edit2 className="w-4 h-4" /> Editar respostas
           </Btn>
           <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady} onClick={handleSend}>
@@ -1932,6 +2222,24 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
   const candidateIdentity = getCandidateIdentity(session);
   const isRealPendingRoute = Boolean(id && id !== "interview-demo");
   const canAccessInterview = !isRealPendingRoute || !interview || interview.candidateId === candidateIdentity.id;
+  const evaluationMode = interview?.evaluationMode ?? "HUMAN";
+  const pendingDescription = evaluationMode === "AI"
+    ? "Sua entrevista foi recebida com sucesso e será analisada pela IA Avaliadora do RH Connect."
+    : "Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.";
+  const pendingStatusLabel = evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação";
+  const evaluationInfo = evaluationMode === "AI"
+    ? [
+        { q: "Quem avalia?",             a: "A IA Avaliadora do RH Connect analisa suas respostas considerando o contexto da vaga." },
+        { q: "Quando sai o resultado?",  a: "O relatório será disponibilizado após o processamento da avaliação." },
+        { q: "O que você vai receber?",  a: "Pontos fortes, pontos de atenção e recomendações para evoluir." },
+        { q: "Quem vê minhas respostas?", a: "Apenas perfis autorizados envolvidos no funcionamento da plataforma." },
+      ]
+    : [
+        { q: "Quem avalia?",             a: "Um avaliador humano autorizado com critérios padronizados de RH." },
+        { q: "Quanto tempo leva?",        a: "O resultado ficará disponível em até 72 horas após o envio." },
+        { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
+        { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
+      ];
   const TIMELINE = [
     { label: "Conta criada",          date: "02/07/2026",      done: true },
     { label: "Entrevista realizada",  date: "18/07/2026",      done: true },
@@ -1964,12 +2272,12 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
           </div>
           <h2 className="text-xl font-bold text-foreground mb-2">Entrevista em avaliação</h2>
           <p className="text-muted-foreground text-sm max-w-md mx-auto mb-5">
-            Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano treinado.
+            {pendingDescription}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <StatusBadge tone="warning">
               <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />
-              Em avaliação
+              {pendingStatusLabel}
             </StatusBadge>
             <span className="text-xs text-muted-foreground">· Protocolo #ENT-2026-0847</span>
           </div>
@@ -2007,12 +2315,7 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
               <Info className="w-4 h-4 text-blue-600" /> Sobre a avaliação
             </h3>
             <div className="space-y-3">
-              {[
-                { q: "Quem avalia?",             a: "Um avaliador treinado com critérios padronizados de RH." },
-                { q: "Quanto tempo leva?",        a: "Em geral, de 1 a 3 dias úteis após o envio." },
-                { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
-                { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
-              ].map(({ q, a }) => (
+              {evaluationInfo.map(({ q, a }) => (
                 <div key={q} className="p-3 bg-muted/40 rounded-xl">
                   <p className="text-xs font-bold text-foreground mb-1">{q}</p>
                   <p className="text-xs text-muted-foreground leading-relaxed">{a}</p>
@@ -2075,62 +2378,113 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
   }
 
   if (isRealReportRoute && (!report || report.status !== "AVAILABLE")) {
+    const pendingReportMessage = interview?.evaluationMode === "AI"
+      ? "O relatório ficará disponível após o processamento da avaliação por IA."
+      : "O relatório fica disponível após a conclusão da avaliação humana.";
     return (
       <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview?.context.title ?? "Entrevista em avaliação"}>
         <Card className="w-full max-w-2xl p-6 text-center">
           <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
           <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
-          <p className="text-sm text-muted-foreground mb-5">O relatório fica disponível após a conclusão da avaliação humana.</p>
+          <p className="text-sm text-muted-foreground mb-5">{pendingReportMessage}</p>
           <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
         </Card>
       </AuthLayout>
     );
   }
 
-  const evaluationCriteria = evaluation?.scores
-    ? Object.entries(evaluation.scores).map(([name, score]) => ({
-      name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
-      score,
-    }))
-    : CRITERIA;
-
-  const reportResults = {
-    Atual: {
-      summary:
-        evaluation?.comment || "Você demonstrou clareza e coerência nas respostas, com boa aderência ao contexto da vaga. Continue aprimorando exemplos práticos e organização para alcançar excelência.",
-      criteria: evaluationCriteria,
-    },
-    Anterior: {
-      summary:
-        "Nesta tentativa, suas respostas tiveram base compreensível, mas ainda precisavam de mais objetividade, domínio e exemplos concretos para sustentar melhor os argumentos.",
-      criteria: [
-        { name: "Clareza",      score: 7 },
-        { name: "Coerência",    score: 7 },
-        { name: "Objetividade", score: 6 },
-        { name: "Domínio",      score: 6 },
-        { name: "Organização",  score: 6 },
-        { name: "Aderência",    score: 7 },
-        { name: "Exemplos",     score: 5 },
-      ],
-    },
-    "Melhor resultado": {
-      summary:
-        "Seu melhor resultado combinou respostas claras, boa organização e forte conexão com os requisitos da vaga. O próximo passo é manter consistência nos exemplos e no domínio técnico.",
-      criteria: [
-        { name: "Clareza",      score: 10 },
-        { name: "Coerência",    score: 9 },
-        { name: "Objetividade", score: 9 },
-        { name: "Domínio",      score: 8 },
-        { name: "Organização",  score: 9 },
-        { name: "Aderência",    score: 9 },
-        { name: "Exemplos",     score: 8 },
-      ],
-    },
+  const normalizeEvaluationCriteria = (scores?: Record<string, number>) =>
+    scores
+      ? Object.entries(scores).map(([name, score]) => ({
+        name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
+        score,
+      }))
+      : CRITERIA;
+  const resolveEvaluationScore = (candidateEvaluation?: typeof evaluation) =>
+    candidateEvaluation?.overallScore ?? getAverageScore(candidateEvaluation?.scores);
+  const resolveComparisonTimestamp = (item: {
+    report?: { generatedAt?: string; updatedAt: string; createdAt: string };
+    interview?: { submittedAt?: string; updatedAt: string; createdAt: string };
+    evaluation?: { completedAt?: string; updatedAt: string; createdAt: string };
+  }) => {
+    const raw =
+      item.evaluation?.completedAt ??
+      item.report?.generatedAt ??
+      item.interview?.submittedAt ??
+      item.evaluation?.updatedAt ??
+      item.report?.updatedAt ??
+      item.interview?.updatedAt ??
+      item.evaluation?.createdAt ??
+      item.report?.createdAt ??
+      item.interview?.createdAt;
+    const timestamp = raw ? new Date(raw).getTime() : Number.NaN;
+    return Number.isFinite(timestamp) ? timestamp : 0;
   };
-
-  const currentReport = reportResults[resultView];
+  const availableReportEntries = getAvailableCandidateReports(candidateIdentity.id)
+    .filter((entry) => entry.evaluation)
+    .map((entry) => ({
+      ...entry,
+      key: entry.evaluation!.id,
+      score: resolveEvaluationScore(entry.evaluation),
+      timestamp: resolveComparisonTimestamp(entry),
+    }))
+    .filter((entry) => entry.score != null)
+    .sort((a, b) => b.timestamp - a.timestamp);
+  const currentEntry = availableReportEntries.find((entry) =>
+    entry.interview.id === interview?.id ||
+    entry.report.id === report?.id ||
+    entry.evaluation?.id === evaluation?.id
+  );
+  const currentKey = currentEntry?.key ?? evaluation?.id ?? id ?? "current";
+  const currentTimestamp = currentEntry?.timestamp ?? resolveComparisonTimestamp({ report: report ?? undefined, interview: interview ?? undefined, evaluation: evaluation ?? undefined });
+  const previousEntry = availableReportEntries
+    .filter((entry) => entry.key !== currentKey && entry.timestamp < currentTimestamp)
+    .sort((a, b) => b.timestamp - a.timestamp)[0];
+  const bestAvailableEntry = [...availableReportEntries]
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.timestamp - a.timestamp)[0];
+  const bestEntry = bestAvailableEntry &&
+    bestAvailableEntry.key !== currentKey &&
+    bestAvailableEntry.key !== previousEntry?.key
+      ? bestAvailableEntry
+      : undefined;
+  type ReportResultOption = "Atual" | "Anterior" | "Melhor resultado";
+  type ReportResult = {
+    evaluation: typeof evaluation;
+    summary: string;
+    criteria: { name: string; score: number }[];
+    overallScore?: number | null;
+    evaluationMode?: EvaluationMode | null;
+  };
+  const reportResults: Record<ReportResultOption, ReportResult | undefined> = {
+    Atual: {
+      evaluation,
+      summary:
+        evaluation?.summary || evaluation?.comment || "Resumo não informado para esta avaliação.",
+      criteria: normalizeEvaluationCriteria(evaluation?.scores),
+      overallScore: resolveEvaluationScore(evaluation),
+      evaluationMode: interview?.evaluationMode,
+    },
+    Anterior: previousEntry?.evaluation ? {
+        evaluation: previousEntry.evaluation,
+        summary: previousEntry.evaluation.summary || previousEntry.evaluation.comment || "Resumo não informado para esta avaliação.",
+        criteria: normalizeEvaluationCriteria(previousEntry.evaluation.scores),
+        overallScore: previousEntry.score,
+        evaluationMode: previousEntry.interview.evaluationMode,
+      } : undefined,
+    "Melhor resultado": bestEntry?.evaluation ? {
+        evaluation: bestEntry.evaluation,
+        summary: bestEntry.evaluation.summary || bestEntry.evaluation.comment || "Resumo não informado para esta avaliação.",
+        criteria: normalizeEvaluationCriteria(bestEntry.evaluation.scores),
+        overallScore: bestEntry.score,
+        evaluationMode: bestEntry.interview.evaluationMode,
+      } : undefined,
+  };
+  const resultOptions = (["Atual", "Anterior", "Melhor resultado"] as const)
+    .filter((option) => Boolean(reportResults[option]));
+  const currentReport = reportResults[resultView] ?? reportResults.Atual!;
   const radarData = currentReport.criteria;
-  const averageScoreValue = radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length;
+  const computedAverageScore = radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length;
+  const averageScoreValue = currentReport.overallScore ?? computedAverageScore;
   const averageScore = averageScoreValue.toFixed(1);
 
   const scoreState = (score: number) => {
@@ -2141,13 +2495,9 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
 
   const formatScore = (score: number) => score.toFixed(1).replace(".", ",");
   const generalState = scoreState(averageScoreValue);
-  const strongestCriteria = [...radarData].sort((a, b) => b.score - a.score).slice(0, 3);
-  const strongestNames = new Set(strongestCriteria.map(item => item.name));
-  const improvementCriteria = [...radarData]
-    .filter(item => item.score < 9 && !strongestNames.has(item.name))
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 3);
-  const resultOptions = ["Atual", "Anterior", "Melhor resultado"] as const;
+  const reportStrengths = currentReport.evaluation?.strengths?.filter(Boolean) ?? [];
+  const reportImprovements = currentReport.evaluation?.improvements?.filter(Boolean) ?? [];
+  const reportRecommendations = currentReport.evaluation?.recommendations?.filter(Boolean) ?? [];
 
   const selectResultView = (option: typeof resultOptions[number]) => {
     if (option === resultView) return;
@@ -2156,14 +2506,6 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
       setResultView(option);
       setIsReportFading(false);
     }, 180);
-  };
-
-  const criterionInsight = (criterion: string, score: number, kind: "strength" | "improvement") => {
-    const state = scoreState(score).label.toLowerCase();
-    if (kind === "strength") {
-      return `${criterion} aparece como um dos pontos mais consistentes deste relatório, com desempenho ${state} para esta tentativa.`;
-    }
-    return `${criterion} é um dos critérios que mais merecem atenção nesta comparação. Reforce exemplos, estrutura e conexão com a vaga.`;
   };
 
   const renderRadarTooltip = ({ active, payload }: any) => {
@@ -2246,6 +2588,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                     </button>
                   ))}
                 </div>
+                <EvaluationModeBadge mode={currentReport.evaluationMode} />
               </div>
               <ResponsiveContainer width="100%" height={268}>
                 <RadarChart data={radarData} outerRadius="68%" margin={{ top: 14, right: 34, bottom: 14, left: 34 }}>
@@ -2353,21 +2696,19 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
               <Award className="w-5 h-5 text-green-600" /> Pontos fortes
             </h3>
             <div className="space-y-3">
-              {strongestCriteria.map(p => {
-                const state = scoreState(p.score);
-                return (
-                <div key={p.name} className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
+              {reportStrengths.length > 0 ? reportStrengths.map((strength, index) => (
+                <div key={`${strength}-${index}`} className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
                   <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-bold text-foreground">{p.name}</p>
-                      <Badge variant={state.badge}>{formatScore(p.score)}/10</Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{criterionInsight(p.name, p.score, "strength")}</p>
-                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{strength}</p>
                 </div>
-                );
-              })}
+              )) : (
+                <div className="flex gap-3 p-3 bg-muted rounded-xl border border-border">
+                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Esta avaliação não possui pontos fortes estruturados registrados.
+                  </p>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -2377,26 +2718,16 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
               <TrendingUp className="w-5 h-5 text-amber-500" /> Oportunidades de melhoria
             </h3>
             <div className="space-y-3">
-              {improvementCriteria.map(p => {
-                const state = scoreState(p.score);
-                return (
-                <div key={p.name} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
+              {reportImprovements.length > 0 ? reportImprovements.map((improvement, index) => (
+                <div key={`${improvement}-${index}`} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="text-sm font-bold text-foreground">{p.name}</p>
-                      <Badge variant={state.badge}>{formatScore(p.score)}/10</Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{criterionInsight(p.name, p.score, "improvement")}</p>
-                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{improvement}</p>
                 </div>
-                );
-              })}
-              {improvementCriteria.length === 0 && (
-                <div className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
-                  <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+              )) : (
+                <div className="flex gap-3 p-3 bg-muted rounded-xl border border-border">
+                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Nenhum critério ficou abaixo de Excelente neste resultado.
+                    Esta avaliação não possui oportunidades de melhoria estruturadas registradas.
                   </p>
                 </div>
               )}
@@ -2407,25 +2738,32 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
         {/* Recommendations */}
         <Card className="p-5 sm:p-6 mb-5">
           <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-            <Lightbulb className="w-5 h-5 text-blue-600" /> Recomendações do avaliador
+            <Lightbulb className="w-5 h-5 text-blue-600" /> Recomendações de desenvolvimento
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            {[
-              { icon: BookOpen,      title: "Estude sobre a empresa",     desc: "Antes de uma entrevista real, pesquise a missão, valores e projetos recentes da organização." },
-              { icon: MessageSquare, title: "Pratique por escrito",       desc: "Releia suas respostas para identificar pontos vagos, excesso de texto e exemplos que podem ficar mais concretos." },
-              { icon: MessageSquare, title: "Aprofunde os exemplos",      desc: "Use números e resultados concretos: 'aumentei o engajamento em 30%' é mais forte que 'melhorei o engajamento'." },
-              { icon: Target,        title: "Foque nos critérios mais baixos", desc: "Organização, domínio e exemplos são as maiores oportunidades. Use o método STAR." },
-            ].map(r => (
-              <div key={r.title} className="flex gap-3">
-                <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-                  <r.icon className="w-4 h-4 text-blue-600" />
+            {reportRecommendations.length > 0
+              ? reportRecommendations.map((recommendation, index) => {
+                const RecommendationIcon = [BookOpen, MessageSquare, Target, Lightbulb][index % 4];
+                return (
+                  <div key={`${recommendation}-${index}`} className="flex gap-3">
+                    <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
+                      <RecommendationIcon className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-foreground mb-1">{`Recomendação ${index + 1}`}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{recommendation}</p>
+                    </div>
+                  </div>
+                );
+              })
+              : (
+                <div className="flex gap-3 rounded-xl border border-border bg-muted p-3 sm:col-span-2 xl:col-span-4">
+                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Esta avaliação não possui recomendações estruturadas registradas.
+                  </p>
                 </div>
-                <div>
-                  <p className="text-sm font-bold text-foreground mb-1">{r.title}</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{r.desc}</p>
-                </div>
-              </div>
-            ))}
+              )}
           </div>
         </Card>
 
@@ -2463,7 +2801,17 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
 
 // ─── Fase A: CAN-007 Histórico de Entrevistas ─────────────────────────────────
 
-function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+function InterviewHistoryScreen({
+  onNavigate,
+  session,
+  activeDraftEntry,
+  onContinueDraft,
+}: {
+  onNavigate: (s: Screen) => void;
+  session: MockAuthSession;
+  activeDraftEntry?: StoredInterviewDraftEntry | null;
+  onContinueDraft?: () => void;
+}) {
   const routerNavigate = useNavigate();
   const candidateIdentity = getCandidateIdentity(session);
   const isDemoCandidate = session.user?.id === "candidate-demo";
@@ -2477,8 +2825,10 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
     perguntas: number;
     status: string;
     nota: string | null;
-    badge: "success" | "warning" | "default";
+    badge: "success" | "warning" | "default" | "info";
     realId?: string;
+    draft?: boolean;
+    evaluationMode?: EvaluationMode | null;
   };
   const HISTORICO: CandidateHistoryItem[] = [
     { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const, realId: undefined as string | undefined },
@@ -2502,9 +2852,26 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
       nota: average ? average.toFixed(1) : null,
       badge: report?.status === "AVAILABLE" ? "success" as const : "warning" as const,
       realId: interview.id,
+      evaluationMode: interview.evaluationMode,
     };
   });
-  const historyItems = [...realHistory, ...(isDemoCandidate ? HISTORICO : [])];
+  const draftHistoryItem: CandidateHistoryItem[] = activeDraftEntry?.draft.context
+    ? [{
+      id: "active-interview-draft",
+      vaga: activeDraftEntry.draft.context.title,
+      empresa: activeDraftEntry.draft.context.company,
+      data: new Date(activeDraftEntry.updatedAt).toLocaleDateString("pt-BR"),
+      hora: new Date(activeDraftEntry.updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+      perguntas: activeDraftEntry.draft.questions.length,
+      status: "Em andamento",
+      nota: null,
+      badge: "info" as const,
+      draft: true,
+      evaluationMode: activeDraftEntry.draft.evaluationMode,
+    }]
+    : [];
+  const historyItems = [...draftHistoryItem, ...realHistory, ...(isDemoCandidate ? HISTORICO : [])];
+  const inProgressCount = historyItems.filter((item) => item.status === "Em andamento").length;
 
   const [filtro, setFiltro] = useState("Todos");
   const filtered = historyItems.filter(h => {
@@ -2529,7 +2896,7 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
             <span className="text-sm font-semibold text-foreground shrink-0">Filtrar por:</span>
             {["Todos", "Concluídas", "Aguardando", "Em andamento"].map(f => (
               <FilterChip key={f} onClick={() => setFiltro(f)} selected={f === filtro}>
-                {f}
+                {f === "Em andamento" ? `Em andamento (${inProgressCount})` : f}
               </FilterChip>
             ))}
           </div>
@@ -2550,6 +2917,7 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     <p className="font-bold text-foreground text-sm">{h.vaga}</p>
                     <StatusBadge tone={statusToneFromBadge(h.badge)}>{h.status}</StatusBadge>
+                    <EvaluationModeBadge mode={h.evaluationMode} />
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {h.empresa} · {h.perguntas} perguntas · {h.data}{h.hora ? ` · ${h.hora}` : ""}
@@ -2559,6 +2927,11 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
                   )}
                 </div>
                 <div className="flex gap-2 shrink-0">
+                  {h.draft && (
+                    <Btn variant="primary" size="sm" onClick={onContinueDraft}>
+                      Continuar entrevista
+                    </Btn>
+                  )}
                   {h.nota && (
                     <Btn variant="primary" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/reports/${h.realId}`) : onNavigate("report")}>
                       Ver relatório
@@ -2569,9 +2942,11 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
                       Acompanhar
                     </Btn>
                   )}
-                  <Btn variant="secondary" size="sm" onClick={() => onNavigate("interview-setup")}>
-                    Praticar novamente
-                  </Btn>
+                  {!h.draft && (
+                    <Btn variant="secondary" size="sm" onClick={() => onNavigate("interview-setup")}>
+                      Praticar novamente
+                    </Btn>
+                  )}
                 </div>
               </div>
             </Card>
@@ -2584,36 +2959,62 @@ function InterviewHistoryScreen({ onNavigate, session }: { onNavigate: (s: Scree
 
 // ─── Fase A: ENT-001 Nova entrevista ─────────────────────────────────────────
 
-const DEMO_JOB_URL = "https://www.empregare.com/pt-br/vaga/desenvolvedor-full-stack-junior";
-
 function InterviewSetupScreen({
   onNavigate,
   draft,
   setDraft,
   session,
+  savedDraftAvailable,
+  onContinueSavedDraft,
+  onDiscardSavedDraft,
+  onCancelInterview,
+  onCancelPreparation,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
   session: MockAuthSession;
+  savedDraftAvailable?: boolean;
+  onContinueSavedDraft?: () => void;
+  onDiscardSavedDraft?: () => void;
+  onCancelInterview?: () => void;
+  onCancelPreparation?: () => void;
 }) {
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
   const candidateProfile = getCandidateProfile(candidateIdentity.id, candidateUser);
   const profileReadyForInterview = isCandidateProfileReadyForInterview(candidateProfile);
-  const [url, setUrl] = useState(draft.context?.sourceUrl ?? DEMO_JOB_URL);
+  const [url, setUrl] = useState(draft.context?.sourceUrl ?? "");
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(Boolean(draft.context));
   const [generating, setGenerating] = useState(false);
+  const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const hadContextRef = useRef(Boolean(draft.context));
+  const requirementSections = draft.context
+    ? [{ title: "Requisitos", items: draft.context.requirements }]
+    : [];
+  const jobLocation = draft.context?.location?.trim();
+  const jobContractType = draft.context?.contractType?.trim();
+  const jobWorkMode = draft.context?.workMode === "REMOTE"
+    ? "Remoto"
+    : draft.context?.workMode === "HYBRID"
+      ? "Híbrido"
+      : draft.context?.workMode === "ONSITE"
+        ? "Presencial"
+        : "";
+  const jobDescription = draft.context?.summary?.trim() ?? "";
+  const descriptionIsLong = jobDescription.length > 320;
 
   const handleAnalyze = async () => {
     setStatus("loading");
     setError("");
     setConfirmed(false);
+    setDescriptionExpanded(false);
     try {
       const context = await analyzeJobUrl(url);
-      setDraft((current) => ({ ...current, context, questions: [], answers: {} }));
+      setDraft((current) => ({ ...current, context, questions: [], answers: {}, evaluationMode: null }));
       setStatus("success");
     } catch (err) {
       setStatus("error");
@@ -2629,12 +3030,29 @@ function InterviewSetupScreen({
     setGenerating(true);
     try {
       const questions = await generateInterviewQuestions(draft.context);
-      setDraft((current) => ({ ...current, questions, answers: {} }));
-      onNavigate("prep");
+      setDraft((current) => ({ ...current, questions, answers: {}, evaluationMode: null }));
+      onNavigate("consent");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível gerar as perguntas da entrevista. Tente novamente.",
+      );
     } finally {
       setGenerating(false);
     }
   };
+
+  useEffect(() => {
+    if (hadContextRef.current && !draft.context) {
+      setUrl("");
+      setStatus("idle");
+      setError("");
+      setConfirmed(false);
+      setDescriptionExpanded(false);
+    }
+    hadContextRef.current = Boolean(draft.context);
+  }, [draft.context]);
 
   if (!profileReadyForInterview) {
     return (
@@ -2662,6 +3080,54 @@ function InterviewSetupScreen({
             </div>
           </div>
         </Card>
+      </AuthLayout>
+    );
+  }
+
+  if (savedDraftAvailable && draft.context) {
+    return (
+      <AuthLayout
+        current="interview-setup"
+        onNavigate={onNavigate}
+        title="Nova entrevista"
+        subtitle="Retome ou descarte o progresso salvo"
+      >
+        <div className="w-full max-w-2xl space-y-5">
+          <Card className="p-5 sm:p-6 border-blue-100 bg-blue-50">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-bold text-foreground">Você possui uma entrevista em andamento.</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  Continue de onde parou em {draft.context.title} ou descarte o progresso salvo para iniciar uma nova entrevista.
+                </p>
+                <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                  <Btn variant="primary" onClick={onContinueSavedDraft}>
+                    Continuar entrevista
+                  </Btn>
+                  <Btn variant="outline" onClick={() => setConfirmDiscardDraft(true)}>
+                    Descartar e iniciar nova
+                  </Btn>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+        {confirmDiscardDraft && (
+          <ConfirmModal
+            title="Descartar entrevista em andamento?"
+            message="O progresso salvo desta entrevista será removido."
+            confirmLabel="Descartar e iniciar nova"
+            danger
+            onConfirm={() => {
+              setConfirmDiscardDraft(false);
+              onDiscardSavedDraft?.();
+            }}
+            onCancel={() => setConfirmDiscardDraft(false)}
+          />
+        )}
       </AuthLayout>
     );
   }
@@ -2711,21 +3177,66 @@ function InterviewSetupScreen({
                   <p className="text-[11px] text-muted-foreground mb-0.5">Empresa</p>
                   <p className="text-sm font-semibold text-foreground">{draft.context.company}</p>
                 </div>
-                <div>
-                  <p className="text-[11px] text-muted-foreground mb-0.5">Descrição resumida</p>
-                  <p className="text-sm text-foreground leading-relaxed">{draft.context.summary}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-muted-foreground mb-2">Requisitos</p>
-                  <div className="space-y-2">
-                    {draft.context.requirements.map((requirement) => (
-                      <div key={requirement} className="flex items-start gap-2 text-sm text-foreground">
-                        <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-                        <span>{requirement}</span>
-                      </div>
-                    ))}
+                {jobLocation && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground mb-0.5">Localização</p>
+                    <p className="text-sm font-semibold text-foreground">{jobLocation}</p>
                   </div>
-                </div>
+                )}
+                {jobContractType && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground mb-0.5">Tipo de contrato</p>
+                    <p className="text-sm font-semibold text-foreground">{jobContractType}</p>
+                  </div>
+                )}
+                {jobWorkMode && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground mb-0.5">Modalidade</p>
+                    <p className="text-sm font-semibold text-foreground">{jobWorkMode}</p>
+                  </div>
+                )}
+                {jobDescription && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground mb-0.5">Descrição</p>
+                    <p
+                      className="text-sm text-foreground leading-relaxed"
+                      style={
+                        descriptionIsLong && !descriptionExpanded
+                          ? {
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: 4,
+                            overflow: "hidden",
+                          }
+                          : undefined
+                      }
+                    >
+                      {draft.context.summary}
+                    </p>
+                    {descriptionIsLong && (
+                      <button
+                        type="button"
+                        className="mt-2 text-xs font-semibold text-blue-700 hover:text-blue-800"
+                        onClick={() => setDescriptionExpanded((current) => !current)}
+                      >
+                        {descriptionExpanded ? "Ver menos" : "Ver mais"}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {requirementSections.map((section) => (
+                  <div key={section.title}>
+                    <p className="text-[11px] text-muted-foreground mb-2">{section.title}</p>
+                    <div className="space-y-2">
+                      {section.items.map((requirement) => (
+                        <div key={requirement} className="flex items-start gap-2 text-sm text-foreground">
+                          <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+                          <span>{requirement}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </Card>
 
@@ -2741,7 +3252,7 @@ function InterviewSetupScreen({
         )}
 
         <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("dashboard")}>Cancelar</Btn>
+          <Btn variant="outline" onClick={() => isInterviewDraftInProgress(draft) ? onCancelInterview?.() : onCancelPreparation?.()}>Cancelar</Btn>
           <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
             {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
           </Btn>
@@ -2778,7 +3289,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
             <div>
               <h3 className="font-bold text-foreground mb-1">Privacidade e uso de dados</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Para realizar a entrevista simulada, usaremos suas respostas textuais e o contexto da vaga para avaliação por um avaliador humano autorizado.
+                Para realizar a entrevista simulada, usaremos suas respostas textuais e o contexto da vaga para avaliação conforme a modalidade escolhida.
               </p>
             </div>
           </div>
@@ -2800,7 +3311,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
             <div className="flex-1">
               <p className="text-sm font-semibold text-foreground mb-1">Autorizo o uso das respostas textuais <span className="text-red-500">*</span></p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Autorizo o RH Connect a registrar minhas respostas textuais, associadas ao contexto da vaga de {draft.context?.title ?? "interesse"}, para avaliação por avaliador humano autorizado. Entendo que esta autorização é necessária para usar a entrevista simulada.
+                Autorizo o RH Connect a registrar minhas respostas textuais, associadas ao contexto da vaga de {draft.context?.title ?? "interesse"}, para avaliação conforme a modalidade escolhida. Entendo que esta autorização é necessária para usar a entrevista simulada.
               </p>
             </div>
           </label>
@@ -2828,7 +3339,7 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
           <Btn
             variant="primary"
             disabled={!consentRequired}
-            onClick={() => onNavigate("interview")}
+            onClick={() => onNavigate("evaluation-mode")}
             className="flex-1"
           >
             Concordar e continuar <ArrowRight className="w-4 h-4" />
@@ -2842,41 +3353,179 @@ function ConsentScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void;
   );
 }
 
+function EvaluationModeScreen({
+  onNavigate,
+  draft,
+  setDraft,
+}: {
+  onNavigate: (s: Screen) => void;
+  draft: InterviewDraft;
+  setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+}) {
+  const evaluationMode = draft.evaluationMode;
+
+  if (!draft.context || draft.questions.length === 0) {
+    return <DraftWizardGuard current="evaluation-mode" onNavigate={onNavigate} />;
+  }
+
+  const selectEvaluationMode = (mode: EvaluationMode) => {
+    setDraft((current) => ({ ...current, evaluationMode: mode }));
+  };
+
+  return (
+    <AuthLayout
+      current="evaluation-mode"
+      onNavigate={onNavigate}
+      title="Modalidade de avaliação"
+      subtitle="Escolha como sua entrevista será avaliada"
+    >
+      <div className="w-full max-w-2xl space-y-5">
+        <Card className="p-5 sm:p-6">
+          <h3 className="font-bold text-foreground mb-2">Como você quer receber a avaliação?</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            Escolha uma modalidade antes de iniciar as perguntas. A opção selecionada será usada no envio final.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => selectEvaluationMode("AI")}
+              className={`text-left rounded-2xl border p-4 transition-all ${
+                evaluationMode === "AI"
+                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                  : "border-border bg-white hover:border-blue-200 hover:bg-blue-50/40"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${evaluationMode === "AI" ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600"}`}>
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-foreground">Avaliação por IA</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                    Receba uma análise automatizada da sua entrevista com pontos fortes, pontos de atenção e recomendações.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => selectEvaluationMode("HUMAN")}
+              className={`text-left rounded-2xl border p-4 transition-all ${
+                evaluationMode === "HUMAN"
+                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                  : "border-border bg-white hover:border-blue-200 hover:bg-blue-50/40"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${evaluationMode === "HUMAN" ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600"}`}>
+                  <User className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-foreground">Avaliação humana</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                    Sua entrevista será enviada para um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.
+                  </p>
+                </div>
+              </div>
+            </button>
+          </div>
+          {!evaluationMode && (
+            <p className="text-xs text-amber-700 mt-3">Escolha uma modalidade para continuar.</p>
+          )}
+        </Card>
+
+        <div className="flex gap-3">
+          <Btn variant="outline" onClick={() => onNavigate("consent")}>Voltar</Btn>
+          <Btn
+            variant="primary"
+            disabled={!evaluationMode}
+            onClick={() => onNavigate("prep")}
+            className="flex-1"
+          >
+            Continuar para orientações <ArrowRight className="w-4 h-4" />
+          </Btn>
+        </div>
+      </div>
+    </AuthLayout>
+  );
+}
+
 // ─── Fase A: ENT-008 Confirmação de Envio ─────────────────────────────────────
 
-function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; session: MockAuthSession }) {
+function InterviewConfirmScreen({
+  onNavigate,
+  draft,
+  session,
+  onDraftCompleted,
+}: {
+  onNavigate: (s: Screen) => void;
+  draft: InterviewDraft;
+  session: MockAuthSession;
+  onDraftCompleted?: () => void;
+}) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
   const candidateIdentity = getCandidateIdentity(session);
+  const evaluationMode = draft.evaluationMode;
 
   if (!draft.context || draft.questions.length === 0) {
     return <DraftWizardGuard current="interview-confirm" onNavigate={onNavigate} />;
   }
 
-  const handleSend = () => {
+  const handleSend = async () => {
+    if (sendingRef.current) {
+      return;
+    }
     if (!allAnswersReady) {
       toast.error("Responda todas as perguntas antes de enviar.");
       return;
     }
+    if (!evaluationMode) {
+      toast.error("Escolha a modalidade de avaliação antes de enviar.");
+      return;
+    }
+    sendingRef.current = true;
     setSending(true);
-    setTimeout(() => {
+    const answers = draft.questions.map((question) => ({
+      questionId: question.id,
+      questionText: question.text,
+      questionType: question.type,
+      answer: draft.answers[question.id]?.trim() ?? "",
+    }));
+
+    try {
+      const aiEvaluation = evaluationMode === "AI"
+        ? await evaluateInterviewWithAi(draft.context!, answers)
+        : null;
+
       const interview = submitInterview({
         candidateId: candidateIdentity.id,
         candidateName: candidateIdentity.name,
         candidateEmail: candidateIdentity.email,
         context: draft.context!,
-        answers: draft.questions.map((question) => ({
-          questionId: question.id,
-          questionText: question.text,
-          questionType: question.type,
-          answer: draft.answers[question.id]?.trim() ?? "",
-        })),
+        evaluationMode,
+        answers,
       });
+
+      if (aiEvaluation) {
+        completeAiEvaluation(interview.id, aiEvaluation);
+      }
+
+      onDraftCompleted?.();
+      sendingRef.current = false;
       setSending(false);
-      routerNavigate(`/candidate/interviews/${interview.id}/success`);
-    }, 1800);
+      routerNavigate(evaluationMode === "AI"
+        ? `/candidate/reports/${interview.id}`
+        : `/candidate/interviews/${interview.id}/success`);
+    } catch (error) {
+      sendingRef.current = false;
+      setSending(false);
+      toast.error(error instanceof Error ? error.message : "Não foi possível enviar a entrevista. Tente novamente.");
+    }
   };
 
   return (
@@ -2884,7 +3533,7 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
       current="interview-confirm"
       onNavigate={onNavigate}
       title="Confirmar Envio"
-      subtitle="Revise antes de enviar suas respostas para avaliação"
+      subtitle="Revise antes de enviar suas respostas"
     >
       <div className="w-full max-w-2xl space-y-5">
         {/* Aviso */}
@@ -2892,7 +3541,7 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-bold text-amber-800 mb-1">Atenção: esta ação não pode ser desfeita</p>
-            <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão encaminhadas para avaliação humana. Você não poderá editar as respostas.</p>
+            <p className="text-xs text-amber-700 leading-relaxed">Após o envio, suas respostas serão registradas para avaliação conforme a modalidade escolhida. Você não poderá editar as respostas.</p>
           </div>
         </Alert>
 
@@ -2922,7 +3571,7 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
                   <p className="text-xs font-semibold text-foreground mb-0.5">Pergunta {i + 1}</p>
                   <p className="text-xs text-muted-foreground line-clamp-2">{q.text}</p>
                   <p className={`text-[11px] font-medium mt-1 ${isValidInterviewAnswer(draft.answers[q.id]) ? "text-green-600" : "text-amber-700"}`}>
-                    {isValidInterviewAnswer(draft.answers[q.id]) ? "Resposta textual pronta" : "Resposta pendente"}
+                    {isValidInterviewAnswer(draft.answers[q.id]) ? "Resposta preenchida" : "Resposta pendente"}
                   </p>
                 </div>
               </div>
@@ -2949,12 +3598,29 @@ function InterviewConfirmScreen({ onNavigate, draft, session }: { onNavigate: (s
           </div>
         </Card>
 
+        <Card className="p-5 sm:p-6">
+          <h3 className="font-bold text-foreground mb-4">Modalidade escolhida</h3>
+          <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+              {evaluationMode === "AI" ? <Zap className="w-4 h-4" /> : <User className="w-4 h-4" />}
+            </div>
+            <div>
+              <EvaluationModeBadge mode={evaluationMode} />
+              <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+                {evaluationMode === "AI"
+                  ? "Receba uma análise automatizada da sua entrevista com pontos fortes, pontos de atenção e recomendações."
+                  : "Sua entrevista será enviada para um avaliador humano autorizado. O resultado ficará disponível em até 72 horas."}
+              </p>
+            </div>
+          </div>
+        </Card>
+
         <div className="flex gap-3">
           <Btn variant="outline" onClick={() => onNavigate("review")}>Revisar novamente</Btn>
           <Btn
             variant="primary"
             onClick={handleSend}
-            disabled={sending || !allAnswersReady}
+            disabled={sending || !allAnswersReady || !evaluationMode}
             className="flex-1"
           >
             {sending ? (
@@ -2975,6 +3641,21 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
   const routerNavigate = useNavigate();
   const { id } = useParams();
   const interview = getInterviewById(id);
+  const evaluationMode = interview?.evaluationMode ?? "HUMAN";
+  const doneMessage = evaluationMode === "AI"
+    ? "Suas respostas foram recebidas com sucesso e serão analisadas pela IA Avaliadora do RH Connect."
+    : "Suas respostas foram recebidas com sucesso e serão encaminhadas para avaliação por um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.";
+  const nextSteps = evaluationMode === "AI"
+    ? [
+        "A IA Avaliadora analisará suas respostas e o contexto da vaga.",
+        "Você receberá pontos fortes, pontos de atenção e recomendações.",
+        "Acompanhe o status na seção Histórico de entrevistas.",
+      ]
+    : [
+        "Um avaliador humano autorizado analisará suas respostas.",
+        "O resultado ficará disponível em até 72 horas.",
+        "Acesse o relatório na seção Histórico de entrevistas",
+      ];
   return (
     <AuthLayout
       current="interview-done"
@@ -2990,7 +3671,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
           <h2 className="text-xl sm:text-2xl font-extrabold text-foreground mb-2">Respostas enviadas!</h2>
           <p className="text-muted-foreground text-sm mb-6 leading-relaxed">
-            Suas respostas foram recebidas com sucesso e serão encaminhadas para avaliação por um avaliador humano autorizado.
+            {doneMessage}
           </p>
 
           {/* Protocolo */}
@@ -3010,7 +3691,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Status</p>
-                <StatusBadge tone="warning">Aguardando avaliação</StatusBadge>
+                <StatusBadge tone="warning">{interview?.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
               </div>
             </div>
           </div>
@@ -3019,11 +3700,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
           <div className="text-left bg-blue-50 rounded-xl p-4 mb-6">
             <p className="text-xs font-bold text-blue-700 mb-3">O que acontece agora?</p>
             <div className="space-y-2">
-              {[
-                "Um avaliador humano autorizado analisará suas respostas.",
-                "Você receberá uma notificação quando o resultado estiver disponível",
-                "Acesse o relatório na seção Histórico de entrevistas",
-              ].map((step, i) => (
+              {nextSteps.map((step, i) => (
                 <div key={i} className="flex items-start gap-2">
                   <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0 mt-0.5">{i + 1}</div>
                   <p className="text-xs text-muted-foreground">{step}</p>
@@ -3778,24 +4455,43 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 function ConfirmModal({
-  title, message, confirmLabel, danger = false, onConfirm, onCancel, children,
+  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, equalActionWidths = true, onConfirm, onCancel, onClose, children,
 }: {
   title: string; message: string; confirmLabel: string;
+  cancelLabel?: string;
+  showCloseButton?: boolean;
+  equalActionWidths?: boolean;
   danger?: boolean; onConfirm: () => void; onCancel: () => void;
+  onClose?: () => void;
   children?: ReactNode;
 }) {
+  const actionButtonSizeClass = equalActionWidths ? "flex-1" : "px-6 whitespace-nowrap";
+  const actionGroupClass = equalActionWidths ? "flex gap-3" : "flex justify-center gap-3";
+  const modalWidthClass = equalActionWidths ? "max-w-sm" : "max-w-md";
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,27,45,0.6)" }}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+      <div className={`relative bg-white rounded-2xl p-6 w-full ${modalWidthClass} shadow-2xl`}>
+        {showCloseButton && (
+          <button
+            type="button"
+            onClick={onClose ?? onCancel}
+            className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="Fechar"
+            title="Fechar"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
         <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${danger ? "bg-red-50" : "bg-amber-50"}`}>
           <AlertCircle className={`w-6 h-6 ${danger ? "text-red-500" : "text-amber-500"}`} />
         </div>
         <h3 className="font-bold text-foreground text-center mb-2">{title}</h3>
         <p className="text-sm text-muted-foreground text-center mb-5 leading-relaxed">{message}</p>
         {children && <div className="mb-5">{children}</div>}
-        <div className="flex gap-3">
-          <button onClick={onCancel} className="flex-1 py-2.5 border border-border rounded-xl text-sm font-semibold text-foreground hover:bg-muted transition-colors">Cancelar</button>
-          <button onClick={onConfirm} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-colors ${danger ? "bg-red-500 hover:bg-red-600" : "bg-primary hover:bg-blue-800"}`}>{confirmLabel}</button>
+        <div className={actionGroupClass}>
+          <button onClick={onCancel} className={`${actionButtonSizeClass} py-2.5 border border-border rounded-xl text-sm font-semibold text-foreground hover:bg-muted transition-colors`}>{cancelLabel}</button>
+          <button onClick={onConfirm} className={`${actionButtonSizeClass} py-2.5 rounded-xl text-sm font-semibold text-white transition-colors ${danger ? "bg-red-500 hover:bg-red-600" : "bg-primary hover:bg-blue-800"}`}>{confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -4029,7 +4725,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                       </div>
                       <div>
                         <p className="text-sm font-bold text-foreground">Uso das respostas textuais para avaliação</p>
-                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para registrar suas respostas textuais e disponibilizá-las para avaliação humana autorizada. Este consentimento é obrigatório para usar o sistema.</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para registrar suas respostas textuais e disponibilizá-las para avaliação conforme a modalidade escolhida. Este consentimento é obrigatório para usar o sistema.</p>
                         <p className="text-xs text-green-600 font-semibold mt-1.5">Autorizado em 15/07/2026</p>
                       </div>
                     </div>
@@ -4978,8 +5674,38 @@ function AppRoutes() {
   const routerNavigate = useNavigate();
   const location = useLocation();
   const [session, setSession] = useState(() => getMockAuthSession());
-  const [interviewDraft, setInterviewDraft] = useState(createEmptyInterviewDraft);
-  const navigate = (screen: Screen) => {
+  const initialDraftSnapshot = useRef(getStoredInterviewDraft(getCandidateIdentity(session).id));
+  const [interviewDraft, setInterviewDraft] = useState<InterviewDraft>(() => initialDraftSnapshot.current?.draft ?? createEmptyInterviewDraft());
+  const [draftProgress, setDraftProgress] = useState<InterviewDraftProgress>(() => initialDraftSnapshot.current?.progress ?? DEFAULT_INTERVIEW_DRAFT_PROGRESS);
+  const [resumeDraftProgress, setResumeDraftProgress] = useState<InterviewDraftProgress | null>(() => initialDraftSnapshot.current?.progress ?? null);
+  const [resumePromptDismissed, setResumePromptDismissed] = useState(() => !initialDraftSnapshot.current);
+  const [pendingNavigationScreen, setPendingNavigationScreen] = useState<Screen | null>(null);
+  const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState(false);
+  const [confirmCancelInterview, setConfirmCancelInterview] = useState(false);
+  const browserNavigationAllowedRef = useRef(false);
+  const protectedHistoryUrlRef = useRef("");
+  const candidateIdentity = getCandidateIdentity(session);
+  const candidateHasSavedDraft = session.user?.role === "CANDIDATE" && hasActiveInterviewDraft(interviewDraft);
+  const candidateDraftActive = session.user?.role === "CANDIDATE" && isInterviewDraftInProgress(interviewDraft);
+  const currentInterviewDraftScreen = getInterviewDraftScreenFromPath(location.pathname);
+  const activeDraftEntry = candidateDraftActive
+    ? {
+      draft: interviewDraft,
+      progress: draftProgress,
+      updatedAt: getStoredInterviewDraft(candidateIdentity.id)?.updatedAt ?? new Date().toISOString(),
+    }
+    : null;
+  const shouldShowResumePrompt =
+    candidateDraftActive &&
+    !resumePromptDismissed &&
+    location.pathname === getPathForScreen("interview-setup");
+  const shouldProtectInterviewExit = Boolean(
+    candidateDraftActive &&
+    currentInterviewDraftScreen &&
+    !shouldShowResumePrompt,
+  );
+
+  const executeNavigation = (screen: Screen) => {
     if ((screen === "auth" || screen === "landing") && session.authenticated) {
       setSession(logoutMockUser());
       routerNavigate("/login");
@@ -4998,6 +5724,148 @@ function AppRoutes() {
 
     routerNavigate(targetPath);
   };
+
+  const navigate = (screen: Screen) => {
+    const targetPath = getPathForScreen(screen);
+    const targetIsInterviewDraftRoute = Boolean(getInterviewDraftScreenFromPath(targetPath));
+    if (shouldProtectInterviewExit && !targetIsInterviewDraftRoute) {
+      saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+      setPendingNavigationScreen(screen);
+      return;
+    }
+
+    executeNavigation(screen);
+  };
+
+  const navigateToStoredDraftProgress = (progress: InterviewDraftProgress) => {
+    setResumePromptDismissed(true);
+    setDraftProgress(progress);
+    setResumeDraftProgress(null);
+    const targetPath = getPathForScreen(progress.currentScreen);
+    if (progress.currentScreen === "interview" && progress.currentQuestionIndex > 0) {
+      routerNavigate(`${targetPath}?question=${progress.currentQuestionIndex + 1}`);
+      return;
+    }
+    routerNavigate(targetPath);
+  };
+
+  const discardSavedDraft = () => {
+    clearStoredInterviewDraft(candidateIdentity.id);
+    setInterviewDraft(createEmptyInterviewDraft());
+    setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
+    setResumeDraftProgress(null);
+    setResumePromptDismissed(true);
+  };
+
+  const cancelInterviewPreparation = () => {
+    discardSavedDraft();
+    routerNavigate(getPathForScreen("dashboard"));
+  };
+
+  const cancelActiveInterviewDraft = () => {
+    discardSavedDraft();
+    setPendingNavigationScreen(null);
+    setPendingBrowserNavigation(false);
+    setConfirmCancelInterview(false);
+    routerNavigate(getPathForScreen("interview-history"));
+  };
+
+  const completeCurrentDraft = () => {
+    clearStoredInterviewDraft(candidateIdentity.id);
+    setInterviewDraft(createEmptyInterviewDraft());
+    setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
+    setResumeDraftProgress(null);
+    setResumePromptDismissed(true);
+  };
+
+  useEffect(() => {
+    const storedDraft = getStoredInterviewDraft(candidateIdentity.id);
+    if (storedDraft) {
+      setInterviewDraft(storedDraft.draft);
+      setDraftProgress(storedDraft.progress);
+      setResumeDraftProgress(storedDraft.progress);
+      setResumePromptDismissed(false);
+      return;
+    }
+
+    setInterviewDraft(createEmptyInterviewDraft());
+    setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
+    setResumeDraftProgress(null);
+    setResumePromptDismissed(true);
+  }, [candidateIdentity.id]);
+
+  useEffect(() => {
+    if (shouldShowResumePrompt) return;
+    if (!currentInterviewDraftScreen) return;
+    setDraftProgress((current) => {
+      const currentQuestionIndex = currentInterviewDraftScreen === "interview"
+        ? getQuestionIndexFromSearchParam(new URLSearchParams(location.search).get("question"), interviewDraft.questions.length)
+        : current.currentQuestionIndex;
+      if (current.currentScreen === currentInterviewDraftScreen && current.currentQuestionIndex === currentQuestionIndex) {
+        return current;
+      }
+      return { currentScreen: currentInterviewDraftScreen, currentQuestionIndex };
+    });
+  }, [currentInterviewDraftScreen, interviewDraft.questions.length, location.search, shouldShowResumePrompt]);
+
+  useEffect(() => {
+    if (shouldShowResumePrompt) return;
+    if (!candidateHasSavedDraft) return;
+    saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+  }, [candidateHasSavedDraft, candidateIdentity.id, draftProgress, interviewDraft, shouldShowResumePrompt]);
+
+  useEffect(() => {
+    if (!shouldProtectInterviewExit) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [candidateIdentity.id, draftProgress, interviewDraft, shouldProtectInterviewExit]);
+
+  useEffect(() => {
+    if (!shouldProtectInterviewExit) {
+      protectedHistoryUrlRef.current = "";
+      setPendingBrowserNavigation(false);
+      return;
+    }
+
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (protectedHistoryUrlRef.current !== currentUrl) {
+      const currentState = window.history.state && typeof window.history.state === "object"
+        ? window.history.state
+        : {};
+      window.history.replaceState({ ...currentState, rhConnectInterviewBase: true }, "", currentUrl);
+      window.history.pushState({ rhConnectInterviewGuard: true }, "", currentUrl);
+      protectedHistoryUrlRef.current = currentUrl;
+    }
+
+    const handlePopState = () => {
+      if (browserNavigationAllowedRef.current) {
+        return;
+      }
+
+      saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+      setPendingBrowserNavigation(true);
+      const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.pushState({ rhConnectInterviewGuard: true }, "", nextUrl);
+      protectedHistoryUrlRef.current = nextUrl;
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [
+    candidateIdentity.id,
+    draftProgress,
+    interviewDraft,
+    location.hash,
+    location.pathname,
+    location.search,
+    shouldProtectInterviewExit,
+  ]);
+
   const completeOnboardingAndNavigate = (screen: Screen) => {
     setSession(completeMockOnboarding());
     routerNavigate(getPathForScreen(screen));
@@ -5040,21 +5908,22 @@ function AppRoutes() {
           <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
 
           <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard")} />)} />
-          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
           <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} />)} />
           <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} />)} />
           <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
           <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} />)} />
+          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onDiscardSavedDraft={discardSavedDraft} onCancelInterview={() => setConfirmCancelInterview(true)} onCancelPreparation={cancelInterviewPreparation} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
+          <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
           <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
+          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} onQuestionIndexChange={(index) => setDraftProgress((current) => current.currentQuestionIndex === index ? current : { ...current, currentQuestionIndex: index })} />)} />
           <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} />)} />
+          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} />)} />
           <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
           <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
@@ -5092,6 +5961,57 @@ function AppRoutes() {
           <Route path="/admin" element={protect("ADMIN", <Navigate to="/admin/dashboard" replace />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        {(pendingNavigationScreen || pendingBrowserNavigation || confirmCancelInterview) && (
+          <ConfirmModal
+            title={confirmCancelInterview ? "Cancelar entrevista?" : "Deseja sair da entrevista?"}
+            message={confirmCancelInterview
+              ? "O progresso salvo desta entrevista será removido. Esta ação não poderá ser desfeita."
+              : "Você pode continuar depois com o progresso salvo ou cancelar esta entrevista e descartar o progresso atual."}
+            confirmLabel={confirmCancelInterview ? "Cancelar entrevista" : "Sair e continuar depois"}
+            cancelLabel={confirmCancelInterview ? "Voltar" : "Cancelar entrevista"}
+            showCloseButton={!confirmCancelInterview}
+            equalActionWidths={false}
+            danger={confirmCancelInterview}
+            onConfirm={() => {
+              if (confirmCancelInterview) {
+                cancelActiveInterviewDraft();
+                return;
+              }
+              if (pendingBrowserNavigation) {
+                saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+                setResumeDraftProgress(draftProgress);
+                setResumePromptDismissed(false);
+                setPendingBrowserNavigation(false);
+                browserNavigationAllowedRef.current = true;
+                protectedHistoryUrlRef.current = "";
+                window.history.go(-2);
+                window.setTimeout(() => {
+                  browserNavigationAllowedRef.current = false;
+                }, 500);
+                return;
+              }
+              const target = pendingNavigationScreen;
+              if (!target) return;
+              saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+              setResumeDraftProgress(draftProgress);
+              setResumePromptDismissed(false);
+              setPendingNavigationScreen(null);
+              executeNavigation(target);
+            }}
+            onCancel={() => {
+              if (confirmCancelInterview) {
+                setConfirmCancelInterview(false);
+                return;
+              }
+              setConfirmCancelInterview(true);
+            }}
+            onClose={() => {
+              setConfirmCancelInterview(false);
+              setPendingNavigationScreen(null);
+              setPendingBrowserNavigation(false);
+            }}
+          />
+        )}
       </div>
     </div>
   );
