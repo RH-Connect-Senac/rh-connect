@@ -11,9 +11,6 @@ export type JobInterviewContext = {
   summary: string;
   activities?: string[];
   requirements: string[];
-  requiredRequirements?: string[];
-  desirableRequirements?: string[];
-  differentials?: string[];
   location?: string | null;
   contractType?: string | null;
   workMode?: "REMOTE" | "HYBRID" | "ONSITE" | null;
@@ -32,9 +29,6 @@ type ApiJobContextResponse = {
   summary?: unknown;
   activities?: unknown;
   requirements?: unknown;
-  requiredRequirements?: unknown;
-  desirableRequirements?: unknown;
-  differentials?: unknown;
   location?: unknown;
   contractType?: unknown;
   workMode?: unknown;
@@ -219,9 +213,6 @@ export async function analyzeJobUrl(url: string): Promise<JobInterviewContext> {
     summary: asString(context.summary),
     activities: asStringList(context.activities),
     requirements: asStringList(context.requirements),
-    requiredRequirements: asStringList(context.requiredRequirements),
-    desirableRequirements: asStringList(context.desirableRequirements),
-    differentials: asStringList(context.differentials),
     location: asOptionalString(context.location),
     contractType: asOptionalString(context.contractType),
     workMode: asWorkMode(context.workMode),
@@ -240,9 +231,6 @@ export async function generateInterviewQuestions(
         summary: context.summary,
         activities: context.activities ?? [],
         requirements: context.requirements,
-        requiredRequirements: context.requiredRequirements ?? [],
-        desirableRequirements: context.desirableRequirements ?? [],
-        differentials: context.differentials ?? [],
         location: context.location ?? null,
         contractType: context.contractType ?? null,
         workMode: context.workMode ?? null,
@@ -286,9 +274,6 @@ export async function evaluateInterviewWithAi(
         summary: context.summary,
         activities: context.activities ?? [],
         requirements: context.requirements,
-        requiredRequirements: context.requiredRequirements ?? [],
-        desirableRequirements: context.desirableRequirements ?? [],
-        differentials: context.differentials ?? [],
         location: context.location ?? null,
         contractType: context.contractType ?? null,
         workMode: context.workMode ?? null,

@@ -143,11 +143,8 @@ class GroqService:
         summary = _clean_text(context.get("summary"))
         activities = _clean_list(context.get("activities"))
         requirements = _clean_list(context.get("requirements"))
-        required_requirements = _clean_list(context.get("requiredRequirements"))
-        desirable_requirements = _clean_list(context.get("desirableRequirements"))
-        differentials = _clean_list(context.get("differentials"))
 
-        if not title and not summary and not activities and not requirements and not required_requirements and not desirable_requirements and not differentials:
+        if not title and not summary and not activities and not requirements:
             raise GroqServiceError("Informe contexto suficiente da vaga.", 400)
 
     def _build_questions_prompt(self, context: dict[str, Any]) -> str:
@@ -157,11 +154,9 @@ class GroqService:
             "summary": _clean_text(context.get("summary")),
             "activities": _clean_list(context.get("activities")),
             "requirements": _clean_list(context.get("requirements")),
-            "requiredRequirements": _clean_list(context.get("requiredRequirements")),
-            "desirableRequirements": _clean_list(context.get("desirableRequirements")),
-            "differentials": _clean_list(context.get("differentials")),
             "location": _clean_text(context.get("location")),
             "contractType": _clean_text(context.get("contractType")),
+            "workMode": _clean_text(context.get("workMode")),
             "sourceUrl": _clean_text(context.get("sourceUrl")),
         }
 
@@ -179,18 +174,13 @@ class GroqService:
             "- A pergunta 5 deve ser Carreira.\n"
             "- Use os requisitos e atividades reais da vaga.\n"
             "- A vaga deve ser a fonte principal para gerar as perguntas.\n"
-            "- Priorize nesta ordem: titulo, resumo, atividades e requiredRequirements.\n"
-            "- Use requirements como fallback consolidado apenas quando requiredRequirements, "
-            "desirableRequirements e differentials estiverem ausentes ou vazios.\n"
-            "- requiredRequirements representam conhecimentos, experiencias e condicoes esperadas "
-            "pela vaga; eles podem orientar perguntas diretas.\n"
-            "- desirableRequirements representam pontos desejaveis, nao obrigatorios; se forem usados, "
-            "formule a pergunta sem pressupor que o candidato obrigatoriamente ja tenha essa experiencia.\n"
-            "- differentials representam diferenciais ou plus; eles podem enriquecer a entrevista, "
-            "mas nunca devem ser tratados como requisitos obrigatorios.\n"
-            "- Ao usar desirableRequirements ou differentials, prefira formulacoes abertas como "
-            "contato previo, estrategia, abordagem, oportunidade de uso ou como o candidato resolveria "
-            "a situacao, sem exigir experiencia previa como fato.\n"
+            "- Priorize nesta ordem: titulo, resumo, atividades e requirements.\n"
+            "- requirements contem requisitos, qualificacoes, conhecimentos, competencias "
+            "e demais informacoes profissionais extraidas do anuncio.\n"
+            "- Nao assuma que cada item de requirements seja eliminatorio ou obrigatorio.\n"
+            "- Nao atribua peso obrigatorio, desejavel ou diferencial alem do que o proprio "
+            "texto da vaga permita concluir.\n"
+            "- Nao transforme contexto profissional em exigencia mais forte do que o anuncio.\n"
             "- As perguntas podem aprofundar moderadamente tecnologias, conhecimentos, "
             "competencias, atividades e responsabilidades explicitamente relacionados ao "
             "conteudo da vaga.\n"

@@ -1964,14 +1964,7 @@ function InterviewScreen({
     );
   }
 
-  const structuredRequirementSections = [
-    { title: "Obrigatórios", items: draft.context.requiredRequirements ?? [] },
-    { title: "Desejáveis", items: draft.context.desirableRequirements ?? [] },
-    { title: "Diferenciais", items: draft.context.differentials ?? [] },
-  ].filter((section) => section.items.length > 0);
-  const requirementSections = structuredRequirementSections.length > 0
-    ? structuredRequirementSections
-    : [{ title: "Requisitos", items: draft.context.requirements }];
+  const requirementSections = [{ title: "Requisitos", items: draft.context.requirements }];
 
   return (
     <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
@@ -2989,18 +2982,9 @@ function InterviewSetupScreen({
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
-  const structuredRequirementSections = draft.context
-    ? [
-      { title: "Requisitos obrigatórios", items: draft.context.requiredRequirements ?? [] },
-      { title: "Desejáveis", items: draft.context.desirableRequirements ?? [] },
-      { title: "Diferenciais", items: draft.context.differentials ?? [] },
-    ].filter((section) => section.items.length > 0)
+  const requirementSections = draft.context
+    ? [{ title: "Requisitos", items: draft.context.requirements }]
     : [];
-  const requirementSections = structuredRequirementSections.length > 0
-    ? structuredRequirementSections
-    : draft.context
-      ? [{ title: "Requisitos", items: draft.context.requirements }]
-      : [];
   const jobLocation = draft.context?.location?.trim();
   const jobContractType = draft.context?.contractType?.trim();
   const jobWorkMode = draft.context?.workMode === "REMOTE"

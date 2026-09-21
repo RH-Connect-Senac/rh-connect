@@ -23,8 +23,6 @@ class JobExtractionError(Exception):
 
 SECTION_ACTIVITIES = "activities"
 SECTION_REQUIRED = "required"
-SECTION_DESIRABLE = "desirable"
-SECTION_DIFFERENTIAL = "differential"
 SECTION_IGNORE = "ignore"
 
 
@@ -350,21 +348,9 @@ def _context_from_job_posting(job: dict[str, Any], source_url: str, soup: Beauti
         _dedupe_items(responsibilities + parsed["activities"])
         or _extract_job_activities(responsibilities_text or description)
     )
-    external_requirements = qualifications + skills + experience + education
-    classified_external = _classify_requirement_items(external_requirements)
-    required_requirements = _dedupe_items(
-        classified_external["requiredRequirements"] + parsed["requiredRequirements"]
-    )
-    desirable_requirements = _dedupe_items(
-        classified_external["desirableRequirements"] + parsed["desirableRequirements"]
-    )
-    differentials = _dedupe_items(classified_external["differentials"] + parsed["differentials"])
-    general_requirements = _dedupe_items(
-        classified_external["requirements"] + (parsed["requirements"] or _extract_job_requirements(description))
-    )
-    requirements = _dedupe_items(
-        required_requirements + desirable_requirements + differentials + general_requirements
-    )
+    external_requirements = _flatten_requirement_items(qualifications + skills + experience + education)
+    parsed_requirements = parsed["requirements"] or _extract_job_requirements(description)
+    requirements = _dedupe_items(external_requirements + parsed_requirements)
 
     return _build_context(
         source_url=source_url,
@@ -373,9 +359,6 @@ def _context_from_job_posting(job: dict[str, Any], source_url: str, soup: Beauti
         summary=parsed["summary"] or _summary_from_job_description(description, activities),
         activities=activities,
         requirements=requirements,
-        required_requirements=required_requirements,
-        desirable_requirements=desirable_requirements,
-        differentials=differentials,
         location=_extract_location(job.get("jobLocation")) or _extract_visible_location(page_text),
         contract_type=_extract_explicit_contract_type(soup.get_text("\n")) or _extract_contract_type(job.get("employmentType")),
         work_mode=_extract_work_mode(
@@ -426,13 +409,7 @@ def _context_from_html(soup: BeautifulSoup, source_url: str) -> dict[str, Any]:
 
     parsed = _extract_structured_job_content(page_text)
     activities = parsed["activities"] or _extract_job_activities(page_text)
-    required_requirements = parsed["requiredRequirements"]
-    desirable_requirements = parsed["desirableRequirements"]
-    differentials = parsed["differentials"]
-    general_requirements = parsed["requirements"] or _extract_job_requirements(page_text)
-    requirements = _dedupe_items(
-        required_requirements + desirable_requirements + differentials + general_requirements
-    )
+    requirements = parsed["requirements"] or _extract_job_requirements(page_text)
     location = _extract_label_value(page_text, ["localizacao", "localização", "local"]) or _extract_visible_location(page_text)
     contract_type = _extract_explicit_contract_type(page_text)
     work_mode = _extract_work_mode(page_text=page_text, title=title)
@@ -444,9 +421,6 @@ def _context_from_html(soup: BeautifulSoup, source_url: str) -> dict[str, Any]:
         summary=parsed["summary"] or _summary_from_job_description(summary or page_text, activities),
         activities=activities,
         requirements=requirements,
-        required_requirements=required_requirements,
-        desirable_requirements=desirable_requirements,
-        differentials=differentials,
         location=location,
         contract_type=contract_type,
         work_mode=work_mode,
@@ -461,9 +435,6 @@ def _build_context(
     summary: str | None,
     activities: list[str],
     requirements: list[str],
-    required_requirements: list[str],
-    desirable_requirements: list[str],
-    differentials: list[str],
     location: str | None,
     contract_type: str | None,
     work_mode: str | None,
@@ -474,9 +445,6 @@ def _build_context(
         "summary": summary or "",
         "activities": _dedupe_items(activities),
         "requirements": _dedupe_items(requirements),
-        "requiredRequirements": _dedupe_items(required_requirements),
-        "desirableRequirements": _dedupe_items(desirable_requirements),
-        "differentials": _dedupe_items(differentials),
         "location": location or None,
         "contractType": contract_type or None,
         "workMode": work_mode or None,
@@ -486,59 +454,17 @@ def _build_context(
 
 def _normalize_final_job_context(context: dict[str, Any]) -> dict[str, Any]:
     activities_source = _ensure_list(context.get("activities"))
-    existing_required = _ensure_list(context.get("requiredRequirements"))
-    existing_desirable = _ensure_list(context.get("desirableRequirements"))
-    existing_differentials = _ensure_list(context.get("differentials"))
-    classified_keys = {
-        _clean_text(item).lower()
-        for item in existing_required + existing_desirable + existing_differentials
-        if _clean_text(item)
-    }
-    requirements_source = [
-        item
-        for item in _ensure_list(context.get("requirements"))
-        if _clean_text(item).lower() not in classified_keys
-    ]
+    requirements_source = _ensure_list(context.get("requirements"))
 
     parsed_activities = _redistribute_context_lines(activities_source, SECTION_ACTIVITIES)
     parsed_requirements = _redistribute_context_lines(requirements_source, SECTION_REQUIRED)
-    parsed_existing_required = _redistribute_context_lines(existing_required, SECTION_REQUIRED)
-    parsed_existing_desirable = _redistribute_context_lines(existing_desirable, SECTION_DESIRABLE)
-    parsed_existing_differentials = _redistribute_context_lines(existing_differentials, SECTION_DIFFERENTIAL)
 
     activities = _dedupe_items(parsed_activities["activities"] + parsed_requirements["activities"])
-    required_requirements = _dedupe_items(
-        parsed_requirements["requiredRequirements"]
-        + parsed_existing_required["requiredRequirements"]
-        + parsed_existing_desirable["requiredRequirements"]
-        + parsed_existing_differentials["requiredRequirements"]
-    )
-    desirable_requirements = _dedupe_items(parsed_requirements["desirableRequirements"])
-    desirable_requirements = _dedupe_items(
-        desirable_requirements
-        + parsed_existing_required["desirableRequirements"]
-        + parsed_existing_desirable["desirableRequirements"]
-        + parsed_existing_differentials["desirableRequirements"]
-    )
-    differentials = _dedupe_items(
-        parsed_requirements["differentials"]
-        + parsed_existing_required["differentials"]
-        + parsed_existing_desirable["differentials"]
-        + parsed_existing_differentials["differentials"]
-    )
-    general_requirements = _dedupe_items(
-        parsed_requirements["requirements"]
-        + parsed_existing_required["requirements"]
-        + parsed_existing_desirable["requirements"]
-        + parsed_existing_differentials["requirements"]
-    )
-    requirements = _dedupe_items(
-        required_requirements + desirable_requirements + differentials + general_requirements
-    )
+    requirements = _dedupe_items(parsed_requirements["requirements"])
     summary = _normalize_summary(
         context.get("summary"),
         activities,
-        required_requirements=required_requirements,
+        required_requirements=requirements,
         title=context.get("title"),
         company=context.get("company"),
         location=context.get("location"),
@@ -557,9 +483,6 @@ def _normalize_final_job_context(context: dict[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "activities": activities,
         "requirements": requirements,
-        "requiredRequirements": required_requirements,
-        "desirableRequirements": desirable_requirements,
-        "differentials": differentials,
         "location": context.get("location") or None,
         "contractType": _extract_contract_type(context.get("contractType")) or None,
         "workMode": _normalize_work_mode(context.get("workMode")) or None,
@@ -571,9 +494,6 @@ def _redistribute_context_lines(items: list[Any], initial_section: str) -> dict[
     result = {
         "activities": [],
         "requirements": [],
-        "requiredRequirements": [],
-        "desirableRequirements": [],
-        "differentials": [],
     }
     current_section = initial_section
 
@@ -592,7 +512,7 @@ def _redistribute_context_lines(items: list[Any], initial_section: str) -> dict[
                 continue
 
             if _is_metadata_line(line) or _is_ignored_content_line(line):
-                if current_section in {SECTION_REQUIRED, SECTION_DESIRABLE, SECTION_DIFFERENTIAL}:
+                if current_section == SECTION_REQUIRED:
                     current_section = SECTION_IGNORE
                 continue
 
@@ -1079,9 +999,6 @@ def _extract_structured_job_content(text: str | None) -> dict[str, list[str] | s
         "summary": "",
         "activities": [],
         "requirements": [],
-        "requiredRequirements": [],
-        "desirableRequirements": [],
-        "differentials": [],
     }
     if not cleaned:
         return result
@@ -1108,14 +1025,14 @@ def _extract_structured_job_content(text: str | None) -> dict[str, list[str] | s
             continue
 
         if _is_metadata_line(line) or _is_ignored_content_line(line):
-            if current_section in {SECTION_REQUIRED, SECTION_DESIRABLE, SECTION_DIFFERENTIAL}:
+            if current_section == SECTION_REQUIRED:
                 current_section = SECTION_IGNORE
             continue
 
         if current_section == SECTION_IGNORE:
             if _looks_like_requirement_line(line):
                 current_section = SECTION_REQUIRED
-                _append_items_to_structured_result(result, current_section, items)
+                _append_items_to_structured_result(result, current_section, _list_from_value(line))
                 continue
             continue
 
@@ -1136,85 +1053,15 @@ def _extract_structured_job_content(text: str | None) -> dict[str, list[str] | s
     result["summary"] = _truncate(" ".join(summary_lines).strip(), 900)
     result["activities"] = _dedupe_items(result["activities"])  # type: ignore[arg-type]
     result["requirements"] = _dedupe_items(result["requirements"])  # type: ignore[arg-type]
-    result["requiredRequirements"] = _dedupe_items(result["requiredRequirements"])  # type: ignore[arg-type]
-    result["desirableRequirements"] = _dedupe_items(result["desirableRequirements"])  # type: ignore[arg-type]
-    result["differentials"] = _dedupe_items(result["differentials"])  # type: ignore[arg-type]
     return result
 
 
-def _classify_requirement_items(
-    items: list[str],
-    default_bucket: str = "requirements",
-    preserve_required_section: bool = False,
-) -> dict[str, list[str]]:
-    result = {
-        "requirements": [],
-        "requiredRequirements": [],
-        "desirableRequirements": [],
-        "differentials": [],
-    }
-
-    for item in items:
-        cleaned = _clean_text(item)
-        if not cleaned or _is_metadata_line(cleaned) or _is_ignored_content_line(cleaned):
-            continue
-        for part, explicit_bucket in _split_requirement_by_qualifier(cleaned):
-            if not part or _is_metadata_line(part) or _is_ignored_content_line(part):
-                continue
-            target = (
-                _classify_required_section_item(part)
-                if preserve_required_section and default_bucket == "requiredRequirements"
-                else explicit_bucket or _classify_requirement_item(part, default_bucket)
-            )
-            result[target].append(part)
-
-    return {key: _dedupe_items(value) for key, value in result.items()}
-
-
-def _split_requirement_by_qualifier(item: str) -> list[tuple[str, str | None]]:
-    sentences = [
-        _clean_text(sentence)
-        for sentence in re.split(r"(?<=[.!?])\s+", item)
-        if _clean_text(sentence)
-    ]
-    if len(sentences) <= 1:
-        return [(item, None)]
-
-    split_items: list[tuple[str, str | None]] = []
-    has_explicit_bucket = False
-
-    for sentence in sentences:
-        target = _classify_requirement_item(sentence, default_bucket="")
-        explicit_bucket = target or None
-        if explicit_bucket:
-            has_explicit_bucket = True
-        split_items.append((sentence, explicit_bucket))
-
-    return split_items if has_explicit_bucket else [(item, None)]
-
-
-def _classify_requirement_item(item: str, default_bucket: str = "requirements") -> str:
-    normalized = _normalize_label(item)
-    if _contains_any_label(normalized, DIFFERENTIAL_LABELS):
-        return "differentials"
-    if _contains_any_label(normalized, DESIRABLE_LABELS):
-        return "desirableRequirements"
-    if _contains_any_label(normalized, REQUIRED_LABELS):
-        return "requiredRequirements"
-    return default_bucket
-
-
-def _classify_required_section_item(item: str) -> str:
-    normalized = _normalize_label(item)
-    if _contains_any_label(normalized, DIFFERENTIAL_LABELS):
-        return "differentials"
-
-    for label in DESIRABLE_LABELS:
-        normalized_label = _normalize_label(label)
-        if normalized == normalized_label or normalized.startswith(f"{normalized_label} "):
-            return "desirableRequirements"
-
-    return "requiredRequirements"
+def _flatten_requirement_items(items: list[str]) -> list[str]:
+    return _dedupe_items(
+        item
+        for item in items
+        if _clean_text(item) and not _is_metadata_line(item) and not _is_ignored_content_line(item)
+    )
 
 
 def _append_items_to_structured_result(
@@ -1235,33 +1082,9 @@ def _append_items_to_structured_result(
         result["activities"] = _dedupe_items([*result["activities"], *cleaned_items])  # type: ignore[list-item]
         return
 
-    if section == SECTION_DESIRABLE:
-        result["desirableRequirements"] = _dedupe_items(
-            [*result["desirableRequirements"], *cleaned_items]  # type: ignore[list-item]
-        )
-        return
-
-    if section == SECTION_DIFFERENTIAL:
-        result["differentials"] = _dedupe_items([*result["differentials"], *cleaned_items])  # type: ignore[list-item]
-        return
-
     if section == SECTION_REQUIRED:
-        classified = _classify_requirement_items(
-            cleaned_items,
-            default_bucket="requiredRequirements",
-            preserve_required_section=True,
-        )
         result["requirements"] = _dedupe_items(
-            [*result["requirements"], *classified["requirements"]]  # type: ignore[list-item]
-        )
-        result["requiredRequirements"] = _dedupe_items(
-            [*result["requiredRequirements"], *classified["requiredRequirements"]]  # type: ignore[list-item]
-        )
-        result["desirableRequirements"] = _dedupe_items(
-            [*result["desirableRequirements"], *classified["desirableRequirements"]]  # type: ignore[list-item]
-        )
-        result["differentials"] = _dedupe_items(
-            [*result["differentials"], *classified["differentials"]]  # type: ignore[list-item]
+            [*result["requirements"], *cleaned_items]  # type: ignore[list-item]
         )
 
 
@@ -1277,11 +1100,7 @@ def _classify_heading(line: str) -> str | None:
         return SECTION_IGNORE
     if _heading_matches_any(normalized, ACTIVITY_LABELS):
         return SECTION_ACTIVITIES
-    if _heading_matches_any(normalized, DIFFERENTIAL_LABELS):
-        return SECTION_DIFFERENTIAL
-    if _heading_matches_any(normalized, DESIRABLE_LABELS):
-        return SECTION_DESIRABLE
-    if _heading_matches_any(normalized, REQUIRED_LABELS):
+    if _heading_matches_any(normalized, REQUIRED_LABELS + DESIRABLE_LABELS + DIFFERENTIAL_LABELS):
         return SECTION_REQUIRED
     return None
 
