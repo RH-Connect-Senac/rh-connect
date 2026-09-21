@@ -1695,6 +1695,46 @@ O **Centro de Desenvolvimento foi removido do escopo do produto** e não deve or
 
 ---
 
+## 41.1 MaterialResourceCard
+
+**Objetivo:** padronizar cards de materiais internos e recursos externos exibidos na tela de Materiais do candidato.
+
+**Onde aparece:**
+
+- Recomendados para você;
+- Acessados recentemente;
+- Conteúdos complementares da Cachola.
+
+**Base visual:** Card + Badge + título + descrição opcional + rodapé com área/status e ação principal.
+
+**Padrão visual:**
+
+- usar grid responsivo `grid-cols-1 sm:grid-cols-2 xl:grid-cols-3`;
+- usar altura mínima aproximada entre `210px` e `220px`;
+- usar padding `p-6`;
+- organizar o card como coluna (`flex flex-col`) com espaçamento vertical consistente;
+- usar espaçamento interno aproximado de `gap-5`;
+- manter o conteúdo principal com `flex-1`;
+- manter divisor, badge/metadata e ação principal no rodapé com `mt-auto`;
+- preservar `hover:shadow-md` para cards interativos;
+- cards da mesma linha devem manter rodapés e ações visualmente alinhados.
+
+**Thumbnail:**
+
+- recursos com capa podem usar thumbnail pequena, entre 64px e 72px de altura;
+- a imagem deve manter proporção com `object-cover`;
+- a thumbnail não deve dominar o card;
+- cards internos sem capa devem manter o mesmo volume visual por altura mínima e espaçamento, sem criar mídia artificial.
+
+**Regras:**
+
+- cards internos e externos podem ter dados e ações diferentes, mas devem compartilhar proporção, padding e alinhamento;
+- estados como `Em andamento` e `Concluído` devem ser preservados quando existirem;
+- ações principais devem permanecer no rodapé;
+- não usar o Card base para impor essa estrutura globalmente; este é um padrão de composição da tela de Materiais.
+
+---
+
 # Parte VIII — Componentes adiados ou fora do recorte
 
 ---

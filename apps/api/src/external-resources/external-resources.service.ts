@@ -5,7 +5,7 @@ import { ListExternalResourcesQueryDto } from './dto/list-external-resources-que
 
 const CACHOLA_SOURCE = 'CACHOLA';
 const DEFAULT_LIMIT = 6;
-const MAX_LIMIT = 24;
+const MAX_LIMIT = 25;
 
 @Injectable()
 export class ExternalResourcesService {

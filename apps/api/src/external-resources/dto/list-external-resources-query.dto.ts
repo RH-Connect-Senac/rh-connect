@@ -14,6 +14,6 @@ export class ListExternalResourcesQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(24)
+  @Max(25)
   limit?: number;
 }
