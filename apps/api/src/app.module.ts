@@ -4,6 +4,7 @@ import { AppController } from './app.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { InterviewsAiModule } from './interviews-ai/interviews-ai.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { InterviewsAiModule } from './interviews-ai/interviews-ai.module';
     PrismaModule,
     AuthModule,
     InterviewsAiModule,
+    FeedbackModule,
   ],
   controllers: [AppController],
   providers: [],
