@@ -1726,8 +1726,11 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
             <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
               <Briefcase className="w-5 h-5 text-blue-600" />
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground font-medium">Contexto confirmado</p>
+            <div className="min-w-0">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <p className="text-xs text-muted-foreground font-medium">Contexto confirmado</p>
+                <EvaluationModeBadge mode={draft.evaluationMode} />
+              </div>
               <p className="font-bold text-foreground">{context?.title ?? "Vaga em análise"}</p>
               <p className="text-sm text-muted-foreground">{context?.company ?? "Empresa não informada"}</p>
             </div>
@@ -2027,7 +2030,10 @@ function InterviewScreen({
           <Card className="p-5">
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Contexto da vaga</p>
             <h3 className="font-bold text-foreground">{draft.context.title}</h3>
-            <p className="text-sm text-muted-foreground mb-3">{draft.context.company}</p>
+            <p className="text-sm text-muted-foreground mb-2">{draft.context.company}</p>
+            <div className="mb-3">
+              <EvaluationModeBadge mode={draft.evaluationMode} />
+            </div>
             <p className="text-xs text-muted-foreground leading-relaxed mb-4">{draft.context.summary}</p>
             <div className="space-y-3">
               {requirementSections.map((section) => (
@@ -3609,7 +3615,7 @@ function InterviewConfirmScreen({
               {evaluationMode === "AI" ? <Zap className="w-4 h-4" /> : <User className="w-4 h-4" />}
             </div>
             <div>
-              <p className="text-sm font-bold text-foreground">{evaluationModeLabel(evaluationMode)}</p>
+              <EvaluationModeBadge mode={evaluationMode} />
               <p className="text-xs text-muted-foreground leading-relaxed mt-1">
                 {evaluationMode === "AI"
                   ? "Receba uma análise automatizada da sua entrevista com pontos fortes, pontos de atenção e recomendações."
