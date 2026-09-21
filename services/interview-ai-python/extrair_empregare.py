@@ -159,6 +159,8 @@ METADATA_LABELS = [
     "nível",
     "regime de contratacao",
     "regime de contratação",
+    "modelo de contratacao",
+    "modelo de contratação",
     "modalidade de trabalho",
     "modalidade",
     "tipo de contratacao",
@@ -174,6 +176,14 @@ METADATA_LABELS = [
     "data de publicação",
     "validade",
     "prazo",
+    "contratacao imediata",
+    "contratação imediata",
+    "inicio imediato",
+    "início imediato",
+    "jornada",
+    "quantidade de vagas",
+    "numero de vagas",
+    "número de vagas",
 ]
 
 WORK_MODE_LABELS = [
@@ -549,6 +559,11 @@ def _normalize_final_job_context(context: dict[str, Any]) -> dict[str, Any]:
         if not _is_internal_title_line(item, context.get("title"), context.get("company"), context.get("location"))
         and _strip_internal_title_prefix(item, context.get("title"), context.get("company"), context.get("location")) == item
         and not _is_summary_duplicate_non_activity(item, summary)
+        and not _is_disconnected_institutional_summary(
+            item,
+            [activity for activity in activities if activity != item],
+            title=context.get("title"),
+        )
     )
 
     return {
@@ -672,6 +687,15 @@ def _normalize_summary(
         return activity_summary
 
     summary = _truncate(summary, 900)
+    if activity_summary and _should_replace_summary_with_activity_summary(
+        summary,
+        activities,
+        title=title,
+        company=company,
+        location=location,
+    ):
+        return activity_summary
+
     if summary and not _is_inadequate_summary(summary, title=title, company=company, location=location):
         return summary
 
@@ -693,6 +717,11 @@ def _summary_from_representative_activities(
         activity
         for activity in activities
         if not _is_inadequate_summary(activity, title=title, company=company, location=location)
+        and not _is_disconnected_institutional_summary(
+            activity,
+            [item for item in activities if item != activity],
+            title=title,
+        )
     ]
     if not candidates:
         candidates = []
@@ -705,6 +734,81 @@ def _summary_from_representative_activities(
             selected.append(requirement)
 
     return _truncate_summary_text(" ".join(_normalize_summary_piece(item) for item in selected), 430)
+
+
+def _should_replace_summary_with_activity_summary(
+    summary: str,
+    activities: list[str],
+    *,
+    title: Any = None,
+    company: Any = None,
+    location: Any = None,
+) -> bool:
+    text = _clean_text(summary).replace("\n", " ").strip()
+    useful_activities = [
+        activity
+        for activity in activities
+        if not _is_inadequate_summary(activity, title=title, company=company, location=location)
+    ]
+    if not text or len(useful_activities) < 2:
+        return False
+
+    if _has_administrative_summary_content(text):
+        return True
+
+    if _is_single_activity_like_summary(text, useful_activities):
+        return True
+
+    reference_activities = [
+        activity
+        for activity in useful_activities
+        if not _is_similar_summary_item(text, activity)
+    ]
+    return _is_disconnected_institutional_summary(text, reference_activities, title=title)
+
+
+def _is_single_activity_like_summary(summary: str, activities: list[str]) -> bool:
+    if len(summary) > 180:
+        return False
+
+    if _looks_like_professional_bullet(summary):
+        return True
+
+    return any(_is_similar_summary_item(summary, activity) for activity in activities)
+
+
+def _is_disconnected_institutional_summary(summary: str, activities: list[str], *, title: Any = None) -> bool:
+    normalized = _normalize_label(summary)
+    institutional_starts = [
+        "a area",
+        "a área",
+        "o departamento",
+        "o setor",
+        "a unidade",
+        "a empresa",
+    ]
+    institutional_terms = [
+        "atua na",
+        "atua no",
+        "atua em",
+        "responsavel por",
+        "responsável por",
+    ]
+    if not any(normalized.startswith(start) for start in institutional_starts):
+        return False
+    if not _contains_any_label(normalized, institutional_terms):
+        return False
+
+    summary_tokens = _summary_tokens(summary)
+    reference_tokens = _summary_tokens(_clean_text(title))
+    for activity in activities[:5]:
+        reference_tokens.update(_summary_tokens(activity))
+
+    if not summary_tokens or not reference_tokens:
+        return False
+
+    overlap_ratio = len(summary_tokens & reference_tokens) / min(len(summary_tokens), len(reference_tokens))
+    return overlap_ratio < 0.2
 
 
 def _select_complementary_summary_items(items: list[str]) -> list[str]:
@@ -867,7 +971,37 @@ def _has_non_functional_summary_content(value: str) -> bool:
         "prazo de inscricao",
         "prazo de inscrição",
     ]
-    return _contains_any_label(normalized, non_functional_terms)
+    return _contains_any_label(normalized, non_functional_terms) or _has_administrative_summary_content(value)
+
+
+def _has_administrative_summary_content(value: str) -> bool:
+    normalized = _normalize_label(value)
+    administrative_terms = [
+        "contratacao imediata",
+        "contratação imediata",
+        "inicio imediato",
+        "início imediato",
+        "modelo de contratacao",
+        "modelo de contratação",
+        "regime de contratacao",
+        "regime de contratação",
+        "tipo de contratacao",
+        "tipo de contratação",
+        "carteira assinada",
+        "salario",
+        "salário",
+        "remuneracao",
+        "remuneração",
+        "horario",
+        "horário",
+        "jornada",
+        "quantidade de vagas",
+        "numero de vagas",
+        "número de vagas",
+        "prazo de inscricao",
+        "prazo de inscrição",
+    ]
+    return _contains_any_label(normalized, administrative_terms)
 
 
 def _best_job_title(current_title: str | None, soup: BeautifulSoup) -> str | None:
@@ -1533,6 +1667,7 @@ def _looks_like_professional_bullet(line: str) -> bool:
         "acompanhar",
         "apoiar",
         "atender",
+        "atuar",
         "analisar",
         "elaborar",
         "controlar",
