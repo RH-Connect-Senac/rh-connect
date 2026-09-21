@@ -38,6 +38,15 @@ export type Interview = {
 
 export type EvaluationScores = Record<string, number>;
 
+export type QuestionEvaluation = {
+  questionId: number;
+  score: number;
+  reason: string;
+  positives: string[];
+  improvements: string[];
+  suggestion: string;
+};
+
 export type Evaluation = {
   id: string;
   interviewId: string;
@@ -46,6 +55,12 @@ export type Evaluation = {
   status: EvaluationStatus;
   scores: EvaluationScores;
   comment?: string;
+  overallScore?: number;
+  strengths?: string[];
+  improvements?: string[];
+  recommendations?: string[];
+  summary?: string;
+  questionsEvaluation?: QuestionEvaluation[];
   completedAt?: string;
   createdAt: string;
   updatedAt: string;
