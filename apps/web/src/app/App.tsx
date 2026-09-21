@@ -5494,7 +5494,10 @@ function AppRoutes() {
   const [resumeDraftProgress, setResumeDraftProgress] = useState<InterviewDraftProgress | null>(() => initialDraftSnapshot.current?.progress ?? null);
   const [resumePromptDismissed, setResumePromptDismissed] = useState(() => !initialDraftSnapshot.current);
   const [pendingNavigationScreen, setPendingNavigationScreen] = useState<Screen | null>(null);
+  const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState(false);
   const [confirmCancelInterview, setConfirmCancelInterview] = useState(false);
+  const browserNavigationAllowedRef = useRef(false);
+  const protectedHistoryUrlRef = useRef("");
   const candidateIdentity = getCandidateIdentity(session);
   const candidateHasSavedDraft = session.user?.role === "CANDIDATE" && hasActiveInterviewDraft(interviewDraft);
   const candidateDraftActive = session.user?.role === "CANDIDATE" && isInterviewDraftInProgress(interviewDraft);
@@ -5576,6 +5579,7 @@ function AppRoutes() {
   const cancelActiveInterviewDraft = () => {
     discardSavedDraft();
     setPendingNavigationScreen(null);
+    setPendingBrowserNavigation(false);
     setConfirmCancelInterview(false);
     routerNavigate(getPathForScreen("interview-history"));
   };
@@ -5634,6 +5638,47 @@ function AppRoutes() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [candidateIdentity.id, draftProgress, interviewDraft, shouldProtectInterviewExit]);
+
+  useEffect(() => {
+    if (!shouldProtectInterviewExit) {
+      protectedHistoryUrlRef.current = "";
+      setPendingBrowserNavigation(false);
+      return;
+    }
+
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (protectedHistoryUrlRef.current !== currentUrl) {
+      const currentState = window.history.state && typeof window.history.state === "object"
+        ? window.history.state
+        : {};
+      window.history.replaceState({ ...currentState, rhConnectInterviewBase: true }, "", currentUrl);
+      window.history.pushState({ rhConnectInterviewGuard: true }, "", currentUrl);
+      protectedHistoryUrlRef.current = currentUrl;
+    }
+
+    const handlePopState = () => {
+      if (browserNavigationAllowedRef.current) {
+        return;
+      }
+
+      saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+      setPendingBrowserNavigation(true);
+      const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.pushState({ rhConnectInterviewGuard: true }, "", nextUrl);
+      protectedHistoryUrlRef.current = nextUrl;
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [
+    candidateIdentity.id,
+    draftProgress,
+    interviewDraft,
+    location.hash,
+    location.pathname,
+    location.search,
+    shouldProtectInterviewExit,
+  ]);
 
   const completeOnboardingAndNavigate = (screen: Screen) => {
     setSession(completeMockOnboarding());
@@ -5730,7 +5775,7 @@ function AppRoutes() {
           <Route path="/admin" element={protect("ADMIN", <Navigate to="/admin/dashboard" replace />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-        {(pendingNavigationScreen || confirmCancelInterview) && (
+        {(pendingNavigationScreen || pendingBrowserNavigation || confirmCancelInterview) && (
           <ConfirmModal
             title={confirmCancelInterview ? "Cancelar entrevista?" : "Deseja sair da entrevista?"}
             message={confirmCancelInterview
@@ -5744,6 +5789,19 @@ function AppRoutes() {
             onConfirm={() => {
               if (confirmCancelInterview) {
                 cancelActiveInterviewDraft();
+                return;
+              }
+              if (pendingBrowserNavigation) {
+                saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+                setResumeDraftProgress(draftProgress);
+                setResumePromptDismissed(false);
+                setPendingBrowserNavigation(false);
+                browserNavigationAllowedRef.current = true;
+                protectedHistoryUrlRef.current = "";
+                window.history.go(-2);
+                window.setTimeout(() => {
+                  browserNavigationAllowedRef.current = false;
+                }, 500);
                 return;
               }
               const target = pendingNavigationScreen;
@@ -5764,6 +5822,7 @@ function AppRoutes() {
             onClose={() => {
               setConfirmCancelInterview(false);
               setPendingNavigationScreen(null);
+              setPendingBrowserNavigation(false);
             }}
           />
         )}
