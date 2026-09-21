@@ -116,17 +116,6 @@ model terms_acceptance {
   @@index([user_id], map: "idx_terms_user_id")
 }
 
-model tester_feedback {
-  feedback_id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  feature                String   @db.VarChar(150)
-  bug_found              String?  @db.Text
-  steps_to_reproduce     String?  @db.Text
-  improvement_suggestion String?  @db.Text
-  created_at             DateTime @default(now()) @db.Timestamptz(6)
-
-  @@index([created_at], map: "idx_tester_feedback_created_at")
-}
-
 enum account_status {
   PENDING_VERIFICATION
   INVITED
