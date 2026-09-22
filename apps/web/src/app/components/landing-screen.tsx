@@ -1,9 +1,10 @@
 import { useState } from "react";
 import {
   User, MessageSquare, TrendingUp, Target, Award,
-  X, Menu, ArrowRight, CheckCircle, Zap, Lightbulb,
+  X, Menu, ArrowRight, CheckCircle, Lightbulb,
   AlertCircle, Check, GraduationCap,
 } from "lucide-react";
+import heroEntrevista from "../../assets/landing/hero-entrevista-3.webp";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
@@ -46,9 +47,9 @@ function Badge({ variant = "default", children }: {
     default: "bg-slate-100 text-slate-600",
     success: "bg-green-100 text-green-700",
     warning: "bg-amber-100 text-amber-700",
-    error:   "bg-red-100 text-red-700",
-    info:    "bg-blue-100 text-blue-700",
-    purple:  "bg-purple-100 text-purple-700",
+    error: "bg-red-100 text-red-700",
+    info: "bg-blue-100 text-blue-700",
+    purple: "bg-purple-100 text-purple-700",
   };
   return <UIBadge variant="neutral" className={`font-semibold ${vars[variant]}`}>{children}</UIBadge>;
 }
@@ -63,35 +64,35 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
 
 export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
   const HOW_CARDS = [
-    { n: "01", icon: User,          title: "Configure seu objetivo",   desc: "Complete seu perfil e informe a vaga ou o cargo para o qual deseja se preparar." },
-    { n: "02", icon: MessageSquare, title: "Faça sua entrevista",      desc: "Responda perguntas relacionadas à vaga em uma simulação textual com opção de ditado por voz." },
-    { n: "03", icon: MessageSquare, title: "Receba seu feedback",      desc: "Veja uma avaliação estruturada sobre suas respostas e seu desempenho." },
-    { n: "04", icon: TrendingUp,    title: "Evolua a cada tentativa",  desc: "Consulte seu relatório, identifique melhorias e pratique novamente." },
+    { n: "01", icon: User, title: "Configure seu objetivo", desc: "Complete seu perfil e informe a vaga ou o cargo para o qual deseja se preparar." },
+    { n: "02", icon: MessageSquare, title: "Faça sua entrevista", desc: "Responda perguntas relacionadas à vaga em uma simulação textual com opção de ditado por voz." },
+    { n: "03", icon: MessageSquare, title: "Receba seu feedback", desc: "Veja uma avaliação estruturada sobre suas respostas e seu desempenho." },
+    { n: "04", icon: TrendingUp, title: "Evolua a cada tentativa", desc: "Consulte seu relatório, identifique melhorias e pratique novamente." },
   ];
 
   const BENEFITS = [
-    { icon: Target,        title: "Prática personalizada",          desc: "Treine com perguntas relacionadas ao cargo, à vaga e ao seu perfil profissional.",       color: "text-blue-600 bg-blue-50" },
-    { icon: MessageSquare, title: "Feedback claro e estruturado",   desc: "Entenda seus pontos fortes e o que pode melhorar em cada resposta.",                    color: "text-green-600 bg-green-50" },
-    { icon: Award,         title: "Mais confiança para entrevistas",desc: "Pratique em um ambiente seguro antes de participar de um processo seletivo real.",       color: "text-purple-600 bg-purple-50" },
-    { icon: TrendingUp,    title: "Acompanhe sua evolução",         desc: "Compare suas tentativas e perceba seu desenvolvimento ao longo do tempo.",               color: "text-amber-600 bg-amber-50" },
+    { icon: Target, title: "Prática personalizada", desc: "Treine com perguntas relacionadas ao cargo, à vaga e ao seu perfil profissional.", color: "text-blue-600 bg-blue-50" },
+    { icon: MessageSquare, title: "Feedback claro e estruturado", desc: "Entenda seus pontos fortes e o que pode melhorar em cada resposta.", color: "text-green-600 bg-green-50" },
+    { icon: Award, title: "Mais confiança para entrevistas", desc: "Pratique em um ambiente seguro antes de participar de um processo seletivo real.", color: "text-purple-600 bg-purple-50" },
+    { icon: TrendingUp, title: "Acompanhe sua evolução", desc: "Compare suas tentativas e perceba seu desenvolvimento ao longo do tempo.", color: "text-amber-600 bg-amber-50" },
   ];
 
   const FOR_WHO = [
-    { label: "Primeiro emprego",               desc: "Prepare-se para sua primeira entrevista com segurança e clareza." },
-    { label: "Jovem aprendiz",                 desc: "Desenvolva comunicação e confiança desde o início da carreira." },
-    { label: "Estágio",                        desc: "Destaque-se em seleções com respostas mais estruturadas." },
-    { label: "Recolocação profissional",       desc: "Volte ao mercado com mais preparo e segurança nas entrevistas." },
-    { label: "Mudança de área",                desc: "Demonstre seu potencial e mostre por que você é o candidato certo para uma nova área." },
+    { label: "Primeiro emprego", desc: "Prepare-se para sua primeira entrevista com segurança e clareza." },
+    { label: "Jovem aprendiz", desc: "Desenvolva comunicação e confiança desde o início da carreira." },
+    { label: "Estágio", desc: "Destaque-se em seleções com respostas mais estruturadas." },
+    { label: "Recolocação profissional", desc: "Volte ao mercado com mais preparo e segurança nas entrevistas." },
+    { label: "Mudança de área", desc: "Demonstre seu potencial e mostre por que você é o candidato certo para uma nova área." },
     { label: "Desenvolvimento de comunicação", desc: "Melhore sua expressão oral e objetividade em qualquer contexto profissional." },
   ];
 
   const REPORT_CRITERIA = [
-    { name: "Clareza",      score: 9, color: "bg-green-500" },
-    { name: "Coerência",    score: 9, color: "bg-green-500" },
+    { name: "Clareza", score: 9, color: "bg-green-500" },
+    { name: "Coerência", score: 9, color: "bg-green-500" },
     { name: "Objetividade", score: 8, color: "bg-green-500" },
-    { name: "Domínio",      score: 8, color: "bg-green-500" },
-    { name: "Organização",  score: 7, color: "bg-blue-500"  },
-    { name: "Exemplos",     score: 6, color: "bg-amber-500" },
+    { name: "Domínio", score: 8, color: "bg-green-500" },
+    { name: "Organização", score: 7, color: "bg-blue-500" },
+    { name: "Exemplos", score: 6, color: "bg-amber-500" },
   ];
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -116,9 +117,9 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-7">
             <a href="#como-funciona" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Como funciona</a>
-            <a href="#beneficios"    className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Benefícios</a>
-            <a href="#para-quem"     className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Para quem é</a>
-            <a href="#sobre"         className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Sobre o projeto</a>
+            <a href="#beneficios" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Benefícios</a>
+            <a href="#para-quem" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Para quem é</a>
+            <a href="#sobre" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Sobre o projeto</a>
           </nav>
           {/* Desktop CTAs */}
           <div className="hidden md:flex items-center gap-2 sm:gap-3">
@@ -138,8 +139,8 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div className="md:hidden border-t border-border py-4 space-y-2">
             {[
               { label: "Como funciona", href: "#como-funciona" },
-              { label: "Benefícios",    href: "#beneficios" },
-              { label: "Para quem é",   href: "#para-quem" },
+              { label: "Benefícios", href: "#beneficios" },
+              { label: "Para quem é", href: "#para-quem" },
               { label: "Sobre o projeto", href: "#sobre" },
             ].map(link => (
               <a key={link.label} href={link.href} onClick={() => setMobileMenuOpen(false)}
@@ -156,92 +157,128 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </header>
 
       {/* ── Hero ── */}
-      <section style={{ background: "linear-gradient(135deg, #0F2652 0%, #1D4ED8 100%)" }} className="px-4 sm:px-8 py-14 sm:py-20 lg:py-24">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-center">
-          <div>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white leading-tight mb-5">
+      <section className="relative isolate flex min-h-[calc(100svh-4rem)] items-center overflow-hidden bg-white px-4 py-14 sm:px-8 sm:py-20 lg:py-20">
+        <div className="absolute inset-0 -z-10">
+          <img
+            src={heroEntrevista}
+            alt=""
+            aria-hidden="true"
+            fetchPriority="high"
+            decoding="async"
+            className="
+        h-full w-full object-cover
+        object-[60%_center]
+        sm:object-[65%_center]
+        lg:object-[62%_center]
+      "
+          />
+
+          <div
+            className="
+        absolute inset-0
+        bg-[linear-gradient(180deg,_rgba(255,255,255,0.88)_0%,_rgba(255,255,255,0.80)_28%,_rgba(255,255,255,0.74)_52%,_rgba(255,255,255,0.56)_72%,_rgba(255,255,255,0.20)_100%)]
+        sm:bg-[linear-gradient(90deg,_rgba(255,255,255,0.96)_0%,_rgba(255,255,255,0.90)_30%,_rgba(239,246,255,0.72)_48%,_rgba(30,91,255,0.18)_62%,_rgba(0,0,0,0)_78%)]
+      "
+          />
+        </div>
+
+        <div className="mx-auto w-full max-w-6xl">
+          <div className="max-w-[22rem] sm:max-w-xl">
+            <h1 className="mb-5 text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
               Seu treinamento para conquistar a vaga dos seus sonhos
             </h1>
-            <p className="text-blue-200 text-base sm:text-lg leading-relaxed mb-8 max-w-lg">
-              Pratique entrevistas relacionadas ao seu objetivo profissional, desenvolva suas respostas e receba orientações para evoluir.
+
+            <p className="mb-8 max-w-lg text-base leading-relaxed text-slate-600 sm:text-lg">
+              Pratique entrevistas relacionadas ao seu objetivo profissional,
+              desenvolva suas respostas e receba orientações para evoluir.
             </p>
-            <div className="flex flex-col sm:flex-row flex-wrap gap-3">
-              <Btn size="lg" variant="primary" onClick={() => onNavigate("register")} className="!bg-white !text-blue-700 hover:!bg-slate-100 hover:shadow-lg w-full sm:w-auto">
-                Começar agora <ArrowRight className="w-5 h-5" />
+
+            <div className="flex flex-col flex-wrap gap-3 sm:flex-row">
+              <Btn
+                size="lg"
+                variant="primary"
+                onClick={() => onNavigate("register")}
+                className="w-full shadow-lg shadow-blue-600/20 sm:w-auto"
+              >
+                Começar agora <ArrowRight className="h-5 w-5" />
               </Btn>
-              <a href="#como-funciona"
-                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-base font-semibold text-white/80 hover:text-white hover:bg-white/10 transition-all duration-200 w-full sm:w-auto">
+
+              <a
+                href="#como-funciona"
+                className="
+            inline-flex w-full items-center justify-center gap-2
+            rounded-xl
+            border border-white/70
+            bg-white/75
+            px-6 py-3.5
+            text-base font-semibold text-blue-700
+            shadow-sm backdrop-blur-md
+            transition-all duration-200
+            hover:bg-white
+            sm:w-auto
+          "
+              >
                 Ver como funciona
               </a>
-            </div>
-          </div>
-          {/* Dashboard mockup */}
-          <div className="relative hidden lg:block">
-            <div className="bg-white/10 border border-white/20 rounded-2xl p-4 backdrop-blur-sm">
-              <div className="bg-white rounded-xl overflow-hidden shadow-2xl">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center"><Zap className="w-3 h-3 text-white" /></div>
-                    <span className="text-xs font-bold text-slate-700">RH Connect</span>
-                  </div>
-                  <Badge variant="success"><span className="w-1.5 h-1.5 bg-green-500 rounded-full inline-block mr-1" />Logado</Badge>
-                </div>
-                <div className="p-4 bg-slate-50">
-                  <p className="text-xs font-bold text-slate-700 mb-3">Olá, Maria! 👋</p>
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    {[
-                      { label: "Entrevistas", v: "3", color: "bg-blue-500" },
-                      { label: "Aguardando",  v: "1", color: "bg-amber-500" },
-                      { label: "Concluídas",  v: "1", color: "bg-green-500" },
-                    ].map(s => (
-                      <div key={s.label} className="bg-white rounded-lg p-2 text-center border border-slate-100">
-                        <div className={`w-5 h-5 ${s.color} rounded mx-auto mb-1`} />
-                        <p className="text-sm font-bold text-slate-800">{s.v}</p>
-                        <p className="text-[9px] text-slate-400">{s.label}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="bg-blue-600 rounded-lg px-3 py-2 flex items-center justify-between">
-                    <span className="text-white text-[11px] font-semibold">Iniciar nova entrevista</span>
-                    <ArrowRight className="w-3.5 h-3.5 text-white" />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="absolute -bottom-4 -left-4 bg-white rounded-xl px-3 py-2 shadow-xl border border-slate-100 flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-green-500" />
-              <div>
-                <p className="text-[10px] font-bold text-slate-700">Relatório disponível</p>
-                <p className="text-[9px] text-slate-400">Nota: 7,8 · Classificação: Boa</p>
-              </div>
             </div>
           </div>
         </div>
       </section>
 
       {/* ── Como funciona ── */}
-      <section id="como-funciona" className="px-4 sm:px-8 py-14 sm:py-20 bg-white">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-10 sm:mb-12">
-            <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Como funciona</p>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-3">Prepare-se para entrevistas em 4 etapas</h2>
-            <p className="text-muted-foreground text-sm sm:text-base max-w-xl mx-auto">
+      <section
+        id="como-funciona"
+        className="bg-white px-4 py-16 sm:px-8 sm:py-24"
+      >
+        <div className="mx-auto max-w-6xl">
+          <div className="mx-auto mb-12 max-w-3xl text-center sm:mb-14">
+            <p className="mb-3 text-sm font-bold uppercase tracking-[0.12em] text-blue-600">
+              Como funciona
+            </p>
+
+            <h2 className="mx-auto mb-4 max-w-2xl text-2xl font-extrabold leading-tight text-foreground sm:text-3xl lg:text-4xl">
+              Prepare-se para entrevistas em 4 etapas
+            </h2>
+
+            <p className="mx-auto max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
               Uma experiência simples para você praticar, receber orientação e evoluir a cada tentativa.
             </p>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {HOW_CARDS.map(step => (
-              <Card key={step.n} className="p-6 flex flex-col gap-4 hover:shadow-md transition-shadow duration-200">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl font-extrabold text-blue-100 leading-none">{step.n}</span>
-                  <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
-                    <step.icon className="w-4 h-4 text-blue-600" />
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {HOW_CARDS.map((step) => (
+              <Card
+                key={step.n}
+                className="
+            group relative overflow-hidden
+            border border-slate-200/80
+            bg-white p-6
+            transition-all duration-300
+            hover:-translate-y-1
+            hover:border-blue-200
+            hover:shadow-lg
+            hover:shadow-blue-950/5
+          "
+              >
+                <div className="mb-6 flex items-center justify-between">
+                  <span className="text-4xl font-black leading-none text-blue-100 transition-colors duration-300 group-hover:text-blue-200">
+                    {step.n}
+                  </span>
+
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 transition-colors duration-300 group-hover:bg-blue-100">
+                    <step.icon className="h-5 w-5" />
                   </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-foreground mb-1.5">{step.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{step.desc}</p>
-                </div>
+
+                <h3 className="mb-2 text-base font-bold text-foreground sm:text-lg">
+                  {step.title}
+                </h3>
+
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {step.desc}
+                </p>
+
+                <div className="absolute inset-x-6 bottom-0 h-px bg-gradient-to-r from-transparent via-blue-200/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               </Card>
             ))}
           </div>
@@ -249,7 +286,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Benefícios ── */}
-      <section id="beneficios" className="px-4 sm:px-8 py-14 sm:py-20 bg-background">
+      <section id="beneficios" className="px-4 sm:px-8 py-14 sm:py-20 bg-slate-50/60">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 sm:mb-12">
             <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Benefícios</p>
@@ -406,15 +443,66 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       {/* ── Sobre o projeto ── */}
       <section id="sobre" className="px-4 sm:px-8 py-12 sm:py-16 bg-white">
         <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5 p-5 sm:p-8 bg-slate-50 rounded-2xl border border-border">
-            <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
-              <GraduationCap className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Sobre o projeto</p>
-              <p className="text-foreground text-sm sm:text-base leading-relaxed max-w-2xl">
-                O RH Connect é uma iniciativa desenvolvida no <strong>SENAC-DF</strong> que une Recursos Humanos, tecnologia e educação para apoiar pessoas na preparação para entrevistas de emprego.
+          <div className="p-5 sm:p-8 bg-slate-50 rounded-2xl border border-border">
+            <div className="mx-auto max-w-3xl text-center">
+              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50">
+                <GraduationCap className="w-5 h-5 text-blue-600" />
+              </div>
+
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                Sobre o projeto
               </p>
+
+              <div className="space-y-4 text-foreground text-sm sm:text-base leading-relaxed">
+                <p>
+                  O RH Connect é uma iniciativa desenvolvida no Senac Sobradinho que integra
+                  tecnologia e educação com o objetivo de apoiar pessoas na preparação para
+                  processos seletivos e entrevistas de emprego.
+                </p>
+
+                <p>
+                  O projeto é resultado da colaboração entre diferentes áreas de formação,
+                  promovendo uma experiência interdisciplinar entre as turmas:
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-7 grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-border bg-white p-5 text-center shadow-sm">
+                <p className="font-bold text-foreground">
+                  Técnico em Recursos Humanos
+                </p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-blue-700">
+                  Turma 2025.11.95
+                </p>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  Rafael Castro Rezende Santos
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-border bg-white p-5 text-center shadow-sm">
+                <p className="font-bold text-foreground">
+                  Técnico em Secretariado
+                </p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-blue-700">
+                  Turma 2025.11.99
+                </p>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  Thatiana Soares e Silva
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-border bg-white p-5 text-center shadow-sm">
+                <p className="font-bold text-foreground">
+                  Técnico em Dev. de Sistemas
+                </p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-blue-700">
+                  Turma 2025.11.33
+                </p>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  Jamesson Will Pereira da Cruz Santos
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -433,8 +521,10 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
               >
                 <RHConnectLogo variant="inverse" className="h-7 w-auto" />
               </button>
-              <p className="text-slate-500 text-xs max-w-xs leading-relaxed">
-                Plataforma de preparação para entrevistas. Desenvolvida no SENAC-DF.
+              <p className="max-w-xs text-[13px] font-normal leading-relaxed text-slate-500">
+                Plataforma de preparação para entrevistas.
+                <br />
+                Desenvolvida por alunos do SENAC Sobradinho.
               </p>
             </div>
             <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-x-6 gap-y-2 sm:gap-y-3">
@@ -451,12 +541,12 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
                     key={link.label}
                     type="button"
                     onClick={() => onNavigate(link.screen)}
-                    className="text-left text-slate-400 hover:text-white text-sm transition-colors duration-150"
+                    className="text-left text-sm font-normal leading-5 text-slate-400 transition-colors duration-150 hover:text-white"
                   >
                     {link.label}
                   </button>
                 ) : (
-                  <a key={link.label} href={link.href} className="text-slate-400 hover:text-white text-sm transition-colors duration-150">
+                  <a key={link.label} href={link.href} className="text-sm font-normal leading-5 text-slate-400 transition-colors duration-150 hover:text-white">
                     {link.label}
                   </a>
                 )
@@ -464,8 +554,8 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
             </div>
           </div>
           <div className="border-t border-slate-800 mt-8 pt-6">
-            <p className="text-slate-600 text-xs text-center">
-              © 2026 RH Connect · Iniciativa educacional SENAC-DF · Todos os direitos reservados
+            <p className="text-center text-xs font-normal leading-5 text-slate-600">
+              © 2026 RH Connect · Iniciativa Educacional SENAC Sobradinho · Todos os direitos reservados
             </p>
           </div>
         </div>
