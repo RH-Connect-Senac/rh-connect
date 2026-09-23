@@ -5,6 +5,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { InterviewsAiModule } from './interviews-ai/interviews-ai.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { ExternalResourcesModule } from './external-resources/external-resources.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     PrismaModule,
     AuthModule,
     InterviewsAiModule,
+    ExternalResourcesModule,
     FeedbackModule,
   ],
   controllers: [AppController],
