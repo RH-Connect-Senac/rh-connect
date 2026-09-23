@@ -33,7 +33,12 @@ function getOptionalAccessToken() {
 }
 
 function buildCacholaResourcesUrl(params: ListCacholaResourcesParams) {
-  const url = new URL("/candidate/materials/external-resources", API_BASE_URL);
+  const baseUrl = `${API_BASE_URL.replace(/\/+$/, "")}/`;
+
+  const url = new URL(
+    "candidate/materials/external-resources",
+    baseUrl,
+  );
 
   if (params.limit) {
     url.searchParams.set("limit", String(params.limit));
