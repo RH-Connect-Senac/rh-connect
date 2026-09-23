@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.config.js",
     "test:e2e:run": "dotenv -e .env.test -- jest --config ./test/jest-e2e.config.js",
-    "db:test:migrate": "dotenv -e .env.test -- npx prisma migrate deploy"
+    "db:test:migrate": "dotenv -e .env.test -- npx prisma migrate deploy",
+    "seed:cachola": "ts-node prisma/seed-cachola.ts"
   },
   "dependencies": {
     "@esbuild/linux-x64": "^0.28.2",
