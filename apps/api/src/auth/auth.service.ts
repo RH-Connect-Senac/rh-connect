@@ -9,7 +9,10 @@ import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
-import { normalizeGmailEmail } from './utils/email-normalization';
+import {
+  normalizeGmailEmail,
+  normalizeLoginEmail,
+} from './utils/email-normalization';
 import { TERMS_DOCUMENT_VERSION } from './constants/terms';
 
 // Identifica um P2002 (violação de constraint única) do Prisma como sendo
@@ -148,8 +151,22 @@ export class AuthService {
   }
 
   async login(dto: { email: string; password: string }) {
+    // Login atende os três perfis e exige domínio gmail.com, igual ao
+    // cadastro. Normalizamos para bater com o e-mail persistido: trim +
+    // lowercase sempre. "+" na parte local é PRESERVADO (decisão de produto
+    // final) — nunca removido nem rejeitado — então "lucas+teste@gmail.com"
+    // e "lucas@gmail.com" são e-mails distintos: o Login só autentica a
+    // conta cadastrada literalmente com o endereço informado, nunca uma
+    // conta com o e-mail base (ou vice-versa). A senha NÃO passa por
+    // nenhuma normalização (sem trim). Se `normalizeLoginEmail` retornar
+    // `null` (e-mail fora do formato/domínio Gmail), o DTO já teria barrado
+    // a requisição antes de chegar aqui (`@IsLoginEmail`) — o fallback
+    // `?? dto.email` só existe para nunca deixar `normalizedEmail` como
+    // `null`/`undefined` na busca.
+    const normalizedEmail = normalizeLoginEmail(dto.email) ?? dto.email;
+
     const user = await this.prisma.app_user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizedEmail },
     });
 
     if (!user || !user.password_hash) {

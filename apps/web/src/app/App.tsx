@@ -1,6 +1,6 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useState, useRef, useEffect, useContext, createContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -85,7 +85,7 @@ import {
   type ExternalLearningResource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
-import { DEFAULT_CANDIDATE } from "./mocks/interviews";
+import { DEFAULT_CANDIDATE, DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
 import {
   completeAiEvaluation,
   getAvailableCandidateReports,
@@ -99,17 +99,19 @@ import {
 } from "./services/interviews-service";
 import {
   clearRememberedLoginEmail,
-  completeMockOnboarding,
   getRememberedLoginEmail,
-  getMockAuthSession,
-  loginMockWithCredentials,
-  logoutMockUser,
   saveRememberedLoginEmail,
   type MockAuthSession,
   type MockAuthUser,
   type MockUserRole,
 } from "./services/auth-service";
 import { registerRealCandidate } from "./services/candidate-registration-service";
+import {
+  completeRealOnboarding,
+  loginRealWithCredentials,
+  logoutRealSession,
+  restoreRealSession,
+} from "./services/real-session-service";
 import {
   getCandidateProfile,
   getCandidateProfileCompleteness,
@@ -163,16 +165,31 @@ function getCandidateIdentity(session: MockAuthSession) {
   return DEFAULT_CANDIDATE;
 }
 
+// Ponte de compatibilidade TEMPORÁRIA entre a sessão real (Auth/Prompt 03 —
+// `session.user.id` vem do `user_id` do Prisma) e o domínio mock de
+// Avaliações, que continua 100% localStorage e usa ids estáveis tipo
+// "evaluator-carlos-andrade" (gravados pelo Admin em `assignInterview`).
+// Sem essa ponte, o id real nunca bate com o `assignedEvaluatorId` mock, e a
+// tela do Avaliador não encontra as atribuições feitas pelo Admin.
+//
+// Regra: se o avaliador autenticado tiver um e-mail conhecido no diretório
+// mock (`EVALUATOR_DIRECTORY`), usamos o id mock estável correspondente —
+// preservando `name` da sessão real. Para avaliadores reais sem
+// correspondência mock conhecida, caímos no `user.id` real (fallback), que
+// simplesmente não vai casar com nenhuma atribuição mock existente — não é
+// uma correção estrutural, só evita quebrar o caso demo do Carlos Andrade.
 function getEvaluatorIdentity(session: MockAuthSession) {
   const user = session.user;
   if (session.authenticated && user?.role === "EVALUATOR") {
+    const normalizedEmail = user.email.trim().toLowerCase();
+    const mockEvaluatorId = findEvaluatorIdByEmail(normalizedEmail);
     return {
-      id: user.id === "evaluator-demo" ? "evaluator-carlos-andrade" : user.id,
+      id: mockEvaluatorId ?? user.id,
       name: user.name,
     };
   }
 
-  return { id: "evaluator-carlos-andrade", name: "Carlos Andrade" };
+  return { id: DEFAULT_EVALUATOR.id, name: DEFAULT_EVALUATOR.name };
 }
 
 function getEntryPathForSession(session: MockAuthSession) {
@@ -183,6 +200,21 @@ function getEntryPathForSession(session: MockAuthSession) {
 function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
   return pathname === ONBOARDING_BY_ROLE[role];
 }
+
+const UNAUTHENTICATED_SESSION: MockAuthSession = {
+  version: 1,
+  authenticated: false,
+  user: null,
+};
+
+// Dá acesso à sessão REAL atual (do estado de `AppRoutes`) para componentes
+// que não a recebem via props — ex.: `AuthLayout`, chamado em ~25 lugares
+// sem prop `session`. Antes, esses componentes liam a sessão diretamente do
+// mock (`getMockAuthSession()`), uma função síncrona e global; como a
+// sessão real vive em estado de React (populada de forma assíncrona a
+// partir de `/auth/me`), o substituto precisa ser algo que também dê para
+// ler sem alterar a assinatura de cada um desses componentes.
+const SessionContext = createContext<MockAuthSession>(UNAUTHENTICATED_SESSION);
 
 const CRITERIA = [
   { name: "Clareza",         score: 9 },
@@ -606,7 +638,7 @@ function AuthLayout({
   account?: AccountConfig;
   children: React.ReactNode;
 }) {
-  const activeSession = getMockAuthSession();
+  const activeSession = useContext(SessionContext);
   const resolvedAccount = account ?? (
     activeSession.authenticated && activeSession.user?.role === "CANDIDATE"
       ? getCandidateAccountConfig(activeSession.user)
@@ -646,7 +678,7 @@ function AuthScreen({
   initialTab = "register",
 }: {
   onNavigate: (s: Screen) => void;
-  onLoginWithCredentials: (email: string, password: string) => { ok: true } | { ok: false; message: string };
+  onLoginWithCredentials: (email: string, password: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   onRegister: (data: { name: string; email: string; password: string; termsAccepted: boolean }) => Promise<{ ok: true } | { ok: false; message: string }>;
   initialTab?: "login" | "register";
 }) {
@@ -655,6 +687,7 @@ function AuthScreen({
   const [loginPassword, setLoginPassword] = useState("");
   const [rememberAccess, setRememberAccess] = useState(() => Boolean(getRememberedLoginEmail()));
   const [loginError, setLoginError] = useState("");
+  const [isLoginSubmitting, setIsLoginSubmitting] = useState(false);
   const [registerName, setRegisterName] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
@@ -675,17 +708,24 @@ function AuthScreen({
     authNavigate(nextTab === "login" ? "/login" : "/register");
   };
 
-  const handleLoginSubmit = () => {
-    const result = onLoginWithCredentials(loginEmail, loginPassword);
-    if (!result.ok) {
-      setLoginError(result.message);
-      return;
-    }
+  const handleLoginSubmit = async () => {
+    setLoginError("");
 
-    if (rememberAccess) {
-      saveRememberedLoginEmail(loginEmail);
-    } else {
-      clearRememberedLoginEmail();
+    setIsLoginSubmitting(true);
+    try {
+      const result = await onLoginWithCredentials(loginEmail, loginPassword);
+      if (!result.ok) {
+        setLoginError(result.message);
+        return;
+      }
+
+      if (rememberAccess) {
+        saveRememberedLoginEmail(loginEmail);
+      } else {
+        clearRememberedLoginEmail();
+      }
+    } finally {
+      setIsLoginSubmitting(false);
     }
   };
 
@@ -815,8 +855,8 @@ function AuthScreen({
                   </div>
                   <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit}>
-                  Entrar na plataforma
+                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit} disabled={isLoginSubmitting}>
+                  {isLoginSubmitting ? "Entrando..." : "Entrar na plataforma"}
                 </Btn>
               </div>
             ) : (
@@ -5677,10 +5717,10 @@ function PublicAuthRoute({ session, children }: { session: MockAuthSession; chil
   return <>{children}</>;
 }
 
-function AppRoutes() {
+function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const routerNavigate = useNavigate();
   const location = useLocation();
-  const [session, setSession] = useState(() => getMockAuthSession());
+  const [session, setSession] = useState<MockAuthSession>(initialSession);
   const initialDraftSnapshot = useRef(getStoredInterviewDraft(getCandidateIdentity(session).id));
   const [interviewDraft, setInterviewDraft] = useState<InterviewDraft>(() => initialDraftSnapshot.current?.draft ?? createEmptyInterviewDraft());
   const [draftProgress, setDraftProgress] = useState<InterviewDraftProgress>(() => initialDraftSnapshot.current?.progress ?? DEFAULT_INTERVIEW_DRAFT_PROGRESS);
@@ -5714,8 +5754,12 @@ function AppRoutes() {
 
   const executeNavigation = (screen: Screen) => {
     if ((screen === "auth" || screen === "landing") && session.authenticated) {
-      setSession(logoutMockUser());
+      // Encerra a sessão real localmente de forma otimista (sem esperar a
+      // resposta da rede) e dispara a revogação no Back em paralelo — sem
+      // fallback para sessão mock em caso de falha de rede.
+      setSession(UNAUTHENTICATED_SESSION);
       routerNavigate("/login");
+      void logoutRealSession();
       return;
     }
 
@@ -5873,12 +5917,17 @@ function AppRoutes() {
     shouldProtectInterviewExit,
   ]);
 
-  const completeOnboardingAndNavigate = (screen: Screen) => {
-    setSession(completeMockOnboarding());
+  const completeOnboardingAndNavigate = async (screen: Screen) => {
+    if (session.user) {
+      const updatedUser = await completeRealOnboarding(session.user.role);
+      if (updatedUser) {
+        setSession({ version: 1, authenticated: true, user: updatedUser });
+      }
+    }
     routerNavigate(getPathForScreen(screen));
   };
-  const loginWithCredentials = (email: string, password: string) => {
-    const result = loginMockWithCredentials(email, password);
+  const loginWithCredentials = async (email: string, password: string) => {
+    const result = await loginRealWithCredentials(email, password);
     if (!result.ok) {
       return result;
     }
@@ -5888,9 +5937,9 @@ function AppRoutes() {
   };
   const registerCandidate = async (data: { name: string; email: string; password: string; termsAccepted: boolean }) => {
     // Cadastro real do Candidato (Prompt 02): fala direto com a API,
-    // sem alimentar o Auth mock. O Login permanece mock até o Prompt 03 —
-    // ou seja, a conta criada aqui só poderá logar quando o Prompt 03
-    // integrar o login real.
+    // sem alimentar o Auth mock. O Login real (Prompt 03) é uma fonte
+    // totalmente independente (via /auth/login + cookies httpOnly), sem
+    // dual-write entre os dois.
     const result = await registerRealCandidate(data);
     if (!result.ok) {
       return result;
@@ -5905,6 +5954,7 @@ function AppRoutes() {
   const evaluatorIdentity = getEvaluatorIdentity(session);
 
   return (
+    <SessionContext.Provider value={session}>
     <div className="flex flex-col min-h-screen">
       <Toaster position="top-center" richColors />
       <div className="flex-1 flex flex-col">
@@ -6026,13 +6076,47 @@ function AppRoutes() {
         )}
       </div>
     </div>
+    </SessionContext.Provider>
   );
+}
+
+function AppSessionBoot() {
+  // Restaura a sessão real a partir do cookie httpOnly já existente (se
+  // houver) antes de montar `AppRoutes` — que assume, na primeira
+  // renderização, que `session` já reflete o estado real (ex.: o draft de
+  // entrevista é carregado a partir do candidato da sessão inicial). Sem
+  // esse gate, a checagem assíncrona de `/auth/me` faria `AppRoutes` montar
+  // uma vez como "não autenticado" e só depois atualizar — o que também
+  // poderia carregar o draft errado.
+  const [initialSession, setInitialSession] = useState<MockAuthSession | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    restoreRealSession().then((session) => {
+      if (!cancelled) {
+        setInitialSession(session);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!initialSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Spinner size="md" />
+      </div>
+    );
+  }
+
+  return <AppRoutes initialSession={initialSession} />;
 }
 
 export default function App() {
   return (
     <BrowserRouter basename={ROUTER_BASENAME}>
-      <AppRoutes />
+      <AppSessionBoot />
     </BrowserRouter>
   );
 }

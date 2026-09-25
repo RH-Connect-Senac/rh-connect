@@ -161,6 +161,26 @@ describe('Auth (e2e)', () => {
       .expect(400);
   });
 
+  it('deve permitir cadastro com "+" na parte local de um Gmail válido', async () => {
+    // Decisão de produto final: RH Connect aceita "+" na parte local de um
+    // Gmail válido, preservando-o exatamente como enviado — não é removido
+    // nem tratado como equivalente ao e-mail base.
+    const [localPart, domain] = `e2e.plus.${Date.now()}@gmail.com`.split('@');
+    const plusEmail = `${localPart}+rh@${domain}`;
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Candidato Alias Plus',
+        email: plusEmail,
+        password,
+        termsAccepted: true,
+      })
+      .expect(201);
+
+    expect(response.body.email).toBe(plusEmail);
+  });
+
   it('deve fazer login e retornar o cookie de sessão', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/login')
@@ -171,6 +191,82 @@ describe('Auth (e2e)', () => {
 
     const cookies = response.headers['set-cookie'];
     expect(cookies).toBeDefined();
+  });
+
+  it('deve logar com o mesmo e-mail com espaços nas pontas', async () => {
+    // LoginDto valida a sintaxe do e-mail já normalizado (trim+lowercase),
+    // não o valor bruto — então espaços externos não devem bloquear o login.
+    const response = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: `  ${email}  `, password })
+      .expect(200);
+
+    expect(response.body.email).toBe(email);
+  });
+
+  it('não deve logar com um e-mail sintaticamente inválido', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'a@@gmail.com', password })
+      .expect(400);
+  });
+
+  it('não deve logar com um e-mail de domínio diferente de gmail.com', async () => {
+    // Login agora exige gmail.com para os três perfis (mesma regra do
+    // cadastro). A rejeição acontece na validação do DTO, então nem precisa
+    // existir uma conta com esse e-mail para o teste ser válido.
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'usuario@hotmail.com', password })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'usuario@rhconnect.com', password })
+      .expect(400);
+  });
+
+  it('deve logar com uma conta cadastrada literalmente com "+tag", e o e-mail base não deve autenticá-la', async () => {
+    // Decisão de produto final: "+" é preservado, nunca tratado como
+    // equivalente ao e-mail base. Uma conta cadastrada como
+    // "nome+tag@gmail.com" só autentica usando esse endereço exato — o
+    // e-mail base "nome@gmail.com" (nunca cadastrado) não deve autenticá-la.
+    const [localPart, domain] = `e2e.plus.${Date.now()}@gmail.com`.split('@');
+    const plusEmail = `${localPart}+tag@${domain}`;
+    const baseEmail = `${localPart}@${domain}`;
+
+    const registerResponse = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Candidato Com Alias',
+        email: plusEmail,
+        password,
+        termsAccepted: true,
+      })
+      .expect(201);
+
+    expect(registerResponse.body.email).toBe(plusEmail);
+
+    const loginWithPlusEmail = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: plusEmail, password })
+      .expect(200);
+
+    expect(loginWithPlusEmail.body.email).toBe(plusEmail);
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: baseEmail, password })
+      .expect(401);
+  });
+
+  it('deve logar com o mesmo e-mail em maiúsculas (sem espaços nas pontas)', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: email.toUpperCase(), password })
+      .expect(200);
+
+    expect(response.body.email).toBe(email);
   });
 
   it('não deve logar com senha errada', async () => {

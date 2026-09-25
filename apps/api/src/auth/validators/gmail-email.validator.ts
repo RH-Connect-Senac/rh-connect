@@ -7,9 +7,12 @@ import { normalizeGmailEmail } from '../utils/email-normalization';
 
 /**
  * Valida que o valor é um e-mail Gmail válido segundo a normalização
- * definida em `normalizeGmailEmail` (decisão D5). Usa a MESMA função de
- * normalização utilizada dentro de `AuthService.register()`, para que
- * validação e persistência nunca divirjam.
+ * definida em `normalizeGmailEmail` (decisão de produto final: "+" na parte
+ * local é PRESERVADO, nunca removido/rejeitado — "lucas+senac@gmail.com" é
+ * um e-mail válido e distinto de "lucas@gmail.com", nunca equivalente a
+ * ele). Usa a MESMA função de normalização utilizada dentro de
+ * `AuthService.register()`, para que validação e persistência nunca
+ * divirjam.
  */
 export function IsGmailEmail(validationOptions?: ValidationOptions) {
   return function (object: object, propertyName: string) {

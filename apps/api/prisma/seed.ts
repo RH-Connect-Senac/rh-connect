@@ -86,15 +86,15 @@ async function seedCacholaResources() {
 }
 
 async function main() {
-  const password_hash = await bcrypt.hash('senha123', 10);
+  const password_hash = await bcrypt.hash('RhConnect@2026', 10);
 
   // CANDIDATE 1
   const candidato1 = await prisma.app_user.upsert({
-    where: { email: 'candidato@rhconnect.com' },
+    where: { email: 'candidato1.rhconnect@gmail.com' },
     update: {},
     create: {
-      name: 'Maria Silva (demo)',
-      email: 'candidato@rhconnect.com',
+      name: 'João Lima (demo)',
+      email: 'candidato1.rhconnect@gmail.com',
       password_hash,
       user_role: 'CANDIDATE',
       account_status: 'ACTIVE',
@@ -112,11 +112,11 @@ async function main() {
 
   // CANDIDATE 2
   const candidato2 = await prisma.app_user.upsert({
-    where: { email: 'candidato2@rhconnect.com' },
+    where: { email: 'candidato2.rhconnect@gmail.com' },
     update: {},
     create: {
-      name: 'Pedro Santos (demo)',
-      email: 'candidato2@rhconnect.com',
+      name: 'Novo candidato (demo)',
+      email: 'candidato2.rhconnect@gmail.com',
       password_hash,
       user_role: 'CANDIDATE',
       account_status: 'ACTIVE',
@@ -134,11 +134,11 @@ async function main() {
 
   // EVALUATOR ACTIVE
   await prisma.app_user.upsert({
-    where: { email: 'avaliador@rhconnect.com' },
+    where: { email: 'carlos.andrade@gmail.com' },
     update: {},
     create: {
-      name: 'João Avaliador (demo)',
-      email: 'avaliador@rhconnect.com',
+      name: 'Carlos Andrade (demo)',
+      email: 'carlos.andrade@gmail.com',
       password_hash,
       user_role: 'EVALUATOR',
       account_status: 'ACTIVE',
@@ -148,11 +148,11 @@ async function main() {
 
   // ADMIN
   await prisma.app_user.upsert({
-    where: { email: 'admin@rhconnect.com' },
+    where: { email: 'admin.rhconnect@gmail.com' },
     update: {},
     create: {
       name: 'Admin (demo)',
-      email: 'admin@rhconnect.com',
+      email: 'admin.rhconnect@gmail.com',
       password_hash,
       user_role: 'ADMIN',
       account_status: 'ACTIVE',
@@ -162,11 +162,11 @@ async function main() {
 
   // EVALUATOR INVITED
   const avaliadorConvidado = await prisma.app_user.upsert({
-    where: { email: 'avaliador-convidado@rhconnect.com' },
+    where: { email: 'patricia.gomes@gmail.com' },
     update: {},
     create: {
-      name: 'Avaliador Convidado (demo)',
-      email: 'avaliador-convidado@rhconnect.com',
+      name: 'Patricia Gomes (demo)',
+      email: 'patricia.gomes@gmail.com',
       password_hash: null,
       user_role: 'EVALUATOR',
       account_status: 'INVITED',
