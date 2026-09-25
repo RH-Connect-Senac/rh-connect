@@ -1,10 +1,39 @@
 // 1) Substitui o ConfigModule por uma versão vazia — ele só carregaria
 // variáveis de ambiente, e o dotenv-cli já faz isso antes do Jest iniciar.
-jest.mock('@nestjs/config', () => ({
-  ConfigModule: {
-    forRoot: () => ({ module: class DummyConfigModule {} }),
-  },
-}));
+//
+// A versão "vazia" original só substituía `ConfigModule.forRoot`, sem
+// exportar `ConfigService` nem registrar nenhum provider — o que funcionava
+// enquanto nenhum módulo do AppModule injetava `ConfigService`. Isso deixou
+// de ser verdade com `InterviewsAiService` (injeta `ConfigService` para ler
+// `INTERVIEW_AI_SERVICE_URL`/`INTERVIEW_AI_TIMEOUT_MS`), que o AppModule
+// sempre importa via `InterviewsAiModule` — daí o `Nest can't resolve
+// dependencies of the InterviewsAiService (?)` ao compilar o `AppModule`
+// aqui. A causa é só deste mock, não de `InterviewsAiModule`: em produção,
+// `AppModule` registra `ConfigModule.forRoot({ isGlobal: true })`, tornando
+// `ConfigService` disponível globalmente para qualquer módulo sem import
+// explícito — o mock abaixo agora reproduz esse mesmo comportamento
+// (`global: true` + `providers`/`exports` de um `ConfigService` mínimo, que
+// só lê de `process.env`, já carregado pelo dotenv-cli), em vez de mudar a
+// topologia de módulos do Back.
+jest.mock('@nestjs/config', () => {
+  class ConfigService {
+    get<T = string>(key: string): T | undefined {
+      return process.env[key] as T | undefined;
+    }
+  }
+
+  return {
+    ConfigService,
+    ConfigModule: {
+      forRoot: () => ({
+        global: true,
+        module: class DummyConfigModule {},
+        providers: [ConfigService],
+        exports: [ConfigService],
+      }),
+    },
+  };
+});
 
 // 2) Substitui o @nestjs/jwt por uma versão que usa a biblioteca
 // "jsonwebtoken" diretamente — mesmo comportamento real, sem o formato de
@@ -123,7 +152,15 @@ describe('Auth (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    // Se `beforeAll` falhar ao compilar/inicializar o Nest (ex.: erro de DI),
+    // `app` nunca é atribuído. Sem esta guarda, `app.close()` lançaria um
+    // TypeError secundário aqui, que aparece nos resultados do Jest ao lado
+    // do erro real e pode confundir o diagnóstico — a causa raiz continua
+    // sendo o erro do `beforeAll`, nunca escondido, só não duplicado por um
+    // erro de limpeza que não faz sentido rodar.
+    if (app) {
+      await app.close();
+    }
   });
 
   it('deve registrar um novo candidato', async () => {
@@ -274,6 +311,44 @@ describe('Auth (e2e)', () => {
       .post('/auth/login')
       .send({ email, password: 'senhaErrada123' })
       .expect(401);
+  });
+
+  it('não deve renovar o access token sem o cookie refresh_token (refresh token ausente)', async () => {
+    await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+  });
+
+  it('não deve renovar o access token com um refresh_token inválido/adulterado', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', ['refresh_token=token-invalido-adulterado'])
+      .expect(401);
+  });
+
+  it('deve renovar o access token com um refresh_token válido, e o novo cookie deve autenticar /auth/me', async () => {
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+
+    const loginCookies = loginResponse.headers['set-cookie'];
+    const refreshCookie = loginCookies.find((c: string) => c.startsWith('refresh_token='));
+    expect(refreshCookie).toBeDefined();
+
+    const refreshResponse = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', [refreshCookie])
+      .expect(200);
+
+    const refreshCookies = refreshResponse.headers['set-cookie'];
+    const newAccessCookie = refreshCookies.find((c: string) => c.startsWith('access_token='));
+    expect(newAccessCookie).toBeDefined();
+
+    const meResponse = await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Cookie', [newAccessCookie])
+      .expect(200);
+
+    expect(meResponse.body.email).toBe(email);
   });
 
   it('deve acessar /auth/me estando autenticado, e falhar sem estar', async () => {
