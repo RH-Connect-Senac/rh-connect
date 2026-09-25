@@ -157,7 +157,7 @@ function getCandidateIdentity(session: MockAuthSession) {
   const user = session.user;
   if (session.authenticated && user?.role === "CANDIDATE") {
     return {
-      id: user.id === "candidate-demo" ? DEFAULT_CANDIDATE.id : user.id,
+      id: user.id,
       name: user.name,
       email: user.email,
     };
@@ -960,7 +960,6 @@ function DashboardScreen({
 }) {
   const routerNavigate = useNavigate();
   const candidateUser = session.user;
-  const isDemoCandidate = candidateUser?.id === "candidate-demo";
   const candidateIdentity = getCandidateIdentity(session);
   const candidateId = candidateIdentity.id;
   const account = getCandidateAccountConfig(candidateUser);
@@ -974,11 +973,6 @@ function DashboardScreen({
     .map((item) => getAverageScore(item.evaluation?.scores))
     .filter((score): score is number => score !== null)
     .sort((a, b) => b - a)[0];
-  const RECENT = [
-    { vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",        data: "18/07/2026", status: "Resultado disponível", badge: "success" as const, interviewId: undefined as string | undefined },
-    { vaga: "Analista de RH",                  empresa: "Grupo Pessoas",    data: "10/07/2026", status: "Aguardando avaliação", badge: "warning" as const, interviewId: undefined as string | undefined },
-    { vaga: "Assistente de Secretariado",      empresa: "Escritório Central", data: "02/07/2026", status: "Concluída",            badge: "default" as const, interviewId: undefined as string | undefined },
-  ];
   type RecentInterviewItem = {
     vaga: string;
     empresa: string;
@@ -1015,7 +1009,6 @@ function DashboardScreen({
         evaluationMode: interview.evaluationMode,
       };
     }),
-    ...(isDemoCandidate ? RECENT : []),
   ].slice(0, 3);
 
   return (
@@ -1041,10 +1034,10 @@ function DashboardScreen({
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value={candidateInterviews.length || (isDemoCandidate ? 3 : 0)} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-        <StatCard value={pendingCount || (isDemoCandidate ? 1 : 0)} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
-        <StatCard value={availableReports.length || (isDemoCandidate ? 1 : 0)} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
-        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : isDemoCandidate ? "7,8" : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
+        <StatCard value={candidateInterviews.length} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+        <StatCard value={pendingCount} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
+        <StatCard value={availableReports.length} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
+        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
@@ -2854,7 +2847,6 @@ function InterviewHistoryScreen({
 }) {
   const routerNavigate = useNavigate();
   const candidateIdentity = getCandidateIdentity(session);
-  const isDemoCandidate = session.user?.id === "candidate-demo";
   const candidateInterviews = getCandidateInterviews(candidateIdentity.id);
   type CandidateHistoryItem = {
     id: string;
@@ -2870,11 +2862,6 @@ function InterviewHistoryScreen({
     draft?: boolean;
     evaluationMode?: EvaluationMode | null;
   };
-  const HISTORICO: CandidateHistoryItem[] = [
-    { id: "E003", vaga: "Desenvolvedor Full Stack Júnior", empresa: "Tech Labs",           data: "18/07/2026", perguntas: 5, status: "Concluída", nota: "7.7", badge: "success" as const, realId: undefined as string | undefined },
-    { id: "E002", vaga: "Analista de RH",                  empresa: "Grupo Pessoas",       data: "10/07/2026", perguntas: 5, status: "Aguardando avaliação", nota: null, badge: "warning" as const, realId: undefined as string | undefined },
-    { id: "E001", vaga: "Assistente de Secretariado",      empresa: "Escritório Central",  data: "02/07/2026", perguntas: 5, status: "Concluída", nota: "7.2", badge: "default" as const, realId: undefined as string | undefined },
-  ];
   const realHistory = candidateInterviews.map((interview) => {
     const report = getReportByInterviewId(interview.id);
     const evaluation = getEvaluationByInterviewId(interview.id);
@@ -2910,7 +2897,7 @@ function InterviewHistoryScreen({
       evaluationMode: activeDraftEntry.draft.evaluationMode,
     }]
     : [];
-  const historyItems = [...draftHistoryItem, ...realHistory, ...(isDemoCandidate ? HISTORICO : [])];
+  const historyItems = [...draftHistoryItem, ...realHistory];
   const inProgressCount = historyItems.filter((item) => item.status === "Em andamento").length;
 
   const [filtro, setFiltro] = useState("Todos");

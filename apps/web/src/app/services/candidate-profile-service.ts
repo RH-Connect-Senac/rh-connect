@@ -254,8 +254,16 @@ function saveStorage(storage: CandidateProfilesStorage) {
   window.localStorage.setItem(CANDIDATE_PROFILE_STORAGE_KEY, JSON.stringify(storage));
 }
 
-function resolveProfileSeed(candidateId: string, sessionUser?: Pick<MockAuthUser, "id" | "role"> | null) {
-  if (candidateId === DEFAULT_CANDIDATE.id || sessionUser?.id === "candidate-demo") {
+// Prompt 10: o desempate por `sessionUser?.id === "candidate-demo"` foi
+// removido — dependia do Auth mock (`loginMockUser`/`loginMockWithCredentials`,
+// removidos neste mesmo prompt), que era a única forma de uma sessão real
+// carregar esse id. `candidateId === DEFAULT_CANDIDATE.id` sozinho já cobre
+// o caso de negócio que continua vivo (Admin visualizando o perfil do
+// candidato demo via `admin-screens.tsx`, que chama `getCandidateProfile`
+// sem `sessionUser`). O parâmetro `sessionUser` foi mantido na assinatura
+// (não removido) para não forçar mudança nos call sites existentes.
+function resolveProfileSeed(candidateId: string) {
+  if (candidateId === DEFAULT_CANDIDATE.id) {
     return createDemoCandidateProfile();
   }
 
@@ -267,7 +275,7 @@ export function getCandidateProfile(candidateId: string, sessionUser?: Pick<Mock
   const existing = storage.profiles.find((profile) => profile.candidateId === candidateId);
   if (existing) return existing;
 
-  const profile = resolveProfileSeed(candidateId, sessionUser);
+  const profile = resolveProfileSeed(candidateId);
   saveStorage({
     version: CANDIDATE_PROFILE_VERSION,
     profiles: [...storage.profiles, profile],
