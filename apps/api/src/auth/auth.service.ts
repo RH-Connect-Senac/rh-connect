@@ -1,10 +1,45 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, createHash } from 'crypto';
-const refreshToken = randomBytes(64).toString('hex');
+import { normalizeGmailEmail } from './utils/email-normalization';
+import { TERMS_DOCUMENT_VERSION } from './constants/terms';
 
+// Identifica um P2002 (violação de constraint única) do Prisma como sendo
+// especificamente o de `app_user.email`. Robusto entre providers: no
+// MySQL/SQLite, `error.meta.target` normalmente vem como array de nomes de
+// coluna (ex.: ["email"]); no PostgreSQL (nosso provider atual), o driver
+// costuma reportar o NOME DA CONSTRAINT (ex.: "app_user_email_key"), não a
+// coluna — então checar `target.includes('email')` com igualdade exata
+// falha nesse caso. Por isso a checagem abaixo normaliza `target` (array ou
+// string) e procura a substring "email", que está presente tanto no nome
+// da coluna quanto no nome de constraint gerado pelo Prisma para ela, e não
+// aparece em nenhuma outra coluna/constraint tocada por `register()`.
+function isEmailUniqueConstraintViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== 'P2002') {
+    return false;
+  }
+
+  const target = error.meta?.target;
+  const targetParts = Array.isArray(target) ? target : [target];
+
+  return targetParts.some(
+    (part) => typeof part === 'string' && part.toLowerCase().includes('email'),
+  );
+}
+
+@Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
@@ -29,9 +64,29 @@ export class AuthService {
     };
   }
 
-  async register(dto: { name: string; email: string; password: string }) {
+  async register(dto: {
+    name: string;
+    email: string;
+    password: string;
+    termsAccepted: boolean;
+  }) {
+    // Normalização de e-mail (decisão D5). Esta é a mesma função usada pelo
+    // validador `@IsGmailEmail` do RegisterDto — a ValidationPipe global não
+    // tem `transform: true`, então o valor que chega aqui é o valor bruto da
+    // requisição, e precisa ser normalizado explicitamente de novo antes de
+    // persistir.
+    const normalizedEmail = normalizeGmailEmail(dto.email);
+
+    if (!normalizedEmail) {
+      throw new BadRequestException(
+        'Use um e-mail válido do Gmail, no formato nome@gmail.com.',
+      );
+    }
+
+    const normalizedName = dto.name.trim();
+
     const existing = await this.prisma.app_user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizedEmail },
     });
 
     if (existing) {
@@ -40,27 +95,56 @@ export class AuthService {
 
     const password_hash = await bcrypt.hash(dto.password, 10);
 
-    const user = await this.prisma.$transaction(async (tx) => {
-      const newUser = await tx.app_user.create({
-        data: {
-          name: dto.name,
-          email: dto.email,
-          password_hash,
-          user_role: 'CANDIDATE',
-          account_status: 'ACTIVE',
-        },
+    try {
+      const user = await this.prisma.$transaction(async (tx) => {
+        const newUser = await tx.app_user.create({
+          data: {
+            name: normalizedName,
+            email: normalizedEmail,
+            password_hash,
+            user_role: 'CANDIDATE',
+            account_status: 'ACTIVE',
+          },
+        });
+
+        await tx.candidate_profile.create({
+          data: {
+            user_id: newUser.user_id,
+          },
+        });
+
+        // Persistência do aceite de termos (decisão D3): duas linhas, na
+        // mesma transação do cadastro, uma para cada documento vigente.
+        await tx.terms_acceptance.createMany({
+          data: [
+            {
+              user_id: newUser.user_id,
+              document_type: 'TERMS_OF_USE',
+              document_version: TERMS_DOCUMENT_VERSION,
+            },
+            {
+              user_id: newUser.user_id,
+              document_type: 'PRIVACY_POLICY',
+              document_version: TERMS_DOCUMENT_VERSION,
+            },
+          ],
+        });
+
+        return newUser;
       });
 
-      await tx.candidate_profile.create({
-        data: {
-          user_id: newUser.user_id,
-        },
-      });
+      return this.toPublicUser(user);
+    } catch (error) {
+      // Rede de segurança contra condição de corrida: se dois cadastros
+      // simultâneos passarem pelo `findUnique` acima antes de qualquer um
+      // deles commitar, a constraint única de `email` no banco rejeita o
+      // segundo INSERT com P2002 — tratado aqui como conflito (decisão D6).
+      if (isEmailUniqueConstraintViolation(error)) {
+        throw new ConflictException('E-mail já cadastrado');
+      }
 
-      return newUser;
-    });
-
-    return this.toPublicUser(user);
+      throw error;
+    }
   }
 
   async login(dto: { email: string; password: string }) {
@@ -87,6 +171,8 @@ export class AuthService {
       email: user.email,
       role: user.user_role,
     });
+
+    const refreshToken = randomBytes(64).toString('hex');
 
     const refreshTokenHash = createHash('sha256')
       .update(refreshToken)

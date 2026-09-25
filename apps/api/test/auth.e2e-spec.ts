@@ -104,8 +104,10 @@ jest.setTimeout(30000);
 describe('Auth (e2e)', () => {
   let app: INestApplication;
 
-  const email = `e2e-${Date.now()}@rhconnect.com`;
-  const password = 'senha123456';
+  // O domínio precisa ser gmail.com (decisão D5) e a senha precisa cumprir
+  // a política D12 (maiúscula, minúscula, dígito e caractere especial).
+  const email = `e2e.${Date.now()}@gmail.com`;
+  const password = 'Senha!Teste123';
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -127,7 +129,7 @@ describe('Auth (e2e)', () => {
   it('deve registrar um novo candidato', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Candidato E2E', email, password })
+      .send({ name: 'Candidato E2E', email, password, termsAccepted: true })
       .expect(201);
 
     expect(response.body.email).toBe(email);
@@ -138,8 +140,25 @@ describe('Auth (e2e)', () => {
   it('não deve permitir cadastrar o mesmo e-mail duas vezes', async () => {
     await request(app.getHttpServer())
       .post('/auth/register')
-      .send({ name: 'Candidato Duplicado', email, password })
+      .send({
+        name: 'Candidato Duplicado',
+        email,
+        password,
+        termsAccepted: true,
+      })
       .expect(409);
+  });
+
+  it('não deve permitir cadastro sem aceitar os termos', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        name: 'Candidato Sem Termos',
+        email: `e2e.sem-termos.${Date.now()}@gmail.com`,
+        password,
+        termsAccepted: false,
+      })
+      .expect(400);
   });
 
   it('deve fazer login e retornar o cookie de sessão', async () => {

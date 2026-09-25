@@ -104,12 +104,12 @@ import {
   getMockAuthSession,
   loginMockWithCredentials,
   logoutMockUser,
-  registerMockCandidate,
   saveRememberedLoginEmail,
   type MockAuthSession,
   type MockAuthUser,
   type MockUserRole,
 } from "./services/auth-service";
+import { registerRealCandidate } from "./services/candidate-registration-service";
 import {
   getCandidateProfile,
   getCandidateProfileCompleteness,
@@ -647,7 +647,7 @@ function AuthScreen({
 }: {
   onNavigate: (s: Screen) => void;
   onLoginWithCredentials: (email: string, password: string) => { ok: true } | { ok: false; message: string };
-  onRegister: (data: { name: string; email: string; password: string }) => { ok: true } | { ok: false; message: string };
+  onRegister: (data: { name: string; email: string; password: string; termsAccepted: boolean }) => Promise<{ ok: true } | { ok: false; message: string }>;
   initialTab?: "login" | "register";
 }) {
   const [tab, setTab] = useState<"login" | "register">(initialTab);
@@ -661,6 +661,7 @@ function AuthScreen({
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
   const [registerAcceptedTerms, setRegisterAcceptedTerms] = useState(false);
   const [registerError, setRegisterError] = useState("");
+  const [isRegisterSubmitting, setIsRegisterSubmitting] = useState(false);
   const authNavigate = useNavigate();
 
   useEffect(() => {
@@ -688,7 +689,7 @@ function AuthScreen({
     }
   };
 
-  const handleRegisterSubmit = () => {
+  const handleRegisterSubmit = async () => {
     const name = registerName.trim();
     const email = registerEmail.trim().toLowerCase();
     const password = registerPassword;
@@ -720,9 +721,14 @@ function AuthScreen({
     }
 
     setRegisterError("");
-    const result = onRegister({ name, email, password });
-    if (!result.ok) {
-      setRegisterError(result.message);
+    setIsRegisterSubmitting(true);
+    try {
+      const result = await onRegister({ name, email, password, termsAccepted: registerAcceptedTerms });
+      if (!result.ok) {
+        setRegisterError(result.message);
+      }
+    } finally {
+      setIsRegisterSubmitting(false);
     }
   };
 
@@ -886,8 +892,8 @@ function AuthScreen({
                     {registerError}
                   </Alert>
                 )}
-                <Btn variant="primary" className="w-full !py-3" onClick={handleRegisterSubmit}>
-                  Criar minha conta
+                <Btn variant="primary" className="w-full !py-3" onClick={handleRegisterSubmit} disabled={isRegisterSubmitting}>
+                  {isRegisterSubmitting ? "Criando conta..." : "Criar minha conta"}
                 </Btn>
               </div>
             )}
@@ -5880,12 +5886,16 @@ function AppRoutes() {
     routerNavigate(getEntryPathForSession(result.session));
     return { ok: true as const };
   };
-  const registerCandidate = (data: { name: string; email: string; password: string }) => {
-    const result = registerMockCandidate(data);
+  const registerCandidate = async (data: { name: string; email: string; password: string; termsAccepted: boolean }) => {
+    // Cadastro real do Candidato (Prompt 02): fala direto com a API,
+    // sem alimentar o Auth mock. O Login permanece mock até o Prompt 03 —
+    // ou seja, a conta criada aqui só poderá logar quando o Prompt 03
+    // integrar o login real.
+    const result = await registerRealCandidate(data);
     if (!result.ok) {
       return result;
     }
-    saveRememberedLoginEmail(result.candidate.email);
+    saveRememberedLoginEmail(result.user.email);
     routerNavigate("/login");
     return { ok: true as const };
   };
