@@ -4989,7 +4989,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
             <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
               Sua solicitação de exclusão foi registrada e será processada em até 30 dias. Você receberá uma confirmação por e-mail.
             </p>
-            <Btn variant="primary" className="w-full" onClick={() => { setModal(null); onNavigate("landing"); }}>
+            <Btn variant="primary" className="w-full" onClick={() => { setModal(null); onNavigate("auth"); }}>
               Sair da plataforma
             </Btn>
           </div>
@@ -5753,7 +5753,11 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   );
 
   const executeNavigation = (screen: Screen) => {
-    if ((screen === "auth" || screen === "landing") && session.authenticated) {
+    // Logout real só deve disparar para uma navegação que É o "Sair"
+    // (AccountDropdown chama `onNavigate("auth")`) — não para qualquer
+    // navegação comum a "landing" enquanto autenticado (ex.: clicar no logo
+    // em /terms ou /privacy), que antes encerrava a sessão sem essa intenção.
+    if (screen === "auth" && session.authenticated) {
       // Encerra a sessão real localmente de forma otimista (sem esperar a
       // resposta da rede) e dispara a revogação no Back em paralelo — sem
       // fallback para sessão mock em caso de falha de rede.

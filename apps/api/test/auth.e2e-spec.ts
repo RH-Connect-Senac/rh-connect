@@ -387,4 +387,32 @@ describe('Auth (e2e)', () => {
       .set('Cookie', cookies)
       .expect(401);
   });
+
+  it('deve fazer logout de forma idempotente: sem sessão, e chamado duas vezes seguidas', async () => {
+    // Sem nenhum cookie (ninguém autenticado): não deve lançar erro — o
+    // Controller só chama `AuthService.logout` quando existe cookie
+    // `refresh_token`, e sempre limpa os cookies e responde 200.
+    await request(app.getHttpServer()).post('/auth/logout').expect(200);
+
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+
+    const cookies = loginResponse.headers['set-cookie'];
+
+    // Primeira chamada revoga a sessão; a segunda, com o MESMO cookie
+    // (já revogado), precisa continuar respondendo 200 — `AuthService.logout`
+    // usa `updateMany` filtrando por `revoked_at: null`, então a segunda
+    // chamada simplesmente não encontra linhas para atualizar, sem lançar.
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Cookie', cookies)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Cookie', cookies)
+      .expect(200);
+  });
 });
