@@ -5922,12 +5922,23 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   ]);
 
   const completeOnboardingAndNavigate = async (screen: Screen) => {
-    if (session.user) {
-      const updatedUser = await completeRealOnboarding(session.user.role);
-      if (updatedUser) {
-        setSession({ version: 1, authenticated: true, user: updatedUser });
-      }
+    if (!session.user) {
+      return;
     }
+
+    const updatedUser = await completeRealOnboarding(session.user.role);
+    if (!updatedUser) {
+      // O Back não persistiu a conclusão (erro de rede, 5xx ou payload
+      // inválido): não navega para o dashboard. Sem esta guarda, o Front
+      // navegava otimistamente e o `ProtectedRoute` imediatamente devolvia
+      // o usuário para a tela de onboarding (já que
+      // `session.user.onboardingCompleted` continua `false` no estado),
+      // mascarando a falha como um redirecionamento confuso em vez de
+      // simplesmente permanecer na tela de onboarding.
+      return;
+    }
+
+    setSession({ version: 1, authenticated: true, user: updatedUser });
     routerNavigate(getPathForScreen(screen));
   };
   const loginWithCredentials = async (email: string, password: string) => {
