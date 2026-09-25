@@ -1,6 +1,6 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, useContext, createContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useState, useRef, useEffect, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -105,6 +105,7 @@ import {
   type MockAuthUser,
   type MockUserRole,
 } from "./services/auth-service";
+import { SessionContext, UNAUTHENTICATED_SESSION } from "./session-context";
 import { registerRealCandidate } from "./services/candidate-registration-service";
 import {
   completeRealOnboarding,
@@ -201,20 +202,12 @@ function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
   return pathname === ONBOARDING_BY_ROLE[role];
 }
 
-const UNAUTHENTICATED_SESSION: MockAuthSession = {
-  version: 1,
-  authenticated: false,
-  user: null,
-};
-
-// Dá acesso à sessão REAL atual (do estado de `AppRoutes`) para componentes
-// que não a recebem via props — ex.: `AuthLayout`, chamado em ~25 lugares
-// sem prop `session`. Antes, esses componentes liam a sessão diretamente do
-// mock (`getMockAuthSession()`), uma função síncrona e global; como a
-// sessão real vive em estado de React (populada de forma assíncrona a
-// partir de `/auth/me`), o substituto precisa ser algo que também dê para
-// ler sem alterar a assinatura de cada um desses componentes.
-const SessionContext = createContext<MockAuthSession>(UNAUTHENTICATED_SESSION);
+// `UNAUTHENTICATED_SESSION`/`SessionContext` foram movidos para
+// `./session-context` no Prompt 08 — mesmo contexto de antes (dá acesso à
+// sessão REAL atual para componentes que não a recebem via props, ex.:
+// `AuthLayout`, chamado em ~25 lugares sem prop `session`), só que agora
+// também importável por `eval-screens.tsx`/`admin-screens.tsx`, sem criar
+// dependência circular com este arquivo. Ver comentário completo lá.
 
 const CRITERIA = [
   { name: "Clareza",         score: 9 },

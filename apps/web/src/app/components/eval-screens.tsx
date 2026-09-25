@@ -1,10 +1,16 @@
 /** RH Connect — Telas do Avaliador */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import type { EvaluationScores } from "../domain/interviews";
-import { DEFAULT_EVALUATOR } from "../mocks/interviews";
+// Prompt 08: os 6 componentes abaixo antes aceitavam `evaluatorId` como
+// prop OPCIONAL, com default `DEFAULT_EVALUATOR.id` ("Carlos Andrade") — um
+// fallback perigoso, já que cada um só é montado uma vez em `App.tsx`,
+// sempre recebendo `evaluatorId={evaluatorIdentity.id}` (a identidade real
+// resolvida pela ponte sessão→mock). Tornar a prop obrigatória elimina esse
+// fallback sem mudar nenhum call site existente — nenhum deles dependia do
+// valor default.
 import {
   completeEvaluation,
   createEmptyEvaluationScores,
@@ -32,9 +38,10 @@ import {
   MessageSquare, Info, Users, ArrowRight, Zap, Lock, AlertCircle,
 } from "lucide-react";
 import {
-  EVAL_ACCOUNT, EVAL_NOTIFS,
+  EVAL_ACCOUNT, EVAL_NOTIFS, resolveAccountConfig,
 } from "./header-popovers";
 import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
+import { SessionContext } from "../session-context";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
 import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
 import { Input } from "./ui/input";
@@ -151,12 +158,23 @@ function EvalLayout({ current, onNavigate, title, subtitle, actions, children }:
   title: string; subtitle?: string; actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  // Antes desta correção (Prompt 08), o cabeçalho/AccountDropdown do
+  // Avaliador sempre exibia o nome/e-mail de demonstração (`EVAL_ACCOUNT`,
+  // "Carlos Andrade"), mesmo com um avaliador real autenticado — porque este
+  // componente não tinha acesso à sessão. Mesmo padrão já usado por
+  // `AuthLayout` (Candidato) em App.tsx.
+  const activeSession = useContext(SessionContext);
+  const resolvedAccount =
+    activeSession.authenticated && activeSession.user?.role === "EVALUATOR"
+      ? resolveAccountConfig(EVAL_ACCOUNT, activeSession.user)
+      : EVAL_ACCOUNT;
+
   return (
     <ProfileShell
       current={current}
       navItems={EVAL_NAV}
       profileLabel="Avaliador"
-      account={EVAL_ACCOUNT}
+      account={resolvedAccount}
       notifications={EVAL_NOTIFS}
       title={title}
       subtitle={subtitle}
@@ -389,7 +407,7 @@ function EvalWeekChartCard({ onDaySelect }: { onDaySelect?: (day: string | null)
 
 // ─── Screen: Dashboard do Avaliador ──────────────────────────────────────────
 
-export function EvalDashboardScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+export function EvalDashboardScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const routerNavigate = useNavigate();
   const assignedInterviews = getAssignedInterviews(evaluatorId);
   const completedEvaluations = getCompletedEvaluations(evaluatorId);
@@ -483,7 +501,7 @@ export function EvalDashboardScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATO
 
 // ─── Screen: Fila de Avaliações ───────────────────────────────────────────────
 
-export function EvalQueueScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+export function EvalQueueScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -568,7 +586,7 @@ export function EvalQueueScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id
 
 // ─── Screen: Em Andamento ─────────────────────────────────────────────────────
 
-export function EvalActiveScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+export function EvalActiveScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const routerNavigate = useNavigate();
   const active = [
     ...getAssignedInterviews(evaluatorId)
@@ -646,7 +664,7 @@ export function EvalActiveScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.i
 
 // ─── Screen: Tela de Avaliação ────────────────────────────────────────────────
 
-export function EvalScreenView({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+export function EvalScreenView({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const routerNavigate = useNavigate();
   const location = useLocation();
   const { id } = useParams();
@@ -853,7 +871,7 @@ export function EvalScreenView({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id 
 
 // ─── Screen: Revisão e Envio ──────────────────────────────────────────────────
 
-export function EvalReviewScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+export function EvalReviewScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const routerNavigate = useNavigate();
   const location = useLocation();
   const { id } = useParams();
@@ -981,7 +999,7 @@ export function EvalReviewScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.i
 
 // ─── Screen: Histórico de Avaliações ─────────────────────────────────────────
 
-export function EvalHistoryScreen({ onNavigate, evaluatorId = DEFAULT_EVALUATOR.id }: { onNavigate: NavFn; evaluatorId?: string }) {
+export function EvalHistoryScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const historyItems = [

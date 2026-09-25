@@ -1,6 +1,6 @@
 /** RH Connect — Telas do Administrador */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
 import { DEFAULT_CANDIDATE } from "../mocks/interviews";
@@ -21,9 +21,10 @@ import {
   statusLabelFromInterview,
 } from "../services/interviews-service";
 import {
-  ADMIN_ACCOUNT, ADMIN_NOTIFS,
+  ADMIN_ACCOUNT, ADMIN_NOTIFS, resolveAccountConfig,
 } from "./header-popovers";
 import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
+import { SessionContext } from "../session-context";
 import {
   Home, Users, Settings, ChevronLeft, ChevronRight,
   Bell, CheckCircle, AlertCircle, Target, FileText, Shield,
@@ -141,12 +142,25 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
   title: string; subtitle?: string; actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  // Antes desta correção (Prompt 08), o cabeçalho/AccountDropdown do Admin
+  // sempre exibia o nome/e-mail de demonstração (`ADMIN_ACCOUNT`,
+  // "Ana Martins"), mesmo com um admin real autenticado — porque este
+  // componente não tinha acesso à sessão. Mesmo padrão já usado por
+  // `AuthLayout` (Candidato) em App.tsx. Os DADOS de negócio exibidos nas
+  // telas Admin (candidatos, avaliadores, entrevistas mock etc.) continuam
+  // mock — só a identidade do usuário autenticado no cabeçalho muda aqui.
+  const activeSession = useContext(SessionContext);
+  const resolvedAccount =
+    activeSession.authenticated && activeSession.user?.role === "ADMIN"
+      ? resolveAccountConfig(ADMIN_ACCOUNT, activeSession.user)
+      : ADMIN_ACCOUNT;
+
   return (
     <ProfileShell
       current={current}
       navItems={ADMIN_NAV}
       profileLabel="Administrador"
-      account={ADMIN_ACCOUNT}
+      account={resolvedAccount}
       notifications={ADMIN_NOTIFS}
       title={title}
       subtitle={subtitle}
