@@ -99,8 +99,26 @@ export type AdvanceMissionResult = {
 };
 
 export const DEVELOPMENT_STORAGE_KEY = "rhconnect:development:v1";
+// Versão de cada DevelopmentState individual (conteúdo/estrutura de
+// competências e missões). Não confundir com DEVELOPMENT_STORAGE_SCHEMA_VERSION
+// abaixo, que versiona o envelope do storage (isolamento por candidato).
 export const DEVELOPMENT_STATE_VERSION = "v1";
 export const COMPETENCY_UNLOCK_THRESHOLD = 20;
+
+// Prompt 09 — Parte A: isolamento por candidato real. Antes, DEVELOPMENT_STORAGE_KEY
+// guardava um único DevelopmentState global, compartilhado por qualquer
+// usuário do navegador. Agora guarda um envelope com o progresso de cada
+// candidateId real (session.user.id) isolado em `byCandidate`. Um valor
+// salvo no formato antigo (um DevelopmentState "solto", sem `byCandidate`)
+// não tem dono conhecido e por isso é tratado como incompatível e
+// descartado por inteiro na leitura seguinte — nunca migrado para o
+// candidato que logar primeiro (ver development-service.ts).
+export const DEVELOPMENT_STORAGE_SCHEMA_VERSION = "v2";
+
+export type DevelopmentStorageState = {
+  schemaVersion: string;
+  byCandidate: Record<string, DevelopmentState>;
+};
 
 export const DEVELOPMENT_LEVELS: DevelopmentLevel[] = [
   { level: 1, name: "Iniciando a Jornada", minXp: 0, nextLevelXp: 200 },

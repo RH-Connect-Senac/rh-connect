@@ -5010,9 +5010,9 @@ function materialStatusLabel(status: MaterialStatus) {
   return labels[status];
 }
 
-function mergeMaterialsWithUserState(userStates: MaterialUserState[]): MaterialCardView[] {
+function mergeMaterialsWithUserState(candidateId: string, userStates: MaterialUserState[]): MaterialCardView[] {
   return SUPPORT_MATERIALS.map((material) => {
-    const userState = userStates.find((item) => item.materialId === material.id) ?? getMaterialUserState(material.id);
+    const userState = userStates.find((item) => item.materialId === material.id) ?? getMaterialUserState(candidateId, material.id);
     return {
       ...material,
       ...userState,
@@ -5125,12 +5125,13 @@ function ExternalResourceCard({ resource }: { resource: ExternalLearningResource
   );
 }
 
-function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
   const routerNavigate = useNavigate();
+  const candidateIdentity = getCandidateIdentity(session);
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
   const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
-  const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates());
+  const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
   const [cacholaResources, setCacholaResources] = useState<ExternalLearningResource[]>([]);
   const [loadingCacholaResources, setLoadingCacholaResources] = useState(false);
   const [cacholaSearch, setCacholaSearch] = useState("");
@@ -5138,7 +5139,7 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const [visibleCacholaCount, setVisibleCacholaCount] = useState(CACHOLA_VISIBLE_STEP);
   const [showCats, setShowCats] = useState(false);
 
-  const materiais = mergeMaterialsWithUserState(materialStates);
+  const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
 
   useEffect(() => {
     let active = true;
@@ -5166,15 +5167,15 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     };
   }, []);
 
-  const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates());
+  const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates(candidateIdentity.id));
 
   const toggleFavorito = (id: string) => {
-    toggleMaterialFavorite(id);
+    toggleMaterialFavorite(candidateIdentity.id, id);
     refreshMaterialStates();
   };
 
   const handleOpenMaterial = (material: MaterialCardView) => {
-    openMaterial(material.id);
+    openMaterial(candidateIdentity.id, material.id);
     refreshMaterialStates();
     routerNavigate(`/candidate/materials/${material.slug}`);
   };
@@ -5406,15 +5407,16 @@ function MaterialsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   );
 }
 
-function MaterialDetailScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function MaterialDetailScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
   const routerNavigate = useNavigate();
+  const candidateIdentity = getCandidateIdentity(session);
   const { materialId } = useParams();
   const material = materialId ? findSupportMaterialBySlug(materialId) : undefined;
-  const [materialState, setMaterialState] = useState<MaterialUserState | null>(() => material ? getMaterialUserState(material.id) : null);
+  const [materialState, setMaterialState] = useState<MaterialUserState | null>(() => material ? getMaterialUserState(candidateIdentity.id, material.id) : null);
 
   useEffect(() => {
     if (!material) return;
-    setMaterialState(openMaterial(material.id));
+    setMaterialState(openMaterial(candidateIdentity.id, material.id));
   }, [material?.id]);
 
   if (!material) {
@@ -5440,11 +5442,11 @@ function MaterialDetailScreen({ onNavigate }: { onNavigate: (s: Screen) => void 
 
   const handleComplete = () => {
     if (completed) return;
-    const result = completeMaterial(material.id);
+    const result = completeMaterial(candidateIdentity.id, material.id);
     setMaterialState(result.state);
     if (result.completedNow) {
       try {
-        advanceDevelopmentFromMaterial(material.id);
+        advanceDevelopmentFromMaterial(candidateIdentity.id, material.id);
       } catch {
         // A conclusão do material é independente da gamificação local.
       }
@@ -5645,22 +5647,24 @@ function NotificationsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
 // ─── Screen: Meu Desenvolvimento ─────────────────────────────────────────────
 
-function DevelopmentScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function DevelopmentScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const candidateIdentity = getCandidateIdentity(session);
   return (
     <AuthLayout current="development" onNavigate={onNavigate}
       title="Meu desenvolvimento"
       subtitle="Acompanhe sua evolução, desenvolva competências e descubra os próximos passos">
-      <DevelopmentContent onNavigate={onNavigate} />
+      <DevelopmentContent onNavigate={onNavigate} candidateId={candidateIdentity.id} />
     </AuthLayout>
   );
 }
 
-function CandidateDiscTestScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function CandidateDiscTestScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const candidateIdentity = getCandidateIdentity(session);
   return (
     <AuthLayout current="disc-test" onNavigate={onNavigate}
       title="Teste DISC"
       subtitle="Ferramenta de autoconhecimento e desenvolvimento profissional">
-      <DiscTestScreen />
+      <DiscTestScreen candidateId={candidateIdentity.id} />
     </AuthLayout>
   );
 }
@@ -5981,12 +5985,12 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
           <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
           <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
-          <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onDiscardSavedDraft={discardSavedDraft} onCancelInterview={() => setConfirmCancelInterview(true)} onCancelPreparation={cancelInterviewPreparation} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
@@ -6005,7 +6009,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
           <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
           <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
           <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
           <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />

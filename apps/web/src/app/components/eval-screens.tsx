@@ -18,7 +18,7 @@ import {
   getAssignedInterviews,
   getAverageScore,
   getCompletedEvaluations,
-  getEvaluationByInterviewId,
+  getEvaluationForEvaluator,
   getInterviewById,
   saveEvaluationDraft,
   startEvaluation,
@@ -592,7 +592,7 @@ export function EvalActiveScreen({ onNavigate, evaluatorId }: { onNavigate: NavF
     ...getAssignedInterviews(evaluatorId)
       .filter((interview) => interview.status === "IN_EVALUATION")
       .map((interview) => {
-        const evaluation = getEvaluationByInterviewId(interview.id);
+        const evaluation = getEvaluationForEvaluator(interview.id, evaluatorId);
         const progress = Object.values(evaluation?.scores ?? {}).filter((score) => score > 0).length;
         return {
           id: interview.id,
@@ -670,8 +670,8 @@ export function EvalScreenView({ onNavigate, evaluatorId }: { onNavigate: NavFn;
   const { id } = useParams();
   const interview = getInterviewById(id);
   const locationState = location.state as EvalReviewLocationState | null;
-  const [scores, setScores] = useState<EvaluationScores>(() => getEvaluationByInterviewId(id)?.scores ?? locationState?.scores ?? createEmptyEvaluationScores());
-  const [comment, setComment] = useState(() => getEvaluationByInterviewId(id)?.comment ?? locationState?.comment ?? "");
+  const [scores, setScores] = useState<EvaluationScores>(() => getEvaluationForEvaluator(id, evaluatorId)?.scores ?? locationState?.scores ?? createEmptyEvaluationScores());
+  const [comment, setComment] = useState(() => getEvaluationForEvaluator(id, evaluatorId)?.comment ?? locationState?.comment ?? "");
   const [currentQ, setCurrentQ] = useState(0);
 
   useEffect(() => {
@@ -876,7 +876,7 @@ export function EvalReviewScreen({ onNavigate, evaluatorId }: { onNavigate: NavF
   const location = useLocation();
   const { id } = useParams();
   const interview = getInterviewById(id);
-  const evaluation = getEvaluationByInterviewId(id);
+  const evaluation = getEvaluationForEvaluator(id, evaluatorId);
   const locationState = location.state as EvalReviewLocationState | null;
   const reviewScores = evaluation?.scores ?? locationState?.scores ?? createEmptyEvaluationScores();
   const [comment, setComment] = useState(evaluation?.comment ?? locationState?.comment ?? "");
@@ -1586,10 +1586,10 @@ export function EvalOnboardingScreen({ onNavigate, onComplete }: { onNavigate: N
 
 // ─── Screen: Avaliação Concluída ──────────────────────────────────────────────
 
-export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
+export function EvalDoneScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
   const { id } = useParams();
   const interview = getInterviewById(id);
-  const evaluation = getEvaluationByInterviewId(id);
+  const evaluation = getEvaluationForEvaluator(id, evaluatorId);
   const scores = evaluation?.scores
     ? Object.entries(evaluation.scores).map(([name, score]) => ({ name, score }))
     : [
@@ -1607,6 +1607,41 @@ export function EvalDoneScreen({ onNavigate }: { onNavigate: NavFn }) {
   const verdict = numAvg >= 8 ? { label: "Excelente", color: "text-green-600", bg: "bg-green-100" }
     : numAvg >= 6.5 ? { label: "Bom", color: "text-blue-600", bg: "bg-blue-100" }
     : { label: "Regular", color: "text-amber-600", bg: "bg-amber-100" };
+
+  // Ajuste pontual — Prompt 09 Parte B: para uma entrevista REAL (id
+  // encontrado), nunca renderizar "Avaliação Enviada!" com dados de outro
+  // avaliador nem com o fallback visual de demonstração como se fosse uma
+  // avaliação concluída de verdade. Mesmo padrão de guarda já usado em
+  // `EvalScreenView`/`EvalReviewScreen`. Quando `interview` é `null` (rota
+  // puramente demonstrativa, sem entrevista real por trás do `id`), o
+  // fallback visual abaixo continua existindo normalmente.
+  if (interview && interview.assignedEvaluatorId !== evaluatorId) {
+    return (
+      <EvalLayout current="eval-history" onNavigate={onNavigate} title="Avaliação indisponível" subtitle="Esta entrevista não está atribuída ao seu perfil.">
+        <EmptyState
+          icon={Lock}
+          title="Entrevista não atribuída"
+          description="Apenas o avaliador responsável pode acessar esta avaliação."
+          className="p-12"
+          action={<Btn variant="primary" onClick={() => onNavigate("eval-queue")}>Voltar para a fila</Btn>}
+        />
+      </EvalLayout>
+    );
+  }
+
+  if (interview && (!evaluation || evaluation.status !== "COMPLETED")) {
+    return (
+      <EvalLayout current="eval-history" onNavigate={onNavigate} title="Avaliação ainda não concluída" subtitle="Esta avaliação ainda não foi enviada ou não está disponível como concluída.">
+        <EmptyState
+          icon={AlertCircle}
+          title="Avaliação ainda não concluída"
+          description="Esta avaliação ainda não foi enviada ou não está disponível como concluída."
+          className="p-12"
+          action={<Btn variant="primary" onClick={() => onNavigate("eval-history")}>Ver histórico</Btn>}
+        />
+      </EvalLayout>
+    );
+  }
 
   return (
     <EvalLayout current="eval-history" onNavigate={onNavigate} title="Avaliação Enviada">

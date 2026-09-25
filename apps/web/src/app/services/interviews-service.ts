@@ -194,9 +194,31 @@ export function getInterviewById(interviewId?: string) {
   return getInterviewsState().interviews.find((interview) => interview.id === interviewId) ?? null;
 }
 
+// Leitura IRRESTRITA por interviewId — não verifica quem está pedindo.
+// Prompt 09: mantida apenas para uso do Admin/interno (visão de negócio
+// sobre qualquer entrevista/avaliação, comportamento já existente e fora do
+// escopo desta correção) e como implementação interna de
+// `saveEvaluationDraft`/`startEvaluation` (que já fazem sua própria checagem
+// de propriedade por `evaluatorId` logo em seguida). O fluxo autenticado do
+// Avaliador NÃO deve mais chamar esta função diretamente — usar
+// `getEvaluationForEvaluator` abaixo, que aplica a checagem de propriedade
+// na própria camada de leitura, sem depender só da rota/ProtectedRoute.
 export function getEvaluationByInterviewId(interviewId?: string) {
   if (!interviewId) return null;
   return getInterviewsState().evaluations.find((evaluation) => evaluation.interviewId === interviewId) ?? null;
+}
+
+// Prompt 09: leitura restrita, para o fluxo autenticado do Avaliador. Só
+// retorna a avaliação quando ela pertence realmente ao `evaluatorId`
+// informado — antes, as telas de Avaliador liam via
+// `getEvaluationByInterviewId(interviewId)` sem nenhuma checagem, então um
+// avaliador autenticado que acessasse diretamente por URL a avaliação de
+// outra entrevista (não atribuída a ele) conseguia ler notas/comentário já
+// salvos por outro avaliador.
+export function getEvaluationForEvaluator(interviewId: string | undefined, evaluatorId: string) {
+  const evaluation = getEvaluationByInterviewId(interviewId);
+  if (!evaluation || evaluation.evaluatorId !== evaluatorId) return null;
+  return evaluation;
 }
 
 export function getReportByInterviewId(interviewId?: string) {

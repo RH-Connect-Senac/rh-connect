@@ -21,36 +21,84 @@ import {
   createInitialDiscTestStorage,
   DISC_TEST_BLOCKS,
   DISC_TEST_STORAGE_KEY,
+  DISC_TEST_STORAGE_SCHEMA_VERSION,
   DISC_TEST_VERSION,
   getDiscPercentFromRawCount,
   type DiscFactorCode,
   type DiscRawCounts,
   type DiscTestStorage,
+  type DiscTestStorageByCandidate,
 } from "../mocks/disc-test";
 
-function readDiscStorage(): DiscTestStorage {
-  if (typeof window === "undefined") return createInitialDiscTestStorage();
+function createEmptyDiscStorageByCandidate(): DiscTestStorageByCandidate {
+  return { schemaVersion: DISC_TEST_STORAGE_SCHEMA_VERSION, candidates: {} };
+}
+
+// Prompt 09 — Parte A: só aceita o envelope v2 (`schemaVersion` +
+// `candidates`, isolado por candidateId real). Um DiscTestStorage "solto"
+// no formato antigo (sem envelope, sem dono conhecido) é tratado como
+// incompatível e descartado por inteiro; NUNCA é migrado/atribuído a um
+// candidateId específico.
+function readDiscStorageByCandidate(): DiscTestStorageByCandidate {
+  if (typeof window === "undefined") return createEmptyDiscStorageByCandidate();
 
   try {
     const raw = window.localStorage.getItem(DISC_TEST_STORAGE_KEY);
-    if (!raw) return createInitialDiscTestStorage();
-    const parsed = JSON.parse(raw) as DiscTestStorage;
-    if (parsed.version !== DISC_TEST_VERSION) return createInitialDiscTestStorage();
+    if (!raw) return createEmptyDiscStorageByCandidate();
 
-    return {
-      ...createInitialDiscTestStorage(),
-      ...parsed,
-      answers: parsed.answers ?? {},
-      version: DISC_TEST_VERSION,
-    };
+    const parsed = JSON.parse(raw) as Partial<DiscTestStorageByCandidate>;
+    if (
+      parsed.schemaVersion !== DISC_TEST_STORAGE_SCHEMA_VERSION ||
+      !parsed.candidates ||
+      typeof parsed.candidates !== "object" ||
+      Array.isArray(parsed.candidates)
+    ) {
+      const empty = createEmptyDiscStorageByCandidate();
+      saveDiscStorageByCandidate(empty);
+      return empty;
+    }
+
+    return { schemaVersion: DISC_TEST_STORAGE_SCHEMA_VERSION, candidates: parsed.candidates };
   } catch {
-    return createInitialDiscTestStorage();
+    const empty = createEmptyDiscStorageByCandidate();
+    saveDiscStorageByCandidate(empty);
+    return empty;
   }
 }
 
-function saveDiscStorage(next: DiscTestStorage) {
+function saveDiscStorageByCandidate(storage: DiscTestStorageByCandidate) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(DISC_TEST_STORAGE_KEY, JSON.stringify(next));
+  window.localStorage.setItem(DISC_TEST_STORAGE_KEY, JSON.stringify(storage));
+}
+
+function readDiscStorage(candidateId: string): DiscTestStorage {
+  const storage = readDiscStorageByCandidate();
+  const parsed = storage.candidates[candidateId];
+  if (!parsed) return createInitialDiscTestStorage();
+
+  if (parsed.version !== DISC_TEST_VERSION) return createInitialDiscTestStorage();
+
+  return {
+    ...createInitialDiscTestStorage(),
+    ...parsed,
+    answers: parsed.answers ?? {},
+    version: DISC_TEST_VERSION,
+  };
+}
+
+function saveDiscStorage(candidateId: string, next: DiscTestStorage) {
+  if (typeof window === "undefined") return;
+  // Leitura fresca do envelope completo a cada escrita, para nunca
+  // sobrescrever o resultado de outro candidateId já persistido.
+  const storage = readDiscStorageByCandidate();
+  const nextStorage: DiscTestStorageByCandidate = {
+    schemaVersion: DISC_TEST_STORAGE_SCHEMA_VERSION,
+    candidates: {
+      ...storage.candidates,
+      [candidateId]: next,
+    },
+  };
+  saveDiscStorageByCandidate(nextStorage);
 }
 
 function formatDate(value?: string) {
@@ -131,15 +179,15 @@ function DiscRadar({ rawCounts }: { rawCounts: DiscRawCounts }) {
   );
 }
 
-export function DiscTestScreen() {
-  const [record, setRecord] = useState<DiscTestStorage>(() => readDiscStorage());
+export function DiscTestScreen({ candidateId }: { candidateId: string }) {
+  const [record, setRecord] = useState<DiscTestStorage>(() => readDiscStorage(candidateId));
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    saveDiscStorage(record);
-  }, [record]);
+    saveDiscStorage(candidateId, record);
+  }, [candidateId, record]);
 
   const answeredCount = Object.keys(record.answers).length;
   const current = DISC_TEST_BLOCKS[currentQuestion];
