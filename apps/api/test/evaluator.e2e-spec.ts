@@ -99,10 +99,13 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
   // usuário ADMIN, já que não existe rota pública para isso.
   const prisma = new PrismaClient();
 
-  const adminEmail = `admin-e2e-${Date.now()}@rhconnect.com`;
+  // Login agora exige domínio gmail.com (igual ao cadastro) para os três
+  // perfis — por isso as contas técnicas usadas aqui para logar precisam
+  // ser @gmail.com, mesmo sendo criadas diretamente no banco via Prisma.
+  const adminEmail = `admin-e2e-${Date.now()}@gmail.com`;
   const adminPassword = 'senhaAdmin123';
 
-  const candidateEmail = `candidate-onboarding-${Date.now()}@rhconnect.com`;
+  const candidateEmail = `candidate-onboarding-${Date.now()}@gmail.com`;
   const candidatePassword = 'senha123456';
 
   let adminCookies: string[];
@@ -174,7 +177,11 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
     });
 
     it('deve convidar um avaliador quando chamado por ADMIN', async () => {
-      const evaluatorEmail = `avaliador-e2e-${Date.now()}@rhconnect.com`;
+      // O endpoint de convite em si não restringe domínio (fora do escopo
+      // desta auditoria, que cobre apenas o Login) — mas o e-mail usado aqui
+      // precisa ser @gmail.com porque este teste ativa a conta e depois faz
+      // login com ela, e o Login agora exige gmail.com.
+      const evaluatorEmail = `avaliador-e2e-${Date.now()}@gmail.com`;
 
       const response = await request(app.getHttpServer())
         .post('/auth/evaluator/invite')
@@ -211,7 +218,9 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
       // assim conseguimos usar esse valor bruto na chamada HTTP (algo que
       // não seria possível se passássemos pela rota de convite, já que
       // ela nunca devolve o token bruto).
-      const evaluatorEmail = `avaliador-ativar-${Date.now()}@rhconnect.com`;
+      // Precisa ser @gmail.com pelo mesmo motivo do teste de convite acima:
+      // este cenário ativa a conta e depois faz login com ela.
+      const evaluatorEmail = `avaliador-ativar-${Date.now()}@gmail.com`;
 
       const evaluator = await prisma.app_user.create({
         data: {

@@ -7,7 +7,7 @@ type TesterFeedbackInput = {
 
 const API_BASE_URL =
   ((import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_API_URL ??
-    "http://127.0.0.1:3000").replace(/\/+$/, "");
+    "http://localhost:3000").replace(/\/+$/, "");
 
 async function readFeedbackApiError(response: Response, fallback: string): Promise<string> {
   try {

@@ -12,9 +12,11 @@ export class RegisterDto {
   // usa `transform: true`), rejeitando entradas com whitespace externo que
   // são válidas após o trim exigido pela decisão D5 (ex.: " nome@gmail.com").
   // Por isso a sintaxe (via `isEmail` do class-validator) é validada DENTRO
-  // de `normalizeGmailEmail`, já depois do trim+lowercase e antes de
-  // remover o "+tag" — uma única regra coerente, usada tanto aqui quanto em
-  // `AuthService.register()`.
+  // de `normalizeGmailEmail`, já depois do trim+lowercase — uma única regra
+  // coerente, usada tanto aqui quanto em `AuthService.register()`. "+" na
+  // parte local é PRESERVADO (decisão de produto final): "nome+tag@gmail.com"
+  // é aceito e persistido exatamente assim, nunca tratado como equivalente
+  // a "nome@gmail.com".
   @IsGmailEmail({
     message: 'Use um e-mail válido do Gmail, no formato nome@gmail.com.',
   })

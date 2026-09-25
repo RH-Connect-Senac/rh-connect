@@ -1,6 +1,14 @@
 export type MockUserRole = "CANDIDATE" | "EVALUATOR" | "ADMIN";
 
-export type MockAccountStatus = "ACTIVE" | "INVITED" | "BLOCKED" | "INACTIVE";
+// Espelha o enum `account_status` do Back (schema.prisma). `PENDING_VERIFICATION`
+// é reconhecido aqui só como contrato — nenhuma tela/fluxo de verificação de
+// e-mail foi implementada; contas reais nunca recebem esse status hoje.
+export type MockAccountStatus =
+  | "ACTIVE"
+  | "PENDING_VERIFICATION"
+  | "INVITED"
+  | "BLOCKED"
+  | "INACTIVE";
 
 export type MockAuthUser = {
   id: string;
