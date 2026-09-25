@@ -1,8 +1,33 @@
-jest.mock('@nestjs/config', () => ({
-  ConfigModule: {
-    forRoot: () => ({ module: class DummyConfigModule {} }),
-  },
-}));
+// A versão "vazia" original só substituía `ConfigModule.forRoot`, sem
+// exportar `ConfigService` nem registrar nenhum provider — o que funcionava
+// enquanto nenhum módulo do AppModule injetava `ConfigService`. Isso deixou
+// de ser verdade com `InterviewsAiService` (injeta `ConfigService` para ler
+// `INTERVIEW_AI_SERVICE_URL`/`INTERVIEW_AI_TIMEOUT_MS`), que o AppModule
+// sempre importa via `InterviewsAiModule` — daí o `Nest can't resolve
+// dependencies of the InterviewsAiService (?)` ao compilar o `AppModule`
+// aqui. Mesma correção já aplicada em auth.e2e-spec.ts/evaluator.e2e-spec.ts
+// (Prompt 04): o mock abaixo reproduz `ConfigModule.forRoot({ isGlobal: true })`
+// (comportamento real usado em produção), em vez de mudar a topologia de
+// módulos do Back.
+jest.mock('@nestjs/config', () => {
+  class ConfigService {
+    get<T = string>(key: string): T | undefined {
+      return process.env[key] as T | undefined;
+    }
+  }
+
+  return {
+    ConfigService,
+    ConfigModule: {
+      forRoot: () => ({
+        global: true,
+        module: class DummyConfigModule {},
+        providers: [ConfigService],
+        exports: [ConfigService],
+      }),
+    },
+  };
+});
 
 jest.mock('@nestjs/jwt', () => {
   const jwt = require('jsonwebtoken');
