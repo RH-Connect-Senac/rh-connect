@@ -244,6 +244,41 @@ export class AuthService {
       throw new UnauthorizedException('Usuário não está ativo');
     }
 
+    // Rotação de refresh token: o token recebido é revogado e um novo é
+    // emitido nesta mesma chamada, reaproveitando a estrutura já existente
+    // de `session` (mesma tabela/colunas, sem alteração de schema) — cria
+    // uma NOVA linha para a sessão renovada em vez de atualizar o hash da
+    // linha atual, para preservar o histórico de cada sessão emitida
+    // (quando foi criada, quando foi revogada). Revogação da sessão antiga
+    // e criação da nova sessão acontecem na mesma transação, para nunca
+    // deixar o token antigo revogado sem que o novo já esteja persistido
+    // (ou vice-versa). Depois disso, uma tentativa de reusar o token antigo
+    // já é rejeitada pela própria checagem de `revoked_at: null` acima —
+    // nenhuma lógica de validação nova precisou ser criada para o replay.
+    const newRefreshToken = randomBytes(64).toString('hex');
+    const newRefreshTokenHash = createHash('sha256')
+      .update(newRefreshToken)
+      .digest('hex');
+
+    // Mesma duração de sessão usada no login (7 dias) — a rotação renova a
+    // sessão, não a estende além do que o login já concede.
+    const newExpiresAt = new Date();
+    newExpiresAt.setDate(newExpiresAt.getDate() + 7);
+
+    await this.prisma.$transaction([
+      this.prisma.session.update({
+        where: { session_id: session.session_id },
+        data: { revoked_at: new Date() },
+      }),
+      this.prisma.session.create({
+        data: {
+          user_id: session.app_user.user_id,
+          refresh_token_hash: newRefreshTokenHash,
+          expires_at: newExpiresAt,
+        },
+      }),
+    ]);
+
     const accessToken = this.jwt.sign({
       sub: session.app_user.user_id,
       email: session.app_user.email,
@@ -252,6 +287,7 @@ export class AuthService {
 
     return {
       token: accessToken,
+      refreshToken: newRefreshToken,
     };
   }
 

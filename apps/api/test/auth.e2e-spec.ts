@@ -331,31 +331,129 @@ describe('Auth (e2e)', () => {
       .expect(401);
   });
 
-  it('deve renovar o access token com um refresh_token válido, e o novo cookie deve autenticar /auth/me', async () => {
-    const loginResponse = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ email, password })
-      .expect(200);
+  // QA de segurança — rotação de refresh token: cada `/auth/refresh` bem-sucedido
+  // agora revoga o refresh token recebido e emite um novo, então os cenários
+  // abaixo usam sua própria conta (isolada da `email` compartilhada pelo
+  // resto do arquivo) para deixar a cadeia de tokens A → B → C explícita e
+  // sem interferência de outros testes que também chamam /auth/refresh.
+  describe('Rotação de refresh token (QA de segurança)', () => {
+    const rotationEmail = `e2e.rotation.${Date.now()}@gmail.com`;
+    const rotationPassword = 'Senha!Rotacao123';
 
-    const loginCookies = loginResponse.headers['set-cookie'];
-    const refreshCookie = loginCookies.find((c: string) => c.startsWith('refresh_token='));
-    expect(refreshCookie).toBeDefined();
+    let refreshTokenA: string;
+    let refreshTokenB: string;
 
-    const refreshResponse = await request(app.getHttpServer())
-      .post('/auth/refresh')
-      .set('Cookie', [refreshCookie])
-      .expect(200);
+    beforeAll(async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          name: 'Candidato Rotação E2E',
+          email: rotationEmail,
+          password: rotationPassword,
+          termsAccepted: true,
+        })
+        .expect(201);
+    });
 
-    const refreshCookies = refreshResponse.headers['set-cookie'];
-    const newAccessCookie = refreshCookies.find((c: string) => c.startsWith('access_token='));
-    expect(newAccessCookie).toBeDefined();
+    it('A. refresh válido: deve rotacionar o refresh token e o novo access token deve continuar autenticando /auth/me', async () => {
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: rotationEmail, password: rotationPassword })
+        .expect(200);
 
-    const meResponse = await request(app.getHttpServer())
-      .get('/auth/me')
-      .set('Cookie', [newAccessCookie])
-      .expect(200);
+      const loginCookies = loginResponse.headers['set-cookie'];
+      const cookieA = loginCookies.find((c: string) =>
+        c.startsWith('refresh_token='),
+      );
+      expect(cookieA).toBeDefined();
+      refreshTokenA = cookieA;
 
-    expect(meResponse.body.email).toBe(email);
+      const refreshResponse = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', [refreshTokenA])
+        .expect(200);
+
+      const refreshCookies = refreshResponse.headers['set-cookie'];
+      const newAccessCookie = refreshCookies.find((c: string) =>
+        c.startsWith('access_token='),
+      );
+      const cookieB = refreshCookies.find((c: string) =>
+        c.startsWith('refresh_token='),
+      );
+
+      expect(newAccessCookie).toBeDefined();
+      expect(cookieB).toBeDefined();
+      // B precisa ser um refresh token diferente de A — é essa diferença
+      // que caracteriza a rotação.
+      expect(cookieB).not.toBe(refreshTokenA);
+      refreshTokenB = cookieB;
+
+      const meResponse = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', [newAccessCookie])
+        .expect(200);
+
+      expect(meResponse.body.email).toBe(rotationEmail);
+    });
+
+    it('B. replay do refresh token antigo (A) deve ser rejeitado com 401 depois da rotação', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', [refreshTokenA])
+        .expect(401);
+    });
+
+    it('C. o novo refresh token (B) deve funcionar normalmente e emitir um novo token (C)', async () => {
+      const refreshResponse = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', [refreshTokenB])
+        .expect(200);
+
+      const refreshCookies = refreshResponse.headers['set-cookie'];
+      const cookieC = refreshCookies.find((c: string) =>
+        c.startsWith('refresh_token='),
+      );
+
+      expect(cookieC).toBeDefined();
+      expect(cookieC).not.toBe(refreshTokenB);
+    });
+
+    it('D. logout depois de uma rotação deve revogar a sessão, e reusar o refresh token pós-logout deve retornar 401', async () => {
+      // O teste C acima já consumiu `refreshTokenB` (rotacionando-o para C),
+      // então este cenário roda seu próprio login + refresh para obter um
+      // token de sessão ainda válido — equivalente a "B" — antes de fazer
+      // logout com ele, sem depender de estado deixado pelos testes A/B/C.
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: rotationEmail, password: rotationPassword })
+        .expect(200);
+
+      const loginCookies = loginResponse.headers['set-cookie'];
+      const freshCookie = loginCookies.find((c: string) =>
+        c.startsWith('refresh_token='),
+      );
+
+      const rotateResponse = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', [freshCookie])
+        .expect(200);
+
+      const rotatedCookies = rotateResponse.headers['set-cookie'];
+      const rotatedRefreshCookie = rotatedCookies.find((c: string) =>
+        c.startsWith('refresh_token='),
+      );
+      expect(rotatedRefreshCookie).toBeDefined();
+
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', [rotatedRefreshCookie])
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', [rotatedRefreshCookie])
+        .expect(401);
+    });
   });
 
   it('deve acessar /auth/me estando autenticado, e falhar sem estar', async () => {

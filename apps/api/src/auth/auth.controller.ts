@@ -98,13 +98,25 @@ export class AuthController {
       throw new UnauthorizedException('Refresh token não encontrado');
     }
 
-    const { token } = await this.authService.refresh(refreshToken);
+    // Rotação de refresh token: `AuthService.refresh` agora também revoga o
+    // token recebido e emite um novo — o cookie `refresh_token` precisa ser
+    // atualizado com esse novo valor, senão o cliente continuaria enviando
+    // um token já revogado na próxima renovação.
+    const { token, refreshToken: newRefreshToken } =
+      await this.authService.refresh(refreshToken);
 
     res.cookie('access_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 1000 * 60 * 15,
+    });
+
+    res.cookie('refresh_token', newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 1000 * 60 * 60 * 24 * 7,
     });
 
     return { message: 'Access token renovado com sucesso' };
