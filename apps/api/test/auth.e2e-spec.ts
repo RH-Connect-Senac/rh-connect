@@ -477,6 +477,61 @@ describe('Auth (e2e)', () => {
         .set('Cookie', [rotatedRefreshCookie])
         .expect(401);
     });
+
+    // QA de segurança (Bloco 2 — concorrência): duas requisições de
+    // /auth/refresh usando o MESMO token inicial, disparadas sem aguardar
+    // uma terminar antes de iniciar a outra (`Promise.allSettled`), para
+    // reproduzir duas abas/dispositivos tentando renovar a sessão quase ao
+    // mesmo tempo. Cenário próprio (login independente), para não
+    // interferir com os tokens A/B/C usados nos testes acima.
+    it('E. concorrência: duas requisições de refresh simultâneas com o MESMO token só podem gerar UMA resposta 200', async () => {
+      const concurrencyEmail = `e2e.rotation.concurrency.${Date.now()}@gmail.com`;
+      const concurrencyPassword = 'Senha!Concorrencia123';
+
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          name: 'Candidato Concorrência E2E',
+          email: concurrencyEmail,
+          password: concurrencyPassword,
+          termsAccepted: true,
+        })
+        .expect(201);
+
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: concurrencyEmail, password: concurrencyPassword })
+        .expect(200);
+
+      const loginCookies = loginResponse.headers['set-cookie'];
+      const sharedTokenA = loginCookies.find((c: string) =>
+        c.startsWith('refresh_token='),
+      );
+      expect(sharedTokenA).toBeDefined();
+
+      const [resultA, resultB] = await Promise.allSettled([
+        request(app.getHttpServer())
+          .post('/auth/refresh')
+          .set('Cookie', [sharedTokenA]),
+        request(app.getHttpServer())
+          .post('/auth/refresh')
+          .set('Cookie', [sharedTokenA]),
+      ]);
+
+      const statuses = [resultA, resultB].map((result) =>
+        result.status === 'fulfilled' ? result.value.status : null,
+      );
+
+      const successCount = statuses.filter((status) => status === 200).length;
+      const unauthorizedCount = statuses.filter(
+        (status) => status === 401,
+      ).length;
+
+      // Resultado seguro esperado: exatamente uma 200 e uma 401 — nunca
+      // duas respostas 200 usando o mesmo token original A.
+      expect(successCount).toBe(1);
+      expect(unauthorizedCount).toBe(1);
+    });
   });
 
   it('deve acessar /auth/me estando autenticado, e falhar sem estar', async () => {

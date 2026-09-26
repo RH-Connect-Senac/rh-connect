@@ -257,12 +257,7 @@ export class AuthService {
     // de `session` (mesma tabela/colunas, sem alteração de schema) — cria
     // uma NOVA linha para a sessão renovada em vez de atualizar o hash da
     // linha atual, para preservar o histórico de cada sessão emitida
-    // (quando foi criada, quando foi revogada). Revogação da sessão antiga
-    // e criação da nova sessão acontecem na mesma transação, para nunca
-    // deixar o token antigo revogado sem que o novo já esteja persistido
-    // (ou vice-versa). Depois disso, uma tentativa de reusar o token antigo
-    // já é rejeitada pela própria checagem de `revoked_at: null` acima —
-    // nenhuma lógica de validação nova precisou ser criada para o replay.
+    // (quando foi criada, quando foi revogada).
     const newRefreshToken = randomBytes(64).toString('hex');
     const newRefreshTokenHash = createHash('sha256')
       .update(newRefreshToken)
@@ -273,19 +268,47 @@ export class AuthService {
     const newExpiresAt = new Date();
     newExpiresAt.setDate(newExpiresAt.getDate() + 7);
 
-    await this.prisma.$transaction([
-      this.prisma.session.update({
-        where: { session_id: session.session_id },
+    // QA de segurança (Bloco 2 — concorrência): o `findFirst` acima é só
+    // leitura e não trava nada — duas requisições com o MESMO refresh token
+    // podem passar por ele quase ao mesmo tempo, ambas enxergando
+    // `revoked_at: null` antes de qualquer uma revogar. Por isso a
+    // revogação em si precisa ser um "claim" atômico dentro da transação:
+    // um `updateMany` que só conta como sucesso se `revoked_at` ainda
+    // estiver `null` NO MOMENTO do UPDATE (não no findFirst anterior). Sob
+    // Read Committed (padrão do Postgres), a segunda transação concorrente
+    // fica bloqueada na mesma linha até a primeira commitar, e ao
+    // reavaliar sua condição `WHERE revoked_at IS NULL` contra o valor já
+    // commitado pela primeira, não encontra mais a linha — `count` vem 0,
+    // e a transação inteira é revertida (nenhuma sessão nova é criada, o
+    // token antigo já revogado pela outra requisição não é tocado de novo).
+    // Isso substitui o antigo `session.update` por `session_id` sozinho,
+    // que sempre "tinha sucesso" independentemente de outra requisição já
+    // ter revogado a mesma sessão — não havia proteção real contra a
+    // corrida. Sem lock em memória, sem Map global: a garantia vem
+    // inteiramente do banco, funcionando com múltiplas instâncias da API.
+    await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.session.updateMany({
+        where: {
+          session_id: session.session_id,
+          revoked_at: null,
+        },
         data: { revoked_at: new Date() },
-      }),
-      this.prisma.session.create({
+      });
+
+      if (claim.count !== 1) {
+        // Outra requisição concorrente já revogou (e rotacionou) esta
+        // mesma sessão entre o findFirst inicial e este ponto.
+        throw new UnauthorizedException('Sessão inválida');
+      }
+
+      await tx.session.create({
         data: {
           user_id: session.app_user.user_id,
           refresh_token_hash: newRefreshTokenHash,
           expires_at: newExpiresAt,
         },
-      }),
-    ]);
+      });
+    });
 
     const accessToken = this.jwt.sign({
       sub: session.app_user.user_id,
