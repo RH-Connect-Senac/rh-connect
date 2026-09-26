@@ -1,10 +1,39 @@
 // 1) Substitui o ConfigModule por uma versão vazia — ele só carregaria
 // variáveis de ambiente, e o dotenv-cli já faz isso antes do Jest iniciar.
-jest.mock('@nestjs/config', () => ({
-  ConfigModule: {
-    forRoot: () => ({ module: class DummyConfigModule {} }),
-  },
-}));
+//
+// A versão "vazia" original só substituía `ConfigModule.forRoot`, sem
+// exportar `ConfigService` nem registrar nenhum provider — o que funcionava
+// enquanto nenhum módulo do AppModule injetava `ConfigService`. Isso deixou
+// de ser verdade com `InterviewsAiService` (injeta `ConfigService` para ler
+// `INTERVIEW_AI_SERVICE_URL`/`INTERVIEW_AI_TIMEOUT_MS`), que o AppModule
+// sempre importa via `InterviewsAiModule` — daí o `Nest can't resolve
+// dependencies of the InterviewsAiService (?)` ao compilar o `AppModule`
+// aqui. A causa é só deste mock, não de `InterviewsAiModule`: em produção,
+// `AppModule` registra `ConfigModule.forRoot({ isGlobal: true })`, tornando
+// `ConfigService` disponível globalmente para qualquer módulo sem import
+// explícito — o mock abaixo agora reproduz esse mesmo comportamento
+// (`global: true` + `providers`/`exports` de um `ConfigService` mínimo, que
+// só lê de `process.env`, já carregado pelo dotenv-cli), em vez de mudar a
+// topologia de módulos do Back.
+jest.mock('@nestjs/config', () => {
+  class ConfigService {
+    get<T = string>(key: string): T | undefined {
+      return process.env[key] as T | undefined;
+    }
+  }
+
+  return {
+    ConfigService,
+    ConfigModule: {
+      forRoot: () => ({
+        global: true,
+        module: class DummyConfigModule {},
+        providers: [ConfigService],
+        exports: [ConfigService],
+      }),
+    },
+  };
+});
 
 // 2) Substitui o @nestjs/jwt por uma versão que usa a biblioteca
 // "jsonwebtoken" diretamente — mesmo comportamento real, sem o formato de
@@ -95,6 +124,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
+import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 import { AppModule } from '../src/app.module';
 
 // Conectar no Supabase pode demorar mais que os 5 segundos padrão do
@@ -103,6 +134,10 @@ jest.setTimeout(30000);
 
 describe('Auth (e2e)', () => {
   let app: INestApplication;
+  // Usado apenas no Prompt 07 (testes de account_status), para preparar/
+  // alterar cenários que a API não expõe (ex.: mudar o status de uma conta
+  // já autenticada) — mesmo padrão já usado em evaluator.e2e-spec.ts.
+  const prisma = new PrismaClient();
 
   // O domínio precisa ser gmail.com (decisão D5) e a senha precisa cumprir
   // a política D12 (maiúscula, minúscula, dígito e caractere especial).
@@ -123,7 +158,16 @@ describe('Auth (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await prisma.$disconnect();
+    // Se `beforeAll` falhar ao compilar/inicializar o Nest (ex.: erro de DI),
+    // `app` nunca é atribuído. Sem esta guarda, `app.close()` lançaria um
+    // TypeError secundário aqui, que aparece nos resultados do Jest ao lado
+    // do erro real e pode confundir o diagnóstico — a causa raiz continua
+    // sendo o erro do `beforeAll`, nunca escondido, só não duplicado por um
+    // erro de limpeza que não faz sentido rodar.
+    if (app) {
+      await app.close();
+    }
   });
 
   it('deve registrar um novo candidato', async () => {
@@ -276,6 +320,44 @@ describe('Auth (e2e)', () => {
       .expect(401);
   });
 
+  it('não deve renovar o access token sem o cookie refresh_token (refresh token ausente)', async () => {
+    await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+  });
+
+  it('não deve renovar o access token com um refresh_token inválido/adulterado', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', ['refresh_token=token-invalido-adulterado'])
+      .expect(401);
+  });
+
+  it('deve renovar o access token com um refresh_token válido, e o novo cookie deve autenticar /auth/me', async () => {
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+
+    const loginCookies = loginResponse.headers['set-cookie'];
+    const refreshCookie = loginCookies.find((c: string) => c.startsWith('refresh_token='));
+    expect(refreshCookie).toBeDefined();
+
+    const refreshResponse = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', [refreshCookie])
+      .expect(200);
+
+    const refreshCookies = refreshResponse.headers['set-cookie'];
+    const newAccessCookie = refreshCookies.find((c: string) => c.startsWith('access_token='));
+    expect(newAccessCookie).toBeDefined();
+
+    const meResponse = await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Cookie', [newAccessCookie])
+      .expect(200);
+
+    expect(meResponse.body.email).toBe(email);
+  });
+
   it('deve acessar /auth/me estando autenticado, e falhar sem estar', async () => {
     const loginResponse = await request(app.getHttpServer())
       .post('/auth/login')
@@ -307,6 +389,117 @@ describe('Auth (e2e)', () => {
       .set('Cookie', cookies)
       .expect(200);
 
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', cookies)
+      .expect(401);
+  });
+
+  it('deve fazer logout de forma idempotente: sem sessão, e chamado duas vezes seguidas', async () => {
+    // Sem nenhum cookie (ninguém autenticado): não deve lançar erro — o
+    // Controller só chama `AuthService.logout` quando existe cookie
+    // `refresh_token`, e sempre limpa os cookies e responde 200.
+    await request(app.getHttpServer()).post('/auth/logout').expect(200);
+
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password })
+      .expect(200);
+
+    const cookies = loginResponse.headers['set-cookie'];
+
+    // Primeira chamada revoga a sessão; a segunda, com o MESMO cookie
+    // (já revogado), precisa continuar respondendo 200 — `AuthService.logout`
+    // usa `updateMany` filtrando por `revoked_at: null`, então a segunda
+    // chamada simplesmente não encontra linhas para atualizar, sem lançar.
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Cookie', cookies)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Cookie', cookies)
+      .expect(200);
+  });
+
+  // Prompt 07 — cobre a lacuna identificada na auditoria de roles/
+  // accountStatus: os cenários abaixo não tinham teste e2e, embora a regra
+  // ("somente contas ACTIVE autenticam") já estivesse implementada tanto em
+  // `AuthService.login`/`AuthService.refresh` quanto em `JwtStrategy.validate`
+  // (consulta o `account_status` atual no banco a cada request, nunca confia
+  // só no payload do token).
+  it('não deve logar com uma conta cujo account_status não é ACTIVE (ex.: BLOCKED)', async () => {
+    const blockedEmail = `e2e.blocked.${Date.now()}@gmail.com`;
+    const blockedPassword = await bcrypt.hash(password, 10);
+
+    await prisma.app_user.create({
+      data: {
+        name: 'Candidato Bloqueado E2E',
+        email: blockedEmail,
+        password_hash: blockedPassword,
+        user_role: 'CANDIDATE',
+        account_status: 'BLOCKED',
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: blockedEmail, password })
+      .expect(401);
+  });
+
+  it('deve negar acesso a /auth/me e a /auth/refresh quando a conta deixa de ser ACTIVE após o login', async () => {
+    const statusChangeEmail = `e2e.status-change.${Date.now()}@gmail.com`;
+    const statusChangePassword = 'Senha!Teste123';
+    const statusChangePasswordHash = await bcrypt.hash(
+      statusChangePassword,
+      10,
+    );
+
+    const user = await prisma.app_user.create({
+      data: {
+        name: 'Candidato Status E2E',
+        email: statusChangeEmail,
+        password_hash: statusChangePasswordHash,
+        user_role: 'CANDIDATE',
+        account_status: 'ACTIVE',
+      },
+    });
+
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: statusChangeEmail, password: statusChangePassword })
+      .expect(200);
+
+    const cookies = loginResponse.headers['set-cookie'];
+
+    // Confirma que, enquanto ACTIVE, a sessão recém-criada autentica
+    // normalmente — antes de alterar o status, para isolar a causa.
+    await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Cookie', cookies)
+      .expect(200);
+
+    // Simula uma conta bloqueada por um Admin depois do login (sem endpoint
+    // real para isso hoje — por isso a alteração direto no banco, igual ao
+    // padrão já usado para preparar cenários em evaluator.e2e-spec.ts).
+    await prisma.app_user.update({
+      where: { user_id: user.user_id },
+      data: { account_status: 'BLOCKED' },
+    });
+
+    // O access_token emitido antes do bloqueio continua com assinatura
+    // válida, mas `JwtStrategy.validate` consulta o `account_status` atual
+    // no banco a cada request — por isso passa a ser rejeitado.
+    await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Cookie', cookies)
+      .expect(401);
+
+    // O refresh token da mesma sessão também não deve mais emitir um novo
+    // access_token: `AuthService.refresh` também confere o `account_status`
+    // atual antes de assinar.
     await request(app.getHttpServer())
       .post('/auth/refresh')
       .set('Cookie', cookies)

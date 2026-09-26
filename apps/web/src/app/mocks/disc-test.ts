@@ -1,7 +1,26 @@
 import type { DiscFactorId } from "../domain/disc-content";
 
 export const DISC_TEST_STORAGE_KEY = "rhconnect:disc-test:v1";
+// Versão de cada DiscTestStorage individual (conteúdo/estrutura do teste em
+// si). Não confundir com DISC_TEST_STORAGE_SCHEMA_VERSION abaixo, que
+// versiona o envelope do storage (isolamento por candidato).
 export const DISC_TEST_VERSION = "v2";
+
+// Prompt 09 — Parte A: isolamento por candidato real. Antes,
+// DISC_TEST_STORAGE_KEY guardava um único DiscTestStorage global,
+// compartilhado por qualquer usuário do navegador. Agora guarda um
+// envelope com o resultado de cada candidateId real (session.user.id)
+// isolado em `candidates`. Um valor salvo no formato antigo (um
+// DiscTestStorage "solto", sem `candidates`) não tem dono conhecido e por
+// isso é tratado como incompatível e descartado por inteiro na leitura
+// seguinte — nunca migrado para o candidato que logar primeiro (ver
+// disc-test-screen.tsx).
+export const DISC_TEST_STORAGE_SCHEMA_VERSION = "v2";
+
+export type DiscTestStorageByCandidate = {
+  schemaVersion: string;
+  candidates: Record<string, DiscTestStorage>;
+};
 
 export type DiscTestStatus = "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
 export type DiscFactorCode = 1 | 2 | 3 | 4;

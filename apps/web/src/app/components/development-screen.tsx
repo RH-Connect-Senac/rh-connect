@@ -246,8 +246,8 @@ function TalentTreePlaceholder({
   );
 }
 
-export function DevelopmentContent({ onNavigate }: { onNavigate: NavFn }) {
-  const [state] = useState(() => getDevelopmentState());
+export function DevelopmentContent({ onNavigate, candidateId }: { onNavigate: NavFn; candidateId: string }) {
+  const [state] = useState(() => getDevelopmentState(candidateId));
   const derived = useMemo(() => getDevelopmentDerivedState(state), [state]);
   const currentMission = derived.currentMission;
   const currentCompetency = currentMission

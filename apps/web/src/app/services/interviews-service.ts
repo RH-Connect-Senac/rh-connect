@@ -194,9 +194,31 @@ export function getInterviewById(interviewId?: string) {
   return getInterviewsState().interviews.find((interview) => interview.id === interviewId) ?? null;
 }
 
+// Leitura IRRESTRITA por interviewId — não verifica quem está pedindo.
+// Prompt 09: mantida apenas para uso do Admin/interno (visão de negócio
+// sobre qualquer entrevista/avaliação, comportamento já existente e fora do
+// escopo desta correção) e como implementação interna de
+// `saveEvaluationDraft`/`startEvaluation` (que já fazem sua própria checagem
+// de propriedade por `evaluatorId` logo em seguida). O fluxo autenticado do
+// Avaliador NÃO deve mais chamar esta função diretamente — usar
+// `getEvaluationForEvaluator` abaixo, que aplica a checagem de propriedade
+// na própria camada de leitura, sem depender só da rota/ProtectedRoute.
 export function getEvaluationByInterviewId(interviewId?: string) {
   if (!interviewId) return null;
   return getInterviewsState().evaluations.find((evaluation) => evaluation.interviewId === interviewId) ?? null;
+}
+
+// Prompt 09: leitura restrita, para o fluxo autenticado do Avaliador. Só
+// retorna a avaliação quando ela pertence realmente ao `evaluatorId`
+// informado — antes, as telas de Avaliador liam via
+// `getEvaluationByInterviewId(interviewId)` sem nenhuma checagem, então um
+// avaliador autenticado que acessasse diretamente por URL a avaliação de
+// outra entrevista (não atribuída a ele) conseguia ler notas/comentário já
+// salvos por outro avaliador.
+export function getEvaluationForEvaluator(interviewId: string | undefined, evaluatorId: string) {
+  const evaluation = getEvaluationByInterviewId(interviewId);
+  if (!evaluation || evaluation.evaluatorId !== evaluatorId) return null;
+  return evaluation;
 }
 
 export function getReportByInterviewId(interviewId?: string) {
@@ -258,14 +280,14 @@ export function assignInterview(interviewId: string, evaluatorId: string) {
   return assignment;
 }
 
-export function getAssignedInterviews(evaluatorId = DEFAULT_EVALUATOR.id) {
+export function getAssignedInterviews(evaluatorId: string) {
   return getInterviewsState().interviews.filter((interview) =>
     interview.assignedEvaluatorId === evaluatorId &&
     (interview.status === "ASSIGNED" || interview.status === "IN_EVALUATION")
   );
 }
 
-export function getCompletedEvaluations(evaluatorId = DEFAULT_EVALUATOR.id) {
+export function getCompletedEvaluations(evaluatorId: string) {
   const state = getInterviewsState();
   return state.evaluations
     .filter((evaluation) => evaluation.evaluatorId === evaluatorId && evaluation.status === "COMPLETED")
@@ -276,8 +298,19 @@ export function getCompletedEvaluations(evaluatorId = DEFAULT_EVALUATOR.id) {
     .filter(Boolean) as { evaluation: Evaluation; interview: Interview }[];
 }
 
-export function startEvaluation(interviewId: string, evaluatorId = DEFAULT_EVALUATOR.id) {
-  const evaluator = EVALUATOR_DIRECTORY.find((item) => item.id === evaluatorId) ?? DEFAULT_EVALUATOR;
+export function startEvaluation(interviewId: string, evaluatorId: string) {
+  // Prompt 08: antes, um avaliador real autenticado sem correspondência em
+  // `EVALUATOR_DIRECTORY` (ponte de compatibilidade sessão real → mock) caía
+  // no fallback `?? DEFAULT_EVALUATOR` — o que SUBSTITUÍA silenciosamente a
+  // identidade dele pela do avaliador demo ("Carlos Andrade") para fins da
+  // checagem de atribuição logo abaixo, permitindo iniciar/gravar uma
+  // avaliação de uma entrevista atribuída a outra pessoa. Um avaliador não
+  // mapeado agora usa a própria identidade real (id/nome), então a checagem
+  // de atribuição abaixo continua correta: só é aceito se a entrevista
+  // realmente estiver atribuída a ELE, nunca ao avaliador demo por engano.
+  const evaluator =
+    EVALUATOR_DIRECTORY.find((item) => item.id === evaluatorId) ??
+    { id: evaluatorId, name: evaluatorId };
   const timestamp = nowIso();
   let evaluation: Evaluation | null = null;
 
@@ -315,8 +348,13 @@ export function startEvaluation(interviewId: string, evaluatorId = DEFAULT_EVALU
   return evaluation;
 }
 
-export function saveEvaluationDraft(interviewId: string, scores: EvaluationScores, comment = "", evaluatorId = DEFAULT_EVALUATOR.id) {
-  const evaluator = EVALUATOR_DIRECTORY.find((item) => item.id === evaluatorId) ?? DEFAULT_EVALUATOR;
+export function saveEvaluationDraft(interviewId: string, scores: EvaluationScores, comment: string, evaluatorId: string) {
+  // Mesmo motivo do fallback corrigido em `startEvaluation` acima: não
+  // substituir a identidade de um avaliador real não mapeado pela do
+  // avaliador demo.
+  const evaluator =
+    EVALUATOR_DIRECTORY.find((item) => item.id === evaluatorId) ??
+    { id: evaluatorId, name: evaluatorId };
   const existing = getEvaluationByInterviewId(interviewId) ?? startEvaluation(interviewId, evaluator.id);
   if (!existing) return null;
   if (existing.evaluatorId !== evaluator.id) return null;
@@ -337,7 +375,7 @@ export function saveEvaluationDraft(interviewId: string, scores: EvaluationScore
   return nextEvaluation;
 }
 
-export function completeEvaluation(interviewId: string, scores: EvaluationScores, comment = "", evaluatorId = DEFAULT_EVALUATOR.id) {
+export function completeEvaluation(interviewId: string, scores: EvaluationScores, comment: string, evaluatorId: string) {
   const existing = saveEvaluationDraft(interviewId, scores, comment, evaluatorId);
   if (!existing) return null;
   const timestamp = nowIso();

@@ -84,6 +84,34 @@ export const ADMIN_NOTIFS: NotifItem[] = [
   { id: "n4", title: "Aviso do sistema",             desc: "Backup automático realizado com sucesso.",         time: "2 dias", unread: false, screen: "admin-audit" },
 ];
 
+// ─── Identidade real (Prompt 08) ───────────────────────────────────────────────
+
+// `CANDIDATE_ACCOUNT`/`EVAL_ACCOUNT`/`ADMIN_ACCOUNT` acima são dados de
+// DEMONSTRAÇÃO (usados como valor padrão antes da sessão real carregar, ou
+// quando não há usuário autenticado do role correspondente). Quando existe
+// um usuário autenticado real, `resolveAccountConfig` sobrescreve apenas
+// `name`/`email`/`initials` com os dados da sessão — nunca o `avatarClass`,
+// `profileLabel` ou as rotas de navegação, que continuam vindo do config
+// base de cada perfil.
+export function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "RC";
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
+
+export function resolveAccountConfig(
+  base: AccountConfig,
+  user?: { name: string; email: string } | null,
+): AccountConfig {
+  if (!user) return base;
+  return {
+    ...base,
+    name: user.name,
+    email: user.email,
+    initials: getInitials(user.name),
+  };
+}
+
 // ─── Hook: click outside ──────────────────────────────────────────────────────
 
 function useClickOutside(ref: React.RefObject<HTMLElement | null>, onClose: () => void, enabled: boolean) {

@@ -1,6 +1,7 @@
 import {
   DEVELOPMENT_STATE_VERSION,
   DEVELOPMENT_STORAGE_KEY,
+  DEVELOPMENT_STORAGE_SCHEMA_VERSION,
   clampProgress,
   getCompetencyStatus,
   getCurrentMission,
@@ -12,6 +13,7 @@ import {
   type DevelopmentCompetency,
   type DevelopmentMission,
   type DevelopmentState,
+  type DevelopmentStorageState,
   type MissionStatus,
 } from "../domain/development";
 import { createInitialDevelopmentState } from "../mocks/development";
@@ -164,47 +166,96 @@ export function getDevelopmentDerivedState(state: DevelopmentState) {
   };
 }
 
-function saveDevelopmentState(state: DevelopmentState) {
+function createEmptyDevelopmentStorage(): DevelopmentStorageState {
+  return {
+    schemaVersion: DEVELOPMENT_STORAGE_SCHEMA_VERSION,
+    byCandidate: {},
+  };
+}
+
+// Prompt 09 — Parte A: só aceita o envelope v2 (`schemaVersion` +
+// `byCandidate`, isolado por candidateId real). Um DevelopmentState "solto"
+// no formato antigo (sem envelope, sem dono conhecido) — ou qualquer JSON
+// que não bata com o formato esperado — é tratado como incompatível e
+// descartado por inteiro; NUNCA é migrado/atribuído a um candidateId
+// específico.
+function isCompatibleDevelopmentStorage(value: unknown): value is DevelopmentStorageState {
+  if (!value || typeof value !== "object") return false;
+  const storage = value as Partial<DevelopmentStorageState>;
+  if (storage.schemaVersion !== DEVELOPMENT_STORAGE_SCHEMA_VERSION) return false;
+  if (!storage.byCandidate || typeof storage.byCandidate !== "object" || Array.isArray(storage.byCandidate)) return false;
+
+  return Object.values(storage.byCandidate).every((candidateState) => isCompatibleDevelopmentState(candidateState));
+}
+
+function saveDevelopmentStorage(storage: DevelopmentStorageState) {
   if (!canUseStorage()) return;
   try {
-    window.localStorage.setItem(DEVELOPMENT_STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(DEVELOPMENT_STORAGE_KEY, JSON.stringify(storage));
   } catch {
     // A persistência local é temporária; falhas de storage não devem quebrar a jornada.
   }
 }
 
-export function getDevelopmentState(): DevelopmentState {
-  if (!canUseStorage()) return normalizeDevelopmentState(createInitialDevelopmentState());
+function readDevelopmentStorage(): DevelopmentStorageState {
+  if (!canUseStorage()) return createEmptyDevelopmentStorage();
 
   try {
     const raw = window.localStorage.getItem(DEVELOPMENT_STORAGE_KEY);
-    if (!raw) {
-      const seed = normalizeDevelopmentState(createInitialDevelopmentState());
-      saveDevelopmentState(seed);
-      return seed;
-    }
+    if (!raw) return createEmptyDevelopmentStorage();
 
     const parsed = JSON.parse(raw);
-    if (!isCompatibleDevelopmentState(parsed)) {
-      return resetDevelopmentState();
+    if (!isCompatibleDevelopmentStorage(parsed)) {
+      const empty = createEmptyDevelopmentStorage();
+      saveDevelopmentStorage(empty);
+      return empty;
     }
 
-    const normalized = normalizeDevelopmentState(parsed);
-    saveDevelopmentState(normalized);
-    return normalized;
+    return parsed;
   } catch {
-    return resetDevelopmentState();
+    const empty = createEmptyDevelopmentStorage();
+    saveDevelopmentStorage(empty);
+    return empty;
   }
 }
 
-export function resetDevelopmentState(): DevelopmentState {
+function saveCandidateDevelopmentState(candidateId: string, state: DevelopmentState) {
+  // Leitura fresca do storage completo a cada escrita, para nunca
+  // sobrescrever o progresso de outro candidateId já persistido.
+  const storage = readDevelopmentStorage();
+  const nextStorage: DevelopmentStorageState = {
+    schemaVersion: DEVELOPMENT_STORAGE_SCHEMA_VERSION,
+    byCandidate: {
+      ...storage.byCandidate,
+      [candidateId]: state,
+    },
+  };
+  saveDevelopmentStorage(nextStorage);
+}
+
+export function getDevelopmentState(candidateId: string): DevelopmentState {
+  const storage = readDevelopmentStorage();
+  const existing = storage.byCandidate[candidateId];
+
+  if (!existing) {
+    const seed = normalizeDevelopmentState(createInitialDevelopmentState());
+    saveCandidateDevelopmentState(candidateId, seed);
+    return seed;
+  }
+
+  const normalized = normalizeDevelopmentState(existing);
+  saveCandidateDevelopmentState(candidateId, normalized);
+  return normalized;
+}
+
+export function resetDevelopmentState(candidateId: string): DevelopmentState {
   const seed = normalizeDevelopmentState(createInitialDevelopmentState());
-  saveDevelopmentState(seed);
+  saveCandidateDevelopmentState(candidateId, seed);
   return seed;
 }
 
-export function completeMission(missionId?: string): CompleteMissionResult {
-  const currentState = getDevelopmentState();
+export function completeMission(candidateId: string, missionId?: string): CompleteMissionResult {
+  const currentState = getDevelopmentState(candidateId);
   const state = normalizeDevelopmentState(cloneState(currentState));
   const missionToComplete = missionId
     ? state.missions.find((mission) => mission.id === missionId)
@@ -246,7 +297,7 @@ export function completeMission(missionId?: string): CompleteMissionResult {
   const newLevel = getLevelFromXp(normalized.xp);
   const newTreeStage = getTreeStage(newOverallProgress);
 
-  saveDevelopmentState(normalized);
+  saveCandidateDevelopmentState(candidateId, normalized);
 
   return {
     state: normalized,
@@ -261,8 +312,8 @@ export function completeMission(missionId?: string): CompleteMissionResult {
   };
 }
 
-export function advanceDevelopmentFromMaterial(materialId: string): AdvanceMissionResult {
-  const currentState = getDevelopmentState();
+export function advanceDevelopmentFromMaterial(candidateId: string, materialId: string): AdvanceMissionResult {
+  const currentState = getDevelopmentState(candidateId);
   const state = normalizeDevelopmentState(cloneState(currentState));
   const beforeSnapshot = getDevelopmentSnapshot(state);
   const material = findSupportMaterialById(materialId);
@@ -359,7 +410,7 @@ export function advanceDevelopmentFromMaterial(materialId: string): AdvanceMissi
 
   const normalized = normalizeDevelopmentState(state);
   const afterSnapshot = getDevelopmentSnapshot(normalized);
-  saveDevelopmentState(normalized);
+  saveCandidateDevelopmentState(candidateId, normalized);
 
   return {
     state: normalized,

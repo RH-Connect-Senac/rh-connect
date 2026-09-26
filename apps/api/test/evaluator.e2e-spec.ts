@@ -1,11 +1,33 @@
-// Os mesmos 3 mocks que já usamos no auth.e2e-spec.ts — precisam ser
+// Os mesmos mocks que já usamos no auth.e2e-spec.ts — precisam ser
 // repetidos aqui porque cada arquivo de teste é isolado; um jest.mock()
 // só vale dentro do próprio arquivo onde foi escrito.
-jest.mock('@nestjs/config', () => ({
-  ConfigModule: {
-    forRoot: () => ({ module: class DummyConfigModule {} }),
-  },
-}));
+//
+// A versão "vazia" original só substituía `ConfigModule.forRoot`, sem
+// exportar `ConfigService` nem registrar nenhum provider. Isso quebra a
+// compilação do `AppModule` aqui pelo mesmo motivo corrigido no Prompt 04
+// em `auth.e2e-spec.ts`: `InterviewsAiService` injeta `ConfigService`, e o
+// `AppModule` sempre importa `InterviewsAiModule`. O mock abaixo reproduz
+// `ConfigModule.forRoot({ isGlobal: true })` (comportamento real usado em
+// produção) em vez de mudar a topologia de módulos do Back.
+jest.mock('@nestjs/config', () => {
+  class ConfigService {
+    get<T = string>(key: string): T | undefined {
+      return process.env[key] as T | undefined;
+    }
+  }
+
+  return {
+    ConfigService,
+    ConfigModule: {
+      forRoot: () => ({
+        global: true,
+        module: class DummyConfigModule {},
+        providers: [ConfigService],
+        exports: [ConfigService],
+      }),
+    },
+  };
+});
 
 jest.mock('@nestjs/jwt', () => {
   const jwt = require('jsonwebtoken');
@@ -156,7 +178,12 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
 
   afterAll(async () => {
     await prisma.$disconnect();
-    await app.close();
+    // Guarda contra `beforeAll` falhar ao compilar/inicializar o Nest —
+    // sem isso, `app.close()` lançaria um TypeError secundário que mascara
+    // o erro real (mesmo ajuste feito em auth.e2e-spec.ts no Prompt 04).
+    if (app) {
+      await app.close();
+    }
   });
 
   describe('POST /auth/evaluator/invite', () => {
@@ -314,6 +341,113 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
         .put('/auth/admin/onboarding')
         .set('Cookie', cookies)
         .expect(403); // RolesGuard: candidato não pode usar rota de admin
+    });
+
+    it('deve concluir o onboarding do admin e refletir em /auth/me', async () => {
+      // Reaproveita o ADMIN criado em `beforeAll` — cobre o perfil ADMIN,
+      // que ainda não tinha teste de conclusão bem-sucedida (só o de
+      // rejeição cross-role acima, que usa um candidato tentando essa rota).
+      const meAntes = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', adminCookies)
+        .expect(200);
+      expect(meAntes.body.onboardingCompleted).toBe(false);
+
+      await request(app.getHttpServer())
+        .put('/auth/admin/onboarding')
+        .set('Cookie', adminCookies)
+        .expect(200);
+
+      const meDepois = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', adminCookies)
+        .expect(200);
+      expect(meDepois.body.onboardingCompleted).toBe(true);
+    });
+
+    it('deve concluir o onboarding do avaliador e refletir em /auth/me', async () => {
+      // Cria um avaliador ACTIVE direto no banco (mesmo padrão usado para o
+      // ADMIN em `beforeAll`) — cobre o terceiro perfil, que também não
+      // tinha teste de conclusão de onboarding.
+      const evaluatorEmail = `avaliador-onboarding-${Date.now()}@gmail.com`;
+      const evaluatorPassword = 'senhaAvaliador123';
+      const evaluatorPasswordHash = await bcrypt.hash(evaluatorPassword, 10);
+
+      await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Onboarding E2E',
+          email: evaluatorEmail,
+          password_hash: evaluatorPasswordHash,
+          user_role: 'EVALUATOR',
+          account_status: 'ACTIVE',
+        },
+      });
+
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: evaluatorEmail, password: evaluatorPassword })
+        .expect(200);
+
+      const cookies = loginResponse.headers['set-cookie'];
+
+      const meAntes = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', cookies)
+        .expect(200);
+      expect(meAntes.body.onboardingCompleted).toBe(false);
+
+      await request(app.getHttpServer())
+        .put('/auth/evaluator/onboarding')
+        .set('Cookie', cookies)
+        .expect(200);
+
+      const meDepois = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', cookies)
+        .expect(200);
+      expect(meDepois.body.onboardingCompleted).toBe(true);
+    });
+
+    it('deve ser idempotente: concluir o onboarding duas vezes seguidas continua respondendo 200 com o estado concluído', async () => {
+      const evaluatorEmail = `avaliador-onboarding-idempotente-${Date.now()}@gmail.com`;
+      const evaluatorPassword = 'senhaAvaliador123';
+      const evaluatorPasswordHash = await bcrypt.hash(evaluatorPassword, 10);
+
+      await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Onboarding Idempotente E2E',
+          email: evaluatorEmail,
+          password_hash: evaluatorPasswordHash,
+          user_role: 'EVALUATOR',
+          account_status: 'ACTIVE',
+        },
+      });
+
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: evaluatorEmail, password: evaluatorPassword })
+        .expect(200);
+
+      const cookies = loginResponse.headers['set-cookie'];
+
+      await request(app.getHttpServer())
+        .put('/auth/evaluator/onboarding')
+        .set('Cookie', cookies)
+        .expect(200);
+
+      // Segunda chamada, com o onboarding já concluído: não deve lançar
+      // nem gerar estado inválido — continua 200 e `onboardingCompleted`
+      // permanece `true`.
+      await request(app.getHttpServer())
+        .put('/auth/evaluator/onboarding')
+        .set('Cookie', cookies)
+        .expect(200);
+
+      const meDepois = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', cookies)
+        .expect(200);
+      expect(meDepois.body.onboardingCompleted).toBe(true);
     });
   });
 });
