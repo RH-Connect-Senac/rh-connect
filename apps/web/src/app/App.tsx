@@ -3664,10 +3664,31 @@ function InterviewConfirmScreen({
 
 // ─── Fase A: ENT-009 Entrevista Concluída ────────────────────────────────────
 
-function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+function InterviewDoneScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
   const interview = getInterviewById(id);
+  const candidateIdentity = getCandidateIdentity(session);
+
+  // Isolamento entre usuários (Bloco 4 do QA de segurança): assim como
+  // PendingScreen e ReportScreen, esta tela só pode exibir dados de uma
+  // entrevista real que pertença ao candidato autenticado. Sem essa checagem,
+  // trocar o :id na URL para o de outra entrevista exibiria protocolo, vaga,
+  // data de envio e modalidade de avaliação de outro candidato antes de
+  // qualquer outra validação.
+  if (interview && interview.candidateId !== candidateIdentity.id) {
+    return (
+      <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista indisponível" subtitle="Entrevista concluída">
+        <Card className="w-full max-w-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+          <h3 className="font-bold text-foreground mb-2">Esta entrevista não pertence à sua conta</h3>
+          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para acompanhar entrevistas vinculadas ao seu perfil.</p>
+          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   const evaluationMode = interview?.evaluationMode ?? "HUMAN";
   const doneMessage = evaluationMode === "AI"
     ? "Suas respostas foram recebidas com sucesso e serão analisadas pela IA Avaliadora do RH Connect."
@@ -5985,7 +6006,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} onQuestionIndexChange={(index) => setDraftProgress((current) => current.currentQuestionIndex === index ? current : { ...current, currentQuestionIndex: index })} />)} />
           <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} />)} />
-          <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
+          <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
 
