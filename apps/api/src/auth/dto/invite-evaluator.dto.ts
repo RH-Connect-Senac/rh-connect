@@ -1,10 +1,10 @@
 import {
-  IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
 } from 'class-validator';
+import { IsGmailEmail } from '../validators/gmail-email.validator';
 
 export class InviteEvaluatorDto {
   @IsString()
@@ -12,7 +12,14 @@ export class InviteEvaluatorDto {
   @MaxLength(150)
   name: string;
 
-  @IsEmail()
+  // Prompt 13 (C2): antes usava `@IsEmail()` genérico, sem restrição de
+  // domínio e sem normalização — inconsistente com Cadastro/Login, que usam
+  // `@IsGmailEmail` (mesma regra: trim → lowercase → gmail.com → preserva
+  // "+" e pontos). Reaproveita o MESMO validador, sem criar implementação
+  // paralela. O contrato de Cadastro/Login não foi alterado.
+  @IsGmailEmail({
+    message: 'Use um e-mail válido do Gmail, no formato nome@gmail.com.',
+  })
   email: string;
 
   @IsOptional()

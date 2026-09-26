@@ -289,8 +289,21 @@ export class AuthService {
     area?: string;
     specialization?: string;
   }) {
+    // Prompt 13 (C2): mesma normalização de Cadastro/Login (decisão D5) — a
+    // ValidationPipe global não usa `transform: true`, então o valor que
+    // chega aqui ainda é o valor bruto da requisição. Normaliza antes de
+    // checar duplicidade e de persistir, para que a busca e a gravação usem
+    // sempre o mesmo e-mail validado por `@IsGmailEmail` no DTO.
+    const normalizedEmail = normalizeGmailEmail(dto.email);
+
+    if (!normalizedEmail) {
+      throw new BadRequestException(
+        'Use um e-mail válido do Gmail, no formato nome@gmail.com.',
+      );
+    }
+
     const existing = await this.prisma.app_user.findUnique({
-      where: { email: dto.email },
+      where: { email: normalizedEmail },
     });
 
     if (existing) {
@@ -308,7 +321,7 @@ export class AuthService {
       const user = await tx.app_user.create({
         data: {
           name: dto.name,
-          email: dto.email,
+          email: normalizedEmail,
           password_hash: null,
           user_role: 'EVALUATOR',
           account_status: 'INVITED',

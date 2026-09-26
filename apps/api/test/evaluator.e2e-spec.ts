@@ -21,7 +21,7 @@ jest.mock('@nestjs/config', () => {
     ConfigModule: {
       forRoot: () => ({
         global: true,
-        module: class DummyConfigModule {},
+        module: class DummyConfigModule { },
         providers: [ConfigService],
         exports: [ConfigService],
       }),
@@ -41,7 +41,7 @@ jest.mock('@nestjs/jwt', () => {
   class JwtModule {
     static register() {
       return {
-        module: class DummyJwtModule {},
+        module: class DummyJwtModule { },
         providers: [JwtService],
         exports: [JwtService],
       };
@@ -59,11 +59,11 @@ jest.mock('@nestjs/passport', () => {
   const prisma = new PrismaClient();
 
   return {
-    PassportModule: class DummyPassportModule {},
+    PassportModule: class DummyPassportModule { },
 
     PassportStrategy: () =>
       class {
-        constructor(..._args: unknown[]) {}
+        constructor(..._args: unknown[]) { }
       },
 
     AuthGuard: () =>
@@ -204,10 +204,10 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
     });
 
     it('deve convidar um avaliador quando chamado por ADMIN', async () => {
-      // O endpoint de convite em si não restringe domínio (fora do escopo
-      // desta auditoria, que cobre apenas o Login) — mas o e-mail usado aqui
-      // precisa ser @gmail.com porque este teste ativa a conta e depois faz
-      // login com ela, e o Login agora exige gmail.com.
+      // Prompt 13 (C2): o convite agora exige e valida e-mail Gmail, igual
+      // a Cadastro/Login (`@IsGmailEmail`), então o e-mail usado aqui já
+      // precisava ser @gmail.com de qualquer forma (este teste ativa a
+      // conta e depois faz login com ela).
       const evaluatorEmail = `avaliador-e2e-${Date.now()}@gmail.com`;
 
       const response = await request(app.getHttpServer())
@@ -235,6 +235,62 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
       expect(tokenRecord).not.toBeNull();
       expect(tokenRecord!.token_purpose).toBe('EVALUATOR_INVITE');
       expect(tokenRecord!.used_at).toBeNull();
+    });
+
+    // Prompt 13 (C2) — testes novos para a normalização de e-mail no convite.
+    it('deve normalizar o e-mail do convite (trim + lowercase), preservando "+"', async () => {
+      const [localPart, domain] = `avaliador-norm-${Date.now()}@gmail.com`.split(
+        '@',
+      );
+      const rawEmail = `  ${localPart}+RH@${domain.toUpperCase()}  `;
+      const expectedEmail = `${localPart}+rh@${domain}`;
+
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/invite')
+        .set('Cookie', adminCookies)
+        .send({ name: 'Avaliador Normalizado E2E', email: rawEmail })
+        .expect(201);
+
+      const createdUser = await prisma.app_user.findUnique({
+        where: { email: expectedEmail },
+      });
+
+      expect(createdUser).not.toBeNull();
+      expect(createdUser!.email).toBe(expectedEmail);
+    });
+
+    it('deve rejeitar convite com e-mail fora do domínio gmail.com', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/invite')
+        .set('Cookie', adminCookies)
+        .send({
+          name: 'Avaliador Domínio Errado',
+          email: 'avaliador@hotmail.com',
+        })
+        .expect(400);
+    });
+
+    it('deve tratar como duplicado um convite cujo e-mail normalizado já existe', async () => {
+      const evaluatorEmail = `avaliador-dup-${Date.now()}@gmail.com`;
+
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/invite')
+        .set('Cookie', adminCookies)
+        .send({ name: 'Avaliador Original', email: evaluatorEmail })
+        .expect(201);
+
+      // Mesmo e-mail, só variando maiúsculas/minúsculas e espaços externos —
+      // precisa ser reconhecido como o MESMO e-mail já cadastrado (a
+      // checagem de duplicidade usa o valor normalizado), não como um
+      // segundo cadastro.
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/invite')
+        .set('Cookie', adminCookies)
+        .send({
+          name: 'Avaliador Duplicado',
+          email: `  ${evaluatorEmail.toUpperCase()}  `,
+        })
+        .expect(409);
     });
   });
 
@@ -276,7 +332,11 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
         },
       });
 
-      const newPassword = 'novaSenhaAvaliador123';
+      // Prompt 13 (C3): a ativação agora exige a política D12 completa
+      // (maiúscula, minúscula, dígito e caractere especial) — o valor
+      // original deste teste ('novaSenhaAvaliador123') não tinha caractere
+      // especial e passaria a ser rejeitado (400) com a correção.
+      const newPassword = 'novaSenha!Avaliador123';
 
       await request(app.getHttpServer())
         .post('/auth/evaluator/activate')
@@ -295,8 +355,122 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
     it('deve rejeitar um token que não existe', async () => {
       await request(app.getHttpServer())
         .post('/auth/evaluator/activate')
-        .send({ token: 'token-que-nao-existe', password: 'qualquerSenha123' })
+        .send({ token: 'token-que-nao-existe', password: 'Qualquer!Senha123' })
         .expect(401);
+    });
+
+    // Prompt 13 (C3) — testes novos para a política D12 na ativação.
+    it('deve rejeitar ativação com senha fraca (não cumpre a política D12)', async () => {
+      const evaluatorEmail = `avaliador-senha-fraca-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Senha Fraca',
+          email: evaluatorEmail,
+          password_hash: null,
+          user_role: 'EVALUATOR',
+          account_status: 'INVITED',
+        },
+      });
+
+      const rawToken = `token-senha-fraca-${Date.now()}`;
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1);
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          token_purpose: 'EVALUATOR_INVITE',
+          expires_at: expiresAt,
+        },
+      });
+
+      // Sem letra maiúscula e sem caractere especial — não cumpre D12.
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: 'senhafraca123' })
+        .expect(400);
+    });
+
+    it('deve aceitar ativação com senha que cumpre a política D12', async () => {
+      const evaluatorEmail = `avaliador-senha-forte-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Senha Forte',
+          email: evaluatorEmail,
+          password_hash: null,
+          user_role: 'EVALUATOR',
+          account_status: 'INVITED',
+        },
+      });
+
+      const rawToken = `token-senha-forte-${Date.now()}`;
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1);
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          token_purpose: 'EVALUATOR_INVITE',
+          expires_at: expiresAt,
+        },
+      });
+
+      const strongPassword = 'Senha!Forte123';
+
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: strongPassword })
+        .expect(200);
+
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: evaluatorEmail, password: strongPassword })
+        .expect(200);
+
+      expect(loginResponse.body.accountStatus).toBe('ACTIVE');
+    });
+
+    it('deve rejeitar ativação com senha acima do limite de 72 bytes UTF-8', async () => {
+      const evaluatorEmail = `avaliador-senha-longa-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Senha Longa',
+          email: evaluatorEmail,
+          password_hash: null,
+          user_role: 'EVALUATOR',
+          account_status: 'INVITED',
+        },
+      });
+
+      const rawToken = `token-senha-longa-${Date.now()}`;
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1);
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          token_purpose: 'EVALUATOR_INVITE',
+          expires_at: expiresAt,
+        },
+      });
+
+      // Cumpre a composição exigida (maiúscula/minúscula/dígito/especial),
+      // mas ultrapassa 72 bytes UTF-8 — deve ser rejeitada mesmo assim.
+      const tooLongPassword = `Senha!Forte123${'a'.repeat(70)}`;
+
+      await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: tooLongPassword })
+        .expect(400);
     });
   });
 

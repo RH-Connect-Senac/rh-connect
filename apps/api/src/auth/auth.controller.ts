@@ -10,6 +10,7 @@ import {
   Put,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 import type { Response, Request } from 'express';
 
@@ -33,6 +34,12 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(200)
+  // Prompt 13 (M1): limite definido para o ambiente acadêmico/demo,
+  // considerando aproximadamente 40–60 pessoas testando simultaneamente
+  // e a possibilidade de compartilharem o mesmo IP público.
+  // Revisar antes de uso real em produção.
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 100, ttl: 60000 } })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -55,9 +62,13 @@ export class AuthController {
 
     return user;
   }
+
   @Post('logout')
   @HttpCode(200)
-  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const refreshToken = req.cookies?.refresh_token as string | undefined;
 
     if (refreshToken) {
@@ -72,6 +83,11 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(200)
+  // Prompt 13 (M1): limite definido para o ambiente acadêmico/demo,
+  // com margem maior por ser um endpoint acionado durante a renovação de sessão.
+  // Revisar antes de uso real em produção.
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 120, ttl: 60000 } })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -103,6 +119,12 @@ export class AuthController {
 
   @Post('evaluator/activate')
   @HttpCode(200)
+  // Prompt 13 (M1): limite definido para o ambiente acadêmico/demo.
+  // A ativação é um fluxo pontual, mas o valor considera testes simultâneos
+  // e possível compartilhamento de IP durante a apresentação.
+  // Revisar antes de uso real em produção.
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 40, ttl: 60000 } })
   async activateEvaluator(@Body() dto: ActivateEvaluatorDto) {
     return this.authService.activateEvaluator(dto);
   }
@@ -120,6 +142,7 @@ export class AuthController {
   @Roles('CANDIDATE')
   async completeCandidateOnboarding(@Req() req: Request) {
     const user = req.user as { id: number };
+
     return this.authService.completeOnboarding(user.id);
   }
 
@@ -128,6 +151,7 @@ export class AuthController {
   @Roles('EVALUATOR')
   async completeEvaluatorOnboarding(@Req() req: Request) {
     const user = req.user as { id: number };
+
     return this.authService.completeOnboarding(user.id);
   }
 
@@ -136,6 +160,7 @@ export class AuthController {
   @Roles('ADMIN')
   async completeAdminOnboarding(@Req() req: Request) {
     const user = req.user as { id: number };
+
     return this.authService.completeOnboarding(user.id);
   }
 }
