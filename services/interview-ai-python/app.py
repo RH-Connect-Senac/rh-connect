@@ -1,9 +1,20 @@
+import logging
 import os
 
 from flask import Flask, jsonify, request
 
-from groq_service import GroqService, GroqServiceError
+from groq_service import GroqService, GroqServiceError, describe_groq_service_error
 from job_context_adapter import JobContextAdapterError, extract_job_context
+
+# QA de observabilidade (branch work/groq-avaliacao-502): logger próprio do
+# módulo app, usado apenas para registrar (sem expor ao cliente) qual
+# validação controlada de GroqServiceError disparou um 502/erro no fluxo
+# /evaluate. Nenhuma configuração de handler/formatter é feita aqui de
+# propósito — sem isso, os campos de `describe_groq_service_error` não
+# apareceriam se passados via `extra=`, por isso são embutidos diretamente
+# na mensagem formatada abaixo, garantindo visibilidade mesmo com a
+# configuração de logging padrão do Python (saída em stderr).
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> Flask:
@@ -63,6 +74,16 @@ def create_app() -> Flask:
         try:
             evaluation = GroqService().evaluate_interview(context, answers)
         except GroqServiceError as exc:
+            # QA de observabilidade (branch work/groq-avaliacao-502): antes,
+            # nenhum log server-side identificava qual validação controlada
+            # gerou o 502 — só o access log ("POST /evaluate HTTP/1.1" 502
+            # -) e a mensagem na resposta HTTP ao cliente. Este log embute os
+            # campos diretamente na mensagem (não via `extra=`) para
+            # aparecer mesmo sem configuração de logging customizada.
+            description = describe_groq_service_error(exc)
+            logger.warning(
+                "GroqServiceError em POST /evaluate: %s", description
+            )
             return jsonify({"error": str(exc)}), exc.status_code
         except Exception:
             return jsonify({"error": "Erro inesperado ao avaliar entrevista."}), 500
