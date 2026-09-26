@@ -237,6 +237,127 @@ describe('Auth (e2e)', () => {
     expect(cookies).toBeDefined();
   });
 
+  // QA de segurança (Bloco 6) — cookies: antes, login/refresh/logout
+  // repetiam as opções de cookie de forma independente. Estes testes
+  // confirmam que a centralização em `auth.controller.ts`
+  // (`baseAuthCookieOptions`/`setAuthCookies`/`clearAuthCookies`) preserva
+  // exatamente o comportamento observável pelo navegador: nomes dos
+  // cookies, `HttpOnly`, `SameSite=Lax` e agora também `Path=/` de forma
+  // explícita — sem alterar `secure`/`domain`/durações.
+  describe('Atributos dos cookies de sessão (Bloco 6)', () => {
+    const cookieAttrsEmail = `e2e.cookie-attrs.${Date.now()}@gmail.com`;
+    const cookieAttrsPassword = 'Senha!CookieAttrs123';
+
+    beforeAll(async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          name: 'Candidato Cookie Attrs E2E',
+          email: cookieAttrsEmail,
+          password: cookieAttrsPassword,
+          termsAccepted: true,
+        })
+        .expect(201);
+    });
+
+    it('login deve emitir access_token e refresh_token com HttpOnly, SameSite=Lax e Path=/', async () => {
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cookieAttrsEmail, password: cookieAttrsPassword })
+        .expect(200);
+
+      const cookies: string[] = loginResponse.headers['set-cookie'];
+      expect(cookies).toBeDefined();
+
+      const accessCookie = cookies.find((c) => c.startsWith('access_token='));
+      const refreshCookie = cookies.find((c) =>
+        c.startsWith('refresh_token='),
+      );
+
+      expect(accessCookie).toBeDefined();
+      expect(refreshCookie).toBeDefined();
+
+      for (const cookie of [accessCookie, refreshCookie]) {
+        expect(cookie).toMatch(/HttpOnly/i);
+        expect(cookie).toMatch(/SameSite=Lax/i);
+        expect(cookie).toMatch(/Path=\//i);
+      }
+    });
+
+    it('refresh deve rotacionar e emitir os novos cookies com os mesmos atributos', async () => {
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cookieAttrsEmail, password: cookieAttrsPassword })
+        .expect(200);
+
+      const loginCookies: string[] = loginResponse.headers['set-cookie'];
+      const refreshTokenCookie = loginCookies.find((c) =>
+        c.startsWith('refresh_token='),
+      );
+
+      const refreshResponse = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', [refreshTokenCookie])
+        .expect(200);
+
+      const refreshCookies: string[] = refreshResponse.headers['set-cookie'];
+      const newAccessCookie = refreshCookies.find((c) =>
+        c.startsWith('access_token='),
+      );
+      const newRefreshCookie = refreshCookies.find((c) =>
+        c.startsWith('refresh_token='),
+      );
+
+      expect(newAccessCookie).toBeDefined();
+      expect(newRefreshCookie).toBeDefined();
+
+      for (const cookie of [newAccessCookie, newRefreshCookie]) {
+        expect(cookie).toMatch(/HttpOnly/i);
+        expect(cookie).toMatch(/SameSite=Lax/i);
+        expect(cookie).toMatch(/Path=\//i);
+      }
+    });
+
+    it('logout deve limpar access_token e refresh_token com Path=/ e expiração no passado', async () => {
+      const loginResponse = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cookieAttrsEmail, password: cookieAttrsPassword })
+        .expect(200);
+
+      const loginCookies: string[] = loginResponse.headers['set-cookie'];
+
+      const logoutResponse = await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', loginCookies)
+        .expect(200);
+
+      const clearedCookies: string[] = logoutResponse.headers['set-cookie'];
+      expect(clearedCookies).toBeDefined();
+
+      const clearedAccessCookie = clearedCookies.find((c) =>
+        c.startsWith('access_token='),
+      );
+      const clearedRefreshCookie = clearedCookies.find((c) =>
+        c.startsWith('refresh_token='),
+      );
+
+      expect(clearedAccessCookie).toBeDefined();
+      expect(clearedRefreshCookie).toBeDefined();
+
+      for (const cookie of [clearedAccessCookie, clearedRefreshCookie]) {
+        expect(cookie).toMatch(/Path=\//i);
+
+        // `clearCookie` expira o cookie no passado (Expires com data < agora)
+        // em vez de usar `maxAge` — é assim que o navegador é instruído a
+        // removê-lo.
+        const expiresMatch = cookie!.match(/Expires=([^;]+)/i);
+        expect(expiresMatch).not.toBeNull();
+        const expiresDate = new Date(expiresMatch![1]);
+        expect(expiresDate.getTime()).toBeLessThan(Date.now());
+      }
+    });
+  });
+
   it('deve logar com o mesmo e-mail com espaços nas pontas', async () => {
     // LoginDto valida a sintaxe do e-mail já normalizado (trim+lowercase),
     // não o valor bruto — então espaços externos não devem bloquear o login.

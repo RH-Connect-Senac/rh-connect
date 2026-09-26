@@ -23,6 +23,51 @@ import { ActivateEvaluatorDto } from './dto/activate-evaluator.dto';
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
 
+const ACCESS_TOKEN_COOKIE_NAME = 'access_token';
+const REFRESH_TOKEN_COOKIE_NAME = 'refresh_token';
+const ACCESS_TOKEN_MAX_AGE_MS = 1000 * 60 * 15; // 15 minutos
+const REFRESH_TOKEN_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7; // 7 dias
+
+// QA de segurança (Bloco 6): opções de cookie centralizadas aqui para
+// evitar duplicação/inconsistência entre login, refresh e logout — antes,
+// cada handler repetia as mesmas quatro opções de forma independente.
+// `path: '/'` passou a ser explícito (o Express já usava '/' como default
+// quando nenhum `path` era informado, então isso não muda o cookie
+// observável pelo navegador). `httpOnly`, `secure` e `sameSite` não
+// mudaram, e nem os nomes/durações dos cookies.
+function baseAuthCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax' as const,
+    path: '/',
+  };
+}
+
+function setAuthCookies(
+  res: Response,
+  tokens: { accessToken: string; refreshToken: string },
+) {
+  res.cookie(ACCESS_TOKEN_COOKIE_NAME, tokens.accessToken, {
+    ...baseAuthCookieOptions(),
+    maxAge: ACCESS_TOKEN_MAX_AGE_MS,
+  });
+
+  res.cookie(REFRESH_TOKEN_COOKIE_NAME, tokens.refreshToken, {
+    ...baseAuthCookieOptions(),
+    maxAge: REFRESH_TOKEN_MAX_AGE_MS,
+  });
+}
+
+function clearAuthCookies(res: Response) {
+  // `maxAge` não é necessário (e não deve ser usado) no `clearCookie` — o
+  // navegador só precisa das opções que identificam QUAL cookie remover
+  // (nome + as mesmas `path`/`httpOnly`/`secure`/`sameSite` usadas na
+  // criação); `clearCookie` já define a expiração no passado internamente.
+  res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, baseAuthCookieOptions());
+  res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, baseAuthCookieOptions());
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -60,19 +105,7 @@ export class AuthController {
   ) {
     const { user, token, refreshToken } = await this.authService.login(dto);
 
-    res.cookie('access_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 15,
-    });
-
-    res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 60 * 24 * 7,
-    });
+    setAuthCookies(res, { accessToken: token, refreshToken });
 
     return user;
   }
@@ -89,8 +122,7 @@ export class AuthController {
       await this.authService.logout(refreshToken);
     }
 
-    res.clearCookie('access_token');
-    res.clearCookie('refresh_token');
+    clearAuthCookies(res);
 
     return { message: 'Logout realizado com sucesso' };
   }
@@ -119,19 +151,7 @@ export class AuthController {
     const { token, refreshToken: newRefreshToken } =
       await this.authService.refresh(refreshToken);
 
-    res.cookie('access_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 15,
-    });
-
-    res.cookie('refresh_token', newRefreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 1000 * 60 * 60 * 24 * 7,
-    });
+    setAuthCookies(res, { accessToken: token, refreshToken: newRefreshToken });
 
     return { message: 'Access token renovado com sucesso' };
   }
