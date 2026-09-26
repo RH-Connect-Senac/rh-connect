@@ -1174,3 +1174,55 @@ def _normalize_question_type(value: Any) -> str:
     if normalized == "carreira":
         return "Carreira"
     return _clean_text(value)
+
+
+def describe_groq_service_error(exc: GroqServiceError) -> dict[str, Any]:
+    """QA de observabilidade (branch work/groq-avaliacao-502).
+
+    Monta, a partir de um `GroqServiceError` já capturado, um dicionário
+    seguro para log — nunca para resposta ao cliente (isso já é feito por
+    `str(exc)`/`exc.status_code` em `app.py`).
+
+    Inclui somente:
+    - `status_code`: o status HTTP que a própria API já decidiu devolver
+      (ex.: 502), nunca o status bruto da Groq quando ele não corresponde
+      a um `APIStatusError` real (ver abaixo).
+    - `message`: a mensagem controlada e estática do próprio
+      `GroqServiceError` (ex.: "A Groq retornou avaliacao por pergunta
+      invalida."). Nunca é o conteúdo gerado pela IA, nunca é o prompt,
+      nunca é a resposta do candidato.
+    - `groq_status_code` / `groq_error_code` / `groq_request_id`: só
+      quando a causa raiz (`exc.__cause__`) for de fato um
+      `APIStatusError` da Groq (ex.: um 429 real). Quando o 502 vem de uma
+      falha de validação/parsing feita aqui mesmo depois de um 200 da
+      Groq (como o caso já observado desta investigação), a Groq nunca
+      retornou erro — então esses três campos simplesmente não existem e
+      não são incluídos.
+
+    Nunca inclui: API key, header de autorização, prompt, payload
+    completo, respostas do candidato, resposta bruta da Groq (incluindo
+    qualquer `failed_generation`), dados pessoais, tokens/cookies/JWT.
+    `_extract_groq_error_code` (já usado hoje em `evaluate_interview`) só
+    extrai `error.code`/`error.type` do corpo de erro da Groq — nunca o
+    corpo inteiro.
+    """
+    description: dict[str, Any] = {
+        "status_code": exc.status_code,
+        "message": str(exc),
+    }
+
+    cause = exc.__cause__
+    if isinstance(cause, APIStatusError):
+        groq_status_code = getattr(cause, "status_code", None)
+        if groq_status_code is not None:
+            description["groq_status_code"] = groq_status_code
+
+        groq_error_code = _extract_groq_error_code(cause)
+        if groq_error_code:
+            description["groq_error_code"] = groq_error_code
+
+        groq_request_id = getattr(cause, "request_id", None)
+        if groq_request_id:
+            description["groq_request_id"] = groq_request_id
+
+    return description
