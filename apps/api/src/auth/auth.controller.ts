@@ -28,6 +28,20 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  // QA de segurança (B5-01): o cadastro é um endpoint público sem nenhuma
+  // proteção contra automação — permitia criação em massa de contas e
+  // consumo desnecessário de banco/bcrypt. Reaproveita a mesma infra de
+  // @nestjs/throttler já usada em login/refresh/evaluator-activate, sem
+  // mecanismo paralelo. Limite ajustado para 100/60s (igual ao de login),
+  // alinhando com os demais valores já validados com o professor para o
+  // ambiente acadêmico/demo: considerando 40–60 pessoas testando
+  // simultaneamente, possivelmente atrás do mesmo IP público da rede do
+  // Senac, o valor anterior (60) deixava pouca margem para retentativas de
+  // validação (senha fraca, termos não aceitos, e-mail duplicado etc.) sem
+  // gerar 429 legítimo durante o teste coletivo.
+  // Revisar antes de uso real em produção.
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 100, ttl: 60000 } })
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }

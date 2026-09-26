@@ -220,6 +220,51 @@ describe(
       expect(statuses.some((status) => status === 429)).toBe(true);
     });
 
+    // QA de segurança (B5-01): /auth/register não tinha nenhuma proteção de
+    // throttling. Os dois testes abaixo seguem o mesmo padrão dos já
+    // existentes para login/refresh/activate.
+    it('uso normal de cadastro continua permitido (não é barrado pelo throttling)', async () => {
+      // Uma única tentativa não deve ser afetada — a resposta 400 vem da
+      // validação (termos não aceitos), não do throttler.
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          name: 'Rate Limit Register Normal E2E',
+          email: `rate-limit-register-normal-${Date.now()}@gmail.com`,
+          password: 'Senha!Teste123',
+          termsAccepted: false,
+        })
+        .expect(400);
+    });
+
+    it('excesso de tentativas de cadastro na mesma janela recebe 429', async () => {
+      // Limite do ambiente acadêmico/demo: 100 requisições por 60s por IP
+      // (B5-01, ajustado para alinhar com login — ver comentário em
+      // auth.controller.ts). A 101ª tentativa deve ultrapassar o limite.
+      //
+      // Usa um payload que sempre falha na validação (termos não aceitos)
+      // para não criar contas reais nem pagar o custo de bcrypt.hash a cada
+      // tentativa — o ThrottlerGuard conta a requisição independentemente do
+      // resultado da validação, porque Guards rodam antes de Pipes no ciclo
+      // de vida do Nest.
+      const statuses: number[] = [];
+
+      for (let i = 0; i < 101; i += 1) {
+        const response = await request(app.getHttpServer())
+          .post('/auth/register')
+          .send({
+            name: 'Rate Limit Register E2E',
+            email: `rate-limit-register-${Date.now()}-${i}@gmail.com`,
+            password: 'Senha!Teste123',
+            termsAccepted: false,
+          });
+
+        statuses.push(response.status);
+      }
+
+      expect(statuses.some((status) => status === 429)).toBe(true);
+    });
+
     // Não há teste esperando a janela real de 60 segundos expirar,
     // pois isso deixaria a suíte desnecessariamente lenta.
     // O reset da janela é responsabilidade do @nestjs/throttler.

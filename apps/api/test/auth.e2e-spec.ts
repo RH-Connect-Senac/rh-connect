@@ -314,10 +314,33 @@ describe('Auth (e2e)', () => {
   });
 
   it('não deve logar com senha errada', async () => {
-    await request(app.getHttpServer())
+    const response = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email, password: 'senhaErrada123' })
       .expect(401);
+
+    // QA de segurança (B5-02): mensagem genérica, igual à de e-mail
+    // inexistente/conta não-ACTIVE — não deve ser possível distinguir os
+    // motivos pela resposta pública do login.
+    expect(response.body.message).toBe('Credenciais inválidas');
+  });
+
+  // QA de segurança (B5-02) — antes deste ajuste, um e-mail inexistente e uma
+  // senha errada eram indistinguíveis (ambos "Credenciais inválidas"), mas um
+  // e-mail existente com account_status != ACTIVE respondia "Usuário não
+  // está ativo" — permitindo inferir que aquele e-mail tinha conta
+  // cadastrada e ainda revelar seu status. Os três cenários abaixo confirmam
+  // que agora respondem com a mesma mensagem genérica.
+  it('não deve logar com um e-mail inexistente, retornando a mesma mensagem genérica', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: `e2e.inexistente.${Date.now()}@gmail.com`,
+        password: 'qualquerSenha123',
+      })
+      .expect(401);
+
+    expect(response.body.message).toBe('Credenciais inválidas');
   });
 
   it('não deve renovar o access token sem o cookie refresh_token (refresh token ausente)', async () => {
@@ -527,7 +550,7 @@ describe('Auth (e2e)', () => {
   // `AuthService.login`/`AuthService.refresh` quanto em `JwtStrategy.validate`
   // (consulta o `account_status` atual no banco a cada request, nunca confia
   // só no payload do token).
-  it('não deve logar com uma conta cujo account_status não é ACTIVE (ex.: BLOCKED)', async () => {
+  it('não deve logar com uma conta cujo account_status não é ACTIVE (ex.: BLOCKED), retornando a mesma mensagem genérica', async () => {
     const blockedEmail = `e2e.blocked.${Date.now()}@gmail.com`;
     const blockedPassword = await bcrypt.hash(password, 10);
 
@@ -541,10 +564,15 @@ describe('Auth (e2e)', () => {
       },
     });
 
-    await request(app.getHttpServer())
+    const response = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email: blockedEmail, password })
       .expect(401);
+
+    // QA de segurança (B5-02): a regra de negócio continua a mesma (conta
+    // BLOCKED nunca autentica) — só a mensagem pública deixou de dizer
+    // "Usuário não está ativo", que revelava que a conta existe.
+    expect(response.body.message).toBe('Credenciais inválidas');
   });
 
   it('deve negar acesso a /auth/me e a /auth/refresh quando a conta deixa de ser ACTIVE após o login', async () => {

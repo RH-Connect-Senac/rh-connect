@@ -109,7 +109,7 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { AppModule } from '../src/app.module';
 
 jest.setTimeout(30000);
@@ -315,7 +315,12 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
         },
       });
 
-      const rawToken = `token-e2e-${Date.now()}`;
+      // QA de segurança (B5-03): o DTO agora exige o contrato real do token
+      // (string hexadecimal de exatamente 64 caracteres, igual ao gerado por
+      // `randomBytes(32).toString('hex')` em `inviteEvaluator`) — por isso os
+      // tokens de teste abaixo passaram a ser gerados da mesma forma, em vez
+      // de strings arbitrárias como `token-e2e-${Date.now()}`.
+      const rawToken = randomBytes(32).toString('hex');
       // Mesmo algoritmo usado pelo AuthService (sha256) — precisa ser
       // idêntico, senão o service nunca vai reconhecer esse token.
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -353,10 +358,184 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
     });
 
     it('deve rejeitar um token que não existe', async () => {
+      // QA de segurança (B5-03): precisa ter o FORMATO real do token (64 hex)
+      // para passar da validação do DTO e realmente exercitar a checagem de
+      // "token inexistente" no service — um valor fora desse formato seria
+      // barrado antes, pela própria ValidationPipe (400), não testando o
+      // caso pretendido aqui.
+      const nonExistentToken = randomBytes(32).toString('hex');
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: nonExistentToken, password: 'Qualquer!Senha123' })
+        .expect(401);
+
+      // QA de segurança (B5-04): mensagem genérica única, para não revelar
+      // que o motivo específico foi "token inexistente".
+      expect(response.body.message).toBe(
+        'Token de ativação inválido ou indisponível',
+      );
+    });
+
+    // QA de segurança (B5-04) — os quatro cenários abaixo cobrem os demais
+    // estados internos do token (já utilizado, expirado, purpose
+    // incompatível, usuário/estado incompatível): todos devem responder com
+    // a MESMA mensagem genérica usada para "token inexistente" acima, sem
+    // revelar qual foi o motivo real da rejeição.
+    const GENERIC_ACTIVATION_MESSAGE =
+      'Token de ativação inválido ou indisponível';
+
+    it('deve retornar a mesma mensagem genérica para um token já utilizado (B5-04)', async () => {
+      const evaluatorEmail = `avaliador-token-usado-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Token Usado',
+          email: evaluatorEmail,
+          password_hash: null,
+          user_role: 'EVALUATOR',
+          account_status: 'INVITED',
+        },
+      });
+
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1);
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          token_purpose: 'EVALUATOR_INVITE',
+          expires_at: expiresAt,
+        },
+      });
+
+      // Primeira ativação: sucesso, consome o token (`used_at` passa a ser
+      // preenchido).
       await request(app.getHttpServer())
         .post('/auth/evaluator/activate')
-        .send({ token: 'token-que-nao-existe', password: 'Qualquer!Senha123' })
+        .send({ token: rawToken, password: 'Senha!Reusada123' })
+        .expect(200);
+
+      // Segunda tentativa com o MESMO token: já utilizado.
+      const response = await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: 'Senha!Reusada123' })
         .expect(401);
+
+      expect(response.body.message).toBe(GENERIC_ACTIVATION_MESSAGE);
+    });
+
+    it('deve retornar a mesma mensagem genérica para um token expirado (B5-04)', async () => {
+      const evaluatorEmail = `avaliador-token-expirado-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Token Expirado',
+          email: evaluatorEmail,
+          password_hash: null,
+          user_role: 'EVALUATOR',
+          account_status: 'INVITED',
+        },
+      });
+
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() - 1); // já expirado
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          token_purpose: 'EVALUATOR_INVITE',
+          expires_at: expiresAt,
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: 'Senha!Expirada123' })
+        .expect(401);
+
+      expect(response.body.message).toBe(GENERIC_ACTIVATION_MESSAGE);
+    });
+
+    it('deve retornar a mesma mensagem genérica para um token com purpose incompatível (B5-04)', async () => {
+      const evaluatorEmail = `avaliador-purpose-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Purpose Incompatível',
+          email: evaluatorEmail,
+          password_hash: null,
+          user_role: 'EVALUATOR',
+          account_status: 'INVITED',
+        },
+      });
+
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1);
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          // Purpose incompatível com a rota de ativação de avaliador — o
+          // fixture usa um valor real do enum `token_purpose`, não usado por
+          // este fluxo.
+          token_purpose: 'PASSWORD_RESET',
+          expires_at: expiresAt,
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: 'Senha!Purpose123' })
+        .expect(401);
+
+      expect(response.body.message).toBe(GENERIC_ACTIVATION_MESSAGE);
+    });
+
+    it('deve retornar a mesma mensagem genérica quando o usuário/estado é incompatível (ex.: conta já ACTIVE) (B5-04)', async () => {
+      const evaluatorEmail = `avaliador-ja-ativo-${Date.now()}@gmail.com`;
+
+      const evaluator = await prisma.app_user.create({
+        data: {
+          name: 'Avaliador Já Ativo',
+          email: evaluatorEmail,
+          password_hash: await bcrypt.hash('Senha!JaAtivo123', 10),
+          user_role: 'EVALUATOR',
+          // Conta já ACTIVE — o token de convite não deveria mais servir
+          // para (re)ativar uma conta que já passou por esse fluxo.
+          account_status: 'ACTIVE',
+        },
+      });
+
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 1);
+
+      await prisma.account_activation_token.create({
+        data: {
+          user_id: evaluator.user_id,
+          token_hash: tokenHash,
+          token_purpose: 'EVALUATOR_INVITE',
+          expires_at: expiresAt,
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/evaluator/activate')
+        .send({ token: rawToken, password: 'Senha!JaAtivo123' })
+        .expect(401);
+
+      expect(response.body.message).toBe(GENERIC_ACTIVATION_MESSAGE);
     });
 
     // Prompt 13 (C3) — testes novos para a política D12 na ativação.
@@ -373,7 +552,7 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
         },
       });
 
-      const rawToken = `token-senha-fraca-${Date.now()}`;
+      const rawToken = randomBytes(32).toString('hex'); // B5-03: formato real do token
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 1);
@@ -407,7 +586,7 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
         },
       });
 
-      const rawToken = `token-senha-forte-${Date.now()}`;
+      const rawToken = randomBytes(32).toString('hex'); // B5-03: formato real do token
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 1);
@@ -449,7 +628,7 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
         },
       });
 
-      const rawToken = `token-senha-longa-${Date.now()}`;
+      const rawToken = randomBytes(32).toString('hex'); // B5-03: formato real do token
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 1);

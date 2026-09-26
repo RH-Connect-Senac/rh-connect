@@ -169,12 +169,20 @@ export class AuthService {
       where: { email: normalizedEmail },
     });
 
+    // QA de segurança (B5-02): as três verificações abaixo (usuário
+    // inexistente, sem password_hash, account_status diferente de ACTIVE e
+    // senha incorreta) usam a MESMA mensagem genérica "Credenciais
+    // inválidas" — antes, "Usuário não está ativo" permitia inferir, para um
+    // e-mail testado, que a conta existe e ainda revelava seu status. A
+    // regra de negócio não muda: contas fora de ACTIVE continuam impedidas
+    // de autenticar aqui, só a mensagem pública deixou de diferenciar o
+    // motivo. `refresh()` e `JwtStrategy` não foram alterados.
     if (!user || !user.password_hash) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
     if (user.account_status !== 'ACTIVE') {
-      throw new UnauthorizedException('Usuário não está ativo');
+      throw new UnauthorizedException('Credenciais inválidas');
     }
 
     const valid = await bcrypt.compare(dto.password, user.password_hash);
@@ -398,27 +406,39 @@ export class AuthService {
         include: { app_user: true },
       });
 
+    // QA de segurança (B5-04): as cinco checagens abaixo (token inexistente,
+    // purpose incompatível, já utilizado, expirado, role/account_status
+    // incompatível) agora respondem externamente com a MESMA mensagem
+    // genérica — antes, cada uma tinha um texto diferente, o que permitia a
+    // quem tentasse tokens ao acaso distinguir o estado interno de um token
+    // (existe mas já foi usado, existe mas expirou, etc.). Nenhuma lógica de
+    // verificação mudou: token expirado/usado/com purpose ou role/status
+    // incompatível continua sempre rejeitado, só a mensagem pública deixou
+    // de funcionar como oráculo desses estados.
+    const GENERIC_ACTIVATION_ERROR =
+      'Token de ativação inválido ou indisponível';
+
     if (!activationToken) {
-      throw new UnauthorizedException('Token de ativação inválido');
+      throw new UnauthorizedException(GENERIC_ACTIVATION_ERROR);
     }
 
     if (activationToken.token_purpose !== 'EVALUATOR_INVITE') {
-      throw new UnauthorizedException('Token inválido para ativação');
+      throw new UnauthorizedException(GENERIC_ACTIVATION_ERROR);
     }
 
     if (activationToken.used_at) {
-      throw new UnauthorizedException('Token de ativação já utilizado');
+      throw new UnauthorizedException(GENERIC_ACTIVATION_ERROR);
     }
 
     if (activationToken.expires_at <= new Date()) {
-      throw new UnauthorizedException('Token de ativação expirado');
+      throw new UnauthorizedException(GENERIC_ACTIVATION_ERROR);
     }
 
     if (
       activationToken.app_user.user_role !== 'EVALUATOR' ||
       activationToken.app_user.account_status !== 'INVITED'
     ) {
-      throw new UnauthorizedException('Usuário não pode ser ativado');
+      throw new UnauthorizedException(GENERIC_ACTIVATION_ERROR);
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);

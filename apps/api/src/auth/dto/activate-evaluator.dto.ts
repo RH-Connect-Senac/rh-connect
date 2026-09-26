@@ -1,9 +1,19 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsHexadecimal, IsString, Length } from 'class-validator';
 import { IsStrongPassword } from '../validators/strong-password.validator';
 
 export class ActivateEvaluatorDto {
+  // QA de segurança (B5-03): o token é gerado por
+  // `randomBytes(32).toString('hex')` (`AuthService.inviteEvaluator`), então
+  // o contrato real de entrada é sempre uma string hexadecimal de exatamente
+  // 64 caracteres. A validação anterior (`@IsString` + `@IsNotEmpty`) aceitava
+  // qualquer string não vazia, deixando o formato real do token sem checagem
+  // explícita no DTO. Não muda a geração do token nem o hashing (sha256)
+  // usado para comparar com o banco.
   @IsString()
-  @IsNotEmpty()
+  @Length(64, 64, {
+    message: 'Token de ativação em formato inválido.',
+  })
+  @IsHexadecimal({ message: 'Token de ativação em formato inválido.' })
   token: string;
 
   // Prompt 13 (C3): antes validava apenas `@MinLength(8)`, sem exigir a
