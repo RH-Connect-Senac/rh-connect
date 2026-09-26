@@ -30,6 +30,46 @@ class GroqConfigurationError(GroqServiceError):
         super().__init__(message, 500)
 
 
+def parse_groq_api_keys() -> list[str]:
+    """Resolve a lista de API keys da Groq configuradas via variaveis de ambiente.
+
+    Escopo desta funcao (Bloco 1 - parse e configuracao das API keys):
+    - Apenas leitura/normalizacao das chaves configuradas. NAO faz
+      round-robin, NAO seleciona/rotaciona chave nenhuma, NAO decide pool e
+      NAO e usada por `_client()` ainda (isso fica para um bloco futuro).
+
+    Precedencia entre as duas variaveis de ambiente suportadas:
+    - `GROQ_API_KEYS`: lista de chaves separadas por virgula. Cada entrada e
+      normalizada com `.strip()` e entradas vazias sao descartadas. A ordem
+      configurada e preservada e duplicatas NAO sao removidas nesta etapa.
+      Quando resulta em pelo menos uma chave valida, tem prioridade total:
+      `GROQ_API_KEY` e ignorada e as duas configuracoes NAO sao concatenadas.
+    - `GROQ_API_KEY`: usada apenas como fallback, e somente quando
+      `GROQ_API_KEYS` estiver ausente, vazia, ou não resultar em nenhuma
+      chave valida apos o parsing acima. Tambem e normalizada com
+      `.strip()`.
+
+    Se nenhuma das duas fontes fornecer uma chave valida, levanta
+    `GroqConfigurationError` (sem incluir qualquer valor de chave na
+    mensagem). Nenhum valor de chave e logado por esta funcao.
+
+    Nao ha limite maximo de chaves hardcoded: a quantidade e definida
+    inteiramente pela configuracao.
+    """
+    raw_keys = os.getenv("GROQ_API_KEYS", "")
+    parsed_keys = [key.strip() for key in raw_keys.split(",") if key.strip()]
+    if parsed_keys:
+        return parsed_keys
+
+    single_key = os.getenv("GROQ_API_KEY", "").strip()
+    if single_key:
+        return [single_key]
+
+    raise GroqConfigurationError(
+        "Nenhuma API key da Groq configurada (defina GROQ_API_KEYS ou GROQ_API_KEY)."
+    )
+
+
 class GroqService:
     def __init__(self) -> None:
         load_dotenv()
