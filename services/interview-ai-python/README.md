@@ -24,6 +24,74 @@ Crie futuramente um arquivo `.env` local a partir de `.env.example`.
 
 Não commite `.env`, `.venv` ou qualquer segredo.
 
+## Configuração das API keys da Groq
+
+O serviço aceita **múltiplas** API keys da Groq, usadas em rotação (round-robin) com fallback automático para a próxima credencial quando a Groq responde com rate limit (`429`). Isso reduz a chance de uma única key esgotada interromper o fluxo de entrevista.
+
+### `GROQ_API_KEYS` (recomendado)
+
+Uma ou mais keys separadas por vírgula:
+
+```dotenv
+GROQ_API_KEYS=<GROQ_KEY_01>,<GROQ_KEY_02>,<GROQ_KEY_03>
+```
+
+Regras de parsing (já implementadas, não alteradas por esta documentação):
+
+- separação por vírgula, sem limite de quantidade;
+- espaços em volta de cada valor são removidos automaticamente;
+- entradas vazias (ex.: vírgula dupla) são descartadas;
+- a ordem configurada é preservada;
+- duplicatas **não** são removidas pelo parser nem pelo pool (compatibilidade com o comportamento já implementado) — mas **não configure a mesma key duas vezes**: isso não traz nenhuma capacidade adicional nem benefício de fallback, já que o fallback por operação seleciona a próxima credencial comparando **por valor** (`next_unique_key`), então uma mesma operação nunca tenta novamente uma credencial cujo valor ela já usou, mesmo que esse valor apareça mais de uma vez na lista configurada:
+
+  ```dotenv
+  # Não recomendado - "GROQ_KEY_01" ocupa duas posições sem necessidade;
+  # ainda assim, dentro de UMA MESMA operação, ela é tentada no máximo uma
+  # vez (o fallback não repete um valor de key já usado nessa operação):
+  GROQ_API_KEYS=<GROQ_KEY_01>,<GROQ_KEY_01>,<GROQ_KEY_02>
+
+  # Recomendado - todas as credenciais distintas entre si:
+  GROQ_API_KEYS=<GROQ_KEY_01>,<GROQ_KEY_02>,<GROQ_KEY_03>
+  ```
+
+### `GROQ_API_KEY` (compatibilidade, uma única credencial)
+
+Continua suportada, para ambientes com uma única credencial e sem fallback entre keys:
+
+```dotenv
+GROQ_API_KEY=<GROQ_KEY>
+```
+
+### Precedência quando as duas estão definidas
+
+`GROQ_API_KEYS`, se resultar em ao menos uma key válida após o parsing, **tem precedência total** sobre `GROQ_API_KEY` — que é ignorada nesse caso. As duas variáveis nunca são somadas/concatenadas. `GROQ_API_KEY` só é usada como fallback quando `GROQ_API_KEYS` estiver ausente, vazia, ou não resultar em nenhuma key válida.
+
+A leitura da configuração e a montagem do pool de keys são feitas de forma lazy (só na primeira operação que precisa da Groq, não na inicialização do serviço Flask). Se nenhuma das duas variáveis fornecer uma key válida, a operação que tentar usar a Groq (`/questions` ou `/evaluate`) falha com um erro de configuração controlado (sem expor nenhum valor de key) — o serviço Flask em si continua no ar normalmente (ex.: `/health` segue respondendo).
+
+### Comportamento de fallback (resumo)
+
+- o cliente Groq é sempre instanciado com `max_retries=0` (o SDK nunca tenta novamente sozinho, de forma invisível);
+- o fallback interno do RH Connect troca de credencial **somente** quando a Groq responde `429` / rate limit;
+- qualquer outra categoria de erro (ex.: `400`, `401`, `403`, `5xx`, timeout, erro de conexão) encerra a operação imediatamente, sem tentar outra key;
+- cada operação tenta, no máximo, uma vez cada credencial distinta configurada.
+
+### Observabilidade
+
+O serviço registra, em log, informações técnicas do fallback — operação (`generate_questions`/`evaluate_interview`), número da tentativa, categoria do erro, e se as credenciais se esgotaram — **nunca o valor de nenhuma API key**.
+
+### Limitação conhecida (solução temporária)
+
+O pool de keys vive **em memória, por processo Python**. Se o serviço rodar com múltiplos workers/processos (ex.: `gunicorn -w N`), cada processo mantém seu próprio índice de round-robin, sem nenhuma coordenação entre processos. Essa é uma limitação conhecida da solução atual; uma estratégia para múltiplos processos/produção está sendo tratada separadamente, fora do escopo deste documento.
+
+### Segurança
+
+- **nunca** commite o arquivo `.env` real — apenas `.env.example`, com placeholders;
+- **nunca** inclua uma API key real neste README ou em qualquer outro arquivo do repositório;
+- **nunca** cole uma API key real em issues, Pull Requests ou mensagens de chat;
+- não logue o valor de nenhuma key (o serviço já foi construído para nunca fazer isso);
+- configure as keys reais diretamente como variáveis de ambiente/secrets do ambiente de execução (ex.: VPS), nunca versionadas no repositório;
+- o repositório deve conter somente placeholders (ex.: `<GROQ_KEY_01>`) ou exemplos obviamente falsos (ex.: `fake-groq-key-01`).
+
 ## Execução local
 
 Porta padrão: `5001`.

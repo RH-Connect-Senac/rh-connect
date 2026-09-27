@@ -5,11 +5,23 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 from dotenv import load_dotenv
-from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq
+from groq import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    Groq,
+    InternalServerError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
+from key_pool import GroqKeyPool, GroqKeyPoolError
 from schemas import EVALUATION_CRITERIA, QUESTION_TYPES
 
 logger = logging.getLogger(__name__)
@@ -18,9 +30,16 @@ logger = logging.getLogger(__name__)
 class GroqServiceError(Exception):
     """Controlled error raised by Groq integrations."""
 
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 502, category: str | None = None):
         super().__init__(message)
         self.status_code = status_code
+        # Bloco 4: categoria controlada e testavel do erro (ver
+        # GROQ_ERROR_CATEGORY_* abaixo), para que o restante do servico
+        # saiba qual tipo de erro da Groq aconteceu sem precisar analisar
+        # texto de mensagem. `None` para erros que nao vem de uma chamada a
+        # Groq (ex.: GroqConfigurationError, erros de validacao de
+        # payload).
+        self.category = category
 
 
 class GroqConfigurationError(GroqServiceError):
@@ -30,6 +49,252 @@ class GroqConfigurationError(GroqServiceError):
         super().__init__(message, 500)
 
 
+# Bloco 4 - categorias controladas de erro da Groq.
+#
+# Strings simples, nao um enum/framework novo: o objetivo e so permitir que
+# o restante do servico (e testes) verifiquem `exc.category == "rate_limit"`
+# em vez de analisar o texto da mensagem. Nenhuma dessas categorias, por si
+# so, provoca retry, troca de key ou qualquer outra acao nesta rodada - isso
+# fica para o Bloco 5 (que vai reagir especificamente a
+# GROQ_ERROR_CATEGORY_RATE_LIMIT).
+GROQ_ERROR_CATEGORY_RATE_LIMIT = "rate_limit"
+GROQ_ERROR_CATEGORY_BAD_REQUEST = "bad_request"
+GROQ_ERROR_CATEGORY_AUTHENTICATION = "authentication"
+GROQ_ERROR_CATEGORY_PERMISSION_DENIED = "permission_denied"
+GROQ_ERROR_CATEGORY_UPSTREAM_SERVER_ERROR = "upstream_server_error"
+GROQ_ERROR_CATEGORY_TIMEOUT = "timeout"
+GROQ_ERROR_CATEGORY_CONNECTION_ERROR = "connection_error"
+GROQ_ERROR_CATEGORY_API_STATUS_ERROR = "api_status_error"
+
+
+def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
+    """Traduz uma excecao levantada pela chamada a Groq (ou qualquer outra
+    excecao inesperada) para um `GroqServiceError` com uma categoria
+    controlada, programatica e testavel - sem depender de comparacao de
+    texto da mensagem.
+
+    `action` e um texto curto e FIXO (ex.: "gerar perguntas",
+    "avaliar entrevista"), usado apenas para compor a mensagem de erro.
+    Nunca deve receber dado dinamico do payload do usuario, do prompt ou da
+    resposta da Groq.
+
+    IMPORTANTE (escopo do Bloco 4): esta funcao SO classifica o erro. Ela
+    nao chama `next_key()`, nao tenta outra key, nao faz retry manual nem
+    sleep/backoff - o erro classificado sobe normalmente. Em particular,
+    `RateLimitError` (429) e identificado com
+    `GROQ_ERROR_CATEGORY_RATE_LIMIT`, mas isso ainda NAO troca de key nesta
+    rodada; a reacao a essa categoria fica para o Bloco 5.
+
+    A ordem das checagens importa: subclasses mais especificas de
+    `APIStatusError` (RateLimitError, BadRequestError, AuthenticationError,
+    PermissionDeniedError, InternalServerError) sao checadas antes da
+    classe base `APIStatusError`; e `APITimeoutError` (subclasse de
+    `APIConnectionError` na SDK) e checado antes de `APIConnectionError`.
+
+    Seguranca: a mensagem retornada nunca inclui a API key, headers,
+    request/response completos, prompt, respostas do candidato ou o corpo
+    bruto retornado pela Groq - apenas texto fixo, a categoria e o status
+    code. Preservar mais contexto tecnico (ex.: error code seguro da Groq)
+    fica para um bloco de observabilidade futuro.
+    """
+    if isinstance(exc, RateLimitError):
+        return GroqServiceError(
+            f"A Groq retornou limite de requisicoes (429) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_RATE_LIMIT,
+        )
+    if isinstance(exc, BadRequestError):
+        return GroqServiceError(
+            f"A Groq retornou requisicao invalida (400) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_BAD_REQUEST,
+        )
+    if isinstance(exc, AuthenticationError):
+        return GroqServiceError(
+            f"A Groq retornou erro de autenticacao (401) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_AUTHENTICATION,
+        )
+    if isinstance(exc, PermissionDeniedError):
+        return GroqServiceError(
+            f"A Groq retornou erro de permissao (403) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_PERMISSION_DENIED,
+        )
+    if isinstance(exc, InternalServerError):
+        return GroqServiceError(
+            f"A Groq retornou erro interno (5xx) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_UPSTREAM_SERVER_ERROR,
+        )
+    if isinstance(exc, APITimeoutError):
+        return GroqServiceError(
+            f"Tempo esgotado ao {action}.",
+            504,
+            category=GROQ_ERROR_CATEGORY_TIMEOUT,
+        )
+    if isinstance(exc, APIConnectionError):
+        return GroqServiceError(
+            "Nao foi possivel conectar a Groq.",
+            502,
+            category=GROQ_ERROR_CATEGORY_CONNECTION_ERROR,
+        )
+    if isinstance(exc, APIStatusError):
+        return GroqServiceError(
+            f"A Groq retornou erro ao {action} (status nao classificado).",
+            502,
+            category=GROQ_ERROR_CATEGORY_API_STATUS_ERROR,
+        )
+
+    # Nao e nenhuma excecao conhecida da SDK da Groq - mesma categoria
+    # "nao classificada" (None) e mesmo status/mensagem que o servico ja
+    # usava antes do Bloco 4 para falhas inesperadas.
+    return GroqServiceError(f"Falha inesperada ao {action}.", 502)
+
+
+def parse_groq_api_keys() -> list[str]:
+    """Resolve a lista de API keys da Groq configuradas via variaveis de ambiente.
+
+    Escopo desta funcao (Bloco 1 - parse e configuracao das API keys):
+    - Apenas leitura/normalizacao das chaves configuradas. NAO faz
+      round-robin, NAO seleciona/rotaciona chave nenhuma, NAO decide pool e
+      NAO e usada por `_client()` ainda (isso fica para um bloco futuro).
+
+    Precedencia entre as duas variaveis de ambiente suportadas:
+    - `GROQ_API_KEYS`: lista de chaves separadas por virgula. Cada entrada e
+      normalizada com `.strip()` e entradas vazias sao descartadas. A ordem
+      configurada e preservada e duplicatas NAO sao removidas nesta etapa.
+      Quando resulta em pelo menos uma chave valida, tem prioridade total:
+      `GROQ_API_KEY` e ignorada e as duas configuracoes NAO sao concatenadas.
+    - `GROQ_API_KEY`: usada apenas como fallback, e somente quando
+      `GROQ_API_KEYS` estiver ausente, vazia, ou não resultar em nenhuma
+      chave valida apos o parsing acima. Tambem e normalizada com
+      `.strip()`.
+
+    Se nenhuma das duas fontes fornecer uma chave valida, levanta
+    `GroqConfigurationError` (sem incluir qualquer valor de chave na
+    mensagem). Nenhum valor de chave e logado por esta funcao.
+
+    Nao ha limite maximo de chaves hardcoded: a quantidade e definida
+    inteiramente pela configuracao.
+    """
+    raw_keys = os.getenv("GROQ_API_KEYS", "")
+    parsed_keys = [key.strip() for key in raw_keys.split(",") if key.strip()]
+    if parsed_keys:
+        return parsed_keys
+
+    single_key = os.getenv("GROQ_API_KEY", "").strip()
+    if single_key:
+        return [single_key]
+
+    raise GroqConfigurationError(
+        "Nenhuma API key da Groq configurada (defina GROQ_API_KEYS ou GROQ_API_KEY)."
+    )
+
+
+# Bloco 3 - pool de keys por processo.
+#
+# `_key_pool` guarda a UNICA instancia de `GroqKeyPool` deste processo
+# Python, criada sob demanda (lazy initialization) na primeira chamada a
+# `_get_key_pool()` e reutilizada em todas as chamadas seguintes. Isso e
+# proposital: recriar o `GroqKeyPool` a cada chamada zeraria o indice
+# round-robin sempre para a primeira key, quebrando a rotacao entre
+# requisicoes. Nao usamos Redis, banco, singleton framework nem nenhuma
+# infraestrutura nova - apenas uma variavel de modulo, que e o mecanismo
+# mais simples possivel para manter um pool por processo em Python.
+#
+# Limitacao conhecida (fora do escopo deste bloco): esta variavel vive na
+# memoria de UM processo Python. Se a aplicacao rodar com multiplos
+# processos ou workers (ex.: `gunicorn -w N`), cada processo tera sua
+# propria instancia de `_key_pool` e seu proprio indice round-robin, sem
+# nenhuma coordenacao entre processos.
+_key_pool: GroqKeyPool | None = None
+
+# Lock dedicado EXCLUSIVAMENTE a inicializacao lazy de `_key_pool` (o
+# "criar a instancia, uma vez, por processo"). E um lock diferente do
+# `threading.Lock` interno de `GroqKeyPool` (que protege apenas a
+# leitura/avanco do indice round-robin dentro de `next_key()`). Sao dois
+# problemas de concorrencia distintos, cada um com seu proprio lock:
+# - `_key_pool_init_lock`: garante que apenas UMA instancia de
+#   `GroqKeyPool` seja criada, mesmo com threads concorrentes chamando
+#   `_get_key_pool()` antes de `_key_pool` existir.
+# - lock interno de `GroqKeyPool`: garante que, uma vez que a instancia
+#   exista, `next_key()` avance o indice corretamente entre threads.
+_key_pool_init_lock = threading.Lock()
+
+
+def _get_key_pool() -> GroqKeyPool:
+    """Retorna o pool de keys do processo, criando-o na primeira chamada.
+
+    Thread safety da inicializacao (double-checked locking): sem protecao,
+    duas threads Flask concorrentes poderiam ambas ver `_key_pool is None`
+    ao mesmo tempo, cada uma construir seu proprio `GroqKeyPool` (cada um
+    comecando no indice 0) e uma atribuicao sobrescrever a outra - quebrando
+    a garantia de "um unico pool, com round-robin continuo, por processo".
+    Para evitar isso:
+    1. Primeiro checa `_key_pool is None` sem lock (caminho rapido, comum,
+       depois que o pool ja foi criado - nao paga custo de lock a cada
+       chamada).
+    2. Se ainda nao existe, adquire `_key_pool_init_lock` e checa de novo
+       ("double-check") antes de criar - assim, se duas threads chegarem
+       quase juntas, so a primeira a entrar no lock efetivamente cria o
+       pool; a segunda, ao reobter o lock, ve que `_key_pool` ja foi
+       preenchido e reaproveita a mesma instancia.
+    O lock e liberado antes do `return`; nenhuma chamada de rede, ao Groq,
+    ou qualquer operacao externa acontece dentro da secao critica - so a
+    leitura de variaveis de ambiente (via `parse_groq_api_keys()`) e a
+    construcao do objeto `GroqKeyPool` em memoria.
+
+    Constroi o `GroqKeyPool` a partir de `parse_groq_api_keys()` (Bloco 1),
+    preservando a mesma precedencia entre `GROQ_API_KEYS`/`GROQ_API_KEY` e o
+    mesmo comportamento de erro definidos naquele bloco. `parse_groq_api_keys`
+    ja levanta `GroqConfigurationError` quando nenhuma key valida esta
+    configurada, entao `GroqKeyPool` normalmente so e construido com uma
+    lista nao vazia. Ainda assim, por seguranca e para reconciliar os dois
+    erros de configuracao existentes no projeto sem criar uma hierarquia
+    nova, qualquer `GroqKeyPoolError` (erro interno de `key_pool.py`, ex.:
+    lista vazia) que eventualmente ocorra aqui e convertido para
+    `GroqConfigurationError` - a mesma excecao de configuracao que o resto
+    do servico (`_model`, `_request_timeout` e o antigo `_client`) ja usa.
+    Nenhum valor de key e incluido na mensagem de erro em nenhum dos casos.
+    """
+    global _key_pool
+
+    if _key_pool is None:
+        with _key_pool_init_lock:
+            if _key_pool is None:
+                try:
+                    _key_pool = GroqKeyPool(parse_groq_api_keys())
+                except GroqKeyPoolError as exc:
+                    raise GroqConfigurationError(
+                        "Nenhuma API key da Groq configurada (defina GROQ_API_KEYS ou GROQ_API_KEY)."
+                    ) from exc
+
+    return _key_pool
+
+
+def _reset_key_pool_for_tests() -> None:
+    """Reseta o pool de keys do processo. Uso exclusivo dos testes.
+
+    Fora de testes, o pool deve persistir durante toda a vida do processo -
+    esta funcao nunca deve ser chamada em codigo de producao. Ela existe
+    apenas para permitir isolamento entre casos de teste que dependem do
+    estado lazy de `_get_key_pool()` (por exemplo, um teste que faz
+    `monkeypatch` de `GROQ_API_KEYS`/`GROQ_API_KEY` e precisa que o proximo
+    `_client()` reconstrua o pool a partir do novo valor, em vez de reusar
+    a instancia criada por um teste anterior).
+
+    O reset tambem e feito sob `_key_pool_init_lock`, pelo mesmo motivo que
+    a criacao e: evitar que um reset de teste e uma inicializacao lazy
+    concorrente (em tese, se algum teste rodasse em paralelo) pisem um no
+    outro. Isso nao adiciona nenhum lock novo - reutiliza o mesmo
+    `_key_pool_init_lock` ja usado por `_get_key_pool()`.
+    """
+    global _key_pool
+    with _key_pool_init_lock:
+        _key_pool = None
+
+
 class GroqService:
     def __init__(self) -> None:
         load_dotenv()
@@ -37,12 +302,11 @@ class GroqService:
     def generate_questions(self, context: dict[str, Any]) -> list[dict[str, Any]]:
         self._validate_context(context)
 
-        client = self._client()
         model = self._model()
         prompt = self._build_questions_prompt(context)
 
-        try:
-            completion = client.chat.completions.create(
+        def _call_groq(client: Groq):
+            return client.chat.completions.create(
                 model=model,
                 messages=[
                     {
@@ -57,14 +321,10 @@ class GroqService:
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
-        except APITimeoutError as exc:
-            raise GroqServiceError("Tempo esgotado ao gerar perguntas.", 504) from exc
-        except APIConnectionError as exc:
-            raise GroqServiceError("Nao foi possivel conectar a Groq.", 502) from exc
-        except APIStatusError as exc:
-            raise GroqServiceError("A Groq retornou erro ao gerar perguntas.", 502) from exc
-        except Exception as exc:
-            raise GroqServiceError("Falha inesperada ao gerar perguntas.", 502) from exc
+
+        completion = self._execute_with_rate_limit_fallback(
+            _call_groq, action="gerar perguntas", ai_operation="generate_questions"
+        )
 
         content = completion.choices[0].message.content if completion.choices else ""
         return self._parse_questions_response(content)
@@ -73,12 +333,35 @@ class GroqService:
         self._validate_context(context)
         normalized_answers = self._validate_answers(answers)
 
-        client = self._client()
         model = self._model()
         prompt = self._build_evaluation_prompt(context, normalized_answers)
 
-        try:
-            completion = client.chat.completions.create(
+        def _call_groq(client: Groq):
+            # Bloco 6: o log de observabilidade por tentativa que existia
+            # aqui (um `except APIStatusError` local, so em
+            # `evaluate_interview`, logando `groq_status_code`/
+            # `groq_error_code`/`groq_request_id` a cada tentativa que
+            # falhasse com `APIStatusError`) foi REMOVIDO nesta rodada -
+            # nao por perda de informacao, mas porque ficou estritamente
+            # redundante: `_execute_with_rate_limit_fallback` agora loga,
+            # de forma centralizada (para as duas operacoes, sem duplicar
+            # logica entre elas), TODOS os mesmos casos que esse bloco
+            # cobria - e com os MESMOS tres campos tecnicos seguros
+            # (`status_code`/`groq_error_code`/`groq_request_id`, via
+            # `_safe_groq_log_fields`, reaproveitando o mesmo
+            # `_extract_groq_error_code` de sempre) - so que agora
+            # enriquecidos com `ai_operation`/`attempt_number`/
+            # `max_attempts`/`error_category`/`fallback_triggered`, o que
+            # esse bloco antigo nao tinha. Nenhuma observabilidade foi
+            # perdida: o unico ganho e a remocao de uma segunda mensagem de
+            # log para o MESMO evento (ex.: um 429 em `evaluate_interview`
+            # antes gerava duas linhas de log - uma aqui, outra no
+            # fallback - agora gera so uma, mais completa). Como bonus,
+            # `evaluate_interview` passa a ter cobertura de log tambem para
+            # timeout/erro de conexao (categorias que este bloco antigo,
+            # por so capturar `APIStatusError`, nunca cobria), alinhando o
+            # comportamento com `generate_questions`.
+            return client.chat.completions.create(
                 model=model,
                 messages=[
                     {
@@ -94,32 +377,278 @@ class GroqService:
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
-        except APITimeoutError as exc:
-            raise GroqServiceError("Tempo esgotado ao avaliar entrevista.", 504) from exc
-        except APIConnectionError as exc:
-            raise GroqServiceError("Nao foi possivel conectar a Groq.", 502) from exc
-        except APIStatusError as exc:
-            logger.warning(
-                "Groq APIStatusError while evaluating interview",
-                extra={
-                    "groq_status_code": getattr(exc, "status_code", None),
-                    "groq_error_code": _extract_groq_error_code(exc),
-                    "groq_request_id": getattr(exc, "request_id", None),
-                },
-            )
-            raise GroqServiceError("A Groq retornou erro ao avaliar entrevista.", 502) from exc
-        except Exception as exc:
-            raise GroqServiceError("Falha inesperada ao avaliar entrevista.", 502) from exc
+
+        completion = self._execute_with_rate_limit_fallback(
+            _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
+        )
 
         content = completion.choices[0].message.content if completion.choices else ""
         return self._parse_evaluation_response(content, normalized_answers)
 
-    def _client(self) -> Groq:
-        api_key = os.getenv("GROQ_API_KEY", "").strip()
-        if not api_key:
-            raise GroqConfigurationError("GROQ_API_KEY nao configurada.")
+    def _execute_with_rate_limit_fallback(self, call_groq, *, action: str, ai_operation: str) -> Any:
+        """Executa `call_groq(client)` com fallback controlado, restrito a
+        rate limit (429 / `RateLimitError` / categoria `rate_limit`).
 
-        return Groq(api_key=api_key, timeout=self._request_timeout())
+        Bloco 5 - regra central (inalterada nesta correcao):
+        1. seleciona uma key ainda nao tentada NESTA operacao;
+        2. executa `call_groq(client)`;
+        3. se der certo, retorna o resultado imediatamente;
+        4. se a excecao classificar como `GROQ_ERROR_CATEGORY_RATE_LIMIT`,
+           tenta a PROXIMA key ainda nao tentada (proxima iteracao do loop);
+        5. qualquer OUTRA categoria (400/401/403/5xx/timeout/conexao/
+           residual/inesperado) sobe IMEDIATAMENTE, sem tentar outra key -
+           delega inteiramente para `_translate_groq_error` (Bloco 4), sem
+           duplicar essa logica aqui.
+
+        Correcao de concorrencia (nesta rodada): a versao anterior usava
+        `self._client()` sem argumentos a cada tentativa, ou seja, cada
+        tentativa chamava `next_key()` do pool global compartilhado. Sob
+        concorrencia, o indice global pode avancar por causa de chamadas de
+        OUTRAS operacoes entre duas tentativas desta mesma operacao, fazendo
+        esta operacao repetir uma key que ja tinha tentado (ver relatorio,
+        secao A). Alem disso, `max_attempts = len(_get_key_pool())` contava
+        SLOTS do round-robin, nao credenciais distintas - com keys
+        duplicadas na configuracao (ex.: `GROQ_API_KEYS=A,A,B`), a mesma
+        credencial "A" podia ser selecionada duas vezes dentro de uma unica
+        operacao mesmo sem nenhuma concorrencia.
+
+        A correcao usa `GroqKeyPool.next_unique_key(tried_keys)`: cada
+        operacao mantem seu proprio conjunto local `tried_keys` (nunca
+        compartilhado com outras operacoes, nunca logado), e cada tentativa
+        pede ao pool "a proxima key do round-robin global que eu, esta
+        operacao, ainda nao tentei". O pool garante isso atomicamente (sob
+        seu proprio lock interno, o mesmo de sempre) comparando POR VALOR,
+        entao (a) mesmo que outra operacao concorrente tenha avancado o
+        indice global entre duas tentativas desta operacao, o valor
+        devolvido nunca esta em `tried_keys` desta operacao; e (b) mesmo com
+        keys duplicadas na configuracao, o mesmo valor nunca e devolvido
+        duas vezes para a mesma operacao. O parser global
+        (`parse_groq_api_keys`) e a lista armazenada no pool NAO sao
+        alterados - a deduplicacao acontece so nesta fronteira, por
+        operacao.
+
+        Numero maximo de tentativas: `len(set(_get_key_pool().keys))` - a
+        quantidade de CREDENCIAIS DISTINTAS configuradas (nao o numero bruto
+        de slots do round-robin), calculada a partir da propriedade `.keys`
+        ja existente do pool. Isso garante, ao mesmo tempo, que (a) cada
+        credencial distinta e tentada no maximo uma vez por operacao e (b)
+        se TODAS as credenciais distintas disponiveis derem 429, o loop
+        termina sozinho e levanta o ultimo erro `rate_limit` - nunca entra
+        em loop infinito nem volta a tentar uma credencial ja usada nesta
+        mesma operacao.
+
+        Round-robin global: `next_unique_key` nunca reseta nem retrocede o
+        indice global do pool - ele so pula (sem consumir permanentemente)
+        posicoes cujo valor ja esta em `tried_keys` desta operacao. O indice
+        continua avancando normalmente a cada posicao examinada, inclusive
+        entre operacoes diferentes - esta funcao nao cria nenhum pool local
+        nem reseta o indice, preservando a continuidade do round-robin
+        global entre operacoes (ex.: op1 usa A e B, op2 comeca em C).
+
+        Nenhum lock fica retido durante a chamada de rede: `next_unique_key`
+        adquire e libera o lock do pool inteiramente ANTES do `return` -
+        `self._client(api_key=...)` e `call_groq(client)` (que faz a
+        chamada de rede) acontecem sempre FORA de qualquer lock.
+
+        Sem retry manual tradicional (sleep, backoff, jitter, Retry-After):
+        o "fallback" aqui e estritamente "tentar a proxima credencial ainda
+        nao tentada", nunca tentar de novo a mesma credencial.
+
+        Seguranca: nenhuma key, header, request ou corpo de resposta e
+        registrado ou incluido na excecao final - so o numero de tentativas
+        (implicito no numero de iteracoes) e a categoria do erro, via
+        `_translate_groq_error`. `tried_keys` e uma variavel local desta
+        chamada, nunca logada, nunca exposta.
+
+        `action`: texto humano curto e FIXO, usado somente para compor a
+        mensagem de erro via `_translate_groq_error` (ex.: "gerar
+        perguntas") - nunca usado nos campos estruturados de log.
+        `ai_operation`: identificador tecnico estavel, usado somente nos
+        campos estruturados de log do Bloco 6 (ex.: "generate_questions") -
+        recebido explicitamente do chamador, nunca inferido a partir de
+        `action` nem de qualquer texto traduzido, para que observabilidade
+        estruturada nao dependa (nem quebre por causa) de mudancas futuras
+        no texto humano das mensagens de erro.
+        """
+        pool = _get_key_pool()
+        max_attempts = len(set(pool.keys))
+
+        # Bloco 6 - observabilidade segura do roteamento/fallback: os logs
+        # abaixo NAO alteram nenhuma decisao de roteamento (nenhuma
+        # condicao do loop, nenhum calculo de `max_attempts`/`tried_keys`
+        # foi tocado nesta rodada) - so registram, para diagnostico na VPS,
+        # qual operacao/tentativa/categoria estava em jogo. Campos usados
+        # em todos os eventos abaixo: `ai_operation` (identificador tecnico
+        # estavel recebido do chamador, ex.: "generate_questions"/
+        # "evaluate_interview" - nunca dado dinamico do usuario, nunca o
+        # texto humano `action`), `attempt_number` (1-based), `max_attempts`,
+        # e, quando aplicavel, `error_category`/`fallback_triggered`/
+        # `exhausted_credentials` mais os campos tecnicos seguros de
+        # `_safe_groq_log_fields` (status_code/groq_error_code/
+        # groq_request_id, quando disponiveis). Nunca inclui o valor de
+        # nenhuma key, header, Authorization, prompt, resposta da
+        # entrevista, contexto da vaga ou conteudo bruto da Groq.
+        tried_keys: set[str] = set()
+        last_rate_limit_error: GroqServiceError | None = None
+        last_rate_limit_cause: Exception | None = None
+        # Flag explicita e direta (nao inferida de `max_attempts`/
+        # `attempt_number`): fica `True` assim que esta operacao realmente
+        # chega a tentar OUTRA credencial apos um 429 - ou seja, no exato
+        # momento em que o evento de fallback (abaixo) e emitido. Com uma
+        # unica credencial distinta configurada, essa transicao nunca
+        # acontece (a primeira e unica tentativa vai direto para o
+        # esgotamento), entao a flag permanece `False` corretamente nesse
+        # caso - sem depender de comparar `max_attempts > 1`.
+        fallback_occurred = False
+
+        for loop_index in range(max_attempts):
+            attempt_number = loop_index + 1
+
+            api_key = pool.next_unique_key(tried_keys)
+            if api_key is None:
+                # Estruturalmente inalcancavel: `max_attempts` e o numero de
+                # credenciais distintas, entao ha sempre uma credencial nao
+                # tentada disponivel para cada uma das `max_attempts`
+                # iteracoes. Mantido como rede de seguranca defensiva,
+                # consistente com o estilo do restante do codigo - encerra o
+                # loop sem tentar novamente em vez de arriscar qualquer
+                # comportamento inesperado.
+                break
+
+            tried_keys.add(api_key)
+            client = self._client(api_key=api_key)
+            try:
+                result = call_groq(client)
+            except Exception as exc:
+                translated = _translate_groq_error(exc, action=action)
+                if translated.category != GROQ_ERROR_CATEGORY_RATE_LIMIT:
+                    # Evento: erro nao-rate-limit encerra a operacao
+                    # imediatamente, sem tentar outra credencial - nenhum
+                    # fallback ocorreu.
+                    logger.warning(
+                        "Groq: operacao encerrada sem fallback (categoria nao elegivel para nova tentativa)",
+                        extra={
+                            "ai_operation": ai_operation,
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                            "error_category": translated.category,
+                            "fallback_triggered": False,
+                            **_safe_groq_log_fields(exc),
+                        },
+                    )
+                    raise translated from exc
+
+                last_rate_limit_error = translated
+                last_rate_limit_cause = exc
+
+                if attempt_number < max_attempts:
+                    # Evento: fallback para a proxima credencial ainda nao
+                    # tentada, por rate limit - ainda ha ao menos uma
+                    # credencial distinta restante para esta operacao. Este
+                    # e o UNICO ponto do codigo onde um fallback de fato
+                    # ocorre (a operacao esta prestes a tentar outra
+                    # credencial), entao e aqui, e so aqui, que
+                    # `fallback_occurred` passa a `True`.
+                    fallback_occurred = True
+                    logger.warning(
+                        "Groq: fallback para proxima credencial por rate limit (429)",
+                        extra={
+                            "ai_operation": ai_operation,
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                            "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
+                            "fallback_triggered": True,
+                            **_safe_groq_log_fields(exc),
+                        },
+                    )
+                # Quando `attempt_number == max_attempts`, esta era a
+                # ultima credencial distinta disponivel - nao ha "proxima
+                # credencial" para anunciar; o evento de esgotamento,
+                # abaixo (apos o loop), cobre esse caso sozinho, sem
+                # duplicar um log de fallback que seria enganoso (diria
+                # "tentando a proxima" quando na verdade nao ha mais
+                # nenhuma).
+                continue
+            else:
+                if attempt_number > 1:
+                    # Evento (opcional, so quando houve fallback): a
+                    # operacao teve sucesso depois de ao menos uma troca de
+                    # credencial por rate limit. Nao loga sucesso de
+                    # primeira tentativa (Caso 1) para nao gerar ruido em
+                    # volume alto de chamadas bem-sucedidas comuns.
+                    logger.info(
+                        "Groq: operacao teve sucesso apos fallback por rate limit",
+                        extra={
+                            "ai_operation": ai_operation,
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                            "fallback_triggered": True,
+                        },
+                    )
+                return result
+
+        # As `max_attempts` tentativas (uma por credencial distinta
+        # disponivel) esgotaram, todas com rate_limit. Evento: todas as
+        # credenciais foram esgotadas por rate limit - nenhuma credencial
+        # distinta restante para esta operacao.
+        #
+        # `fallback_triggered` aqui usa a flag explicita `fallback_occurred`
+        # (setada so no ponto real de transicao para outra credencial,
+        # acima) - NAO `max_attempts > 1` nem qualquer outra inferencia.
+        # Com uma unica credencial distinta configurada (A -> 429 ->
+        # esgotamento, sem nenhuma troca de credencial), `fallback_occurred`
+        # permanece `False` e o esgotamento e corretamente reportado sem
+        # fallback: so a mesma (unica) credencial foi tentada, uma vez.
+        assert last_rate_limit_error is not None  # max_attempts >= 1 (pool nunca vazio)
+        logger.warning(
+            "Groq: todas as credenciais distintas disponiveis foram esgotadas por rate limit (429)",
+            extra={
+                "ai_operation": ai_operation,
+                "attempt_number": max_attempts,
+                "max_attempts": max_attempts,
+                "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
+                "fallback_triggered": fallback_occurred,
+                "exhausted_credentials": True,
+                **_safe_groq_log_fields(last_rate_limit_cause),
+            },
+        )
+        raise last_rate_limit_error from last_rate_limit_cause
+
+    def _client(self, api_key: str | None = None) -> Groq:
+        # Bloco 3: a key nao vem mais direto de GROQ_API_KEY. Ela vem do
+        # pool de keys do processo (`_get_key_pool()`), que seleciona a
+        # proxima key em round-robin a cada chamada (com uma unica key
+        # configurada, `next_key()` sempre retorna essa mesma key, entao o
+        # comportamento observavel continua equivalente ao anterior).
+        #
+        # `max_retries=0` desabilita o retry interno automatico do SDK da
+        # Groq: sem isso, um 429 (ou outro status retryable) poderia ser
+        # tentado novamente pelo proprio SDK, de forma invisivel para este
+        # servico, antes de qualquer excecao chegar aqui. Com
+        # `max_retries=0`, um erro sobe imediatamente na primeira tentativa.
+        #
+        # Bloco 5 (correcao de concorrencia): `_client()` ganha um parametro
+        # opcional `api_key`. Quando chamado SEM argumentos (`api_key=None`,
+        # o padrao), o comportamento e EXATAMENTE o mesmo de sempre -
+        # `next_key()` do pool global - preservando 100% o comportamento
+        # observado pelos testes dos Blocos 3 e 4, que chamam
+        # `GroqService()._client()` sem argumentos. Quando `api_key` e
+        # fornecido explicitamente, ele e usado diretamente, sem consultar o
+        # pool novamente - e assim que `_execute_with_rate_limit_fallback`
+        # usa este metodo agora: primeiro obtem uma credencial ainda nao
+        # tentada nesta operacao via `GroqKeyPool.next_unique_key()`, depois
+        # passa esse valor explicitamente para `_client(api_key=...)`, para
+        # nao chamar o pool duas vezes (uma para escolher a key, outra
+        # dentro de `_client()`) nem arriscar selecionar uma key diferente
+        # da que acabou de ser reservada para esta tentativa.
+        if api_key is None:
+            api_key = _get_key_pool().next_key()
+
+        return Groq(
+            api_key=api_key,
+            timeout=self._request_timeout(),
+            max_retries=0,
+        )
 
     def _model(self) -> str:
         model = os.getenv("GROQ_MODEL", "").strip()
@@ -511,6 +1040,40 @@ def _extract_groq_error_code(exc: APIStatusError) -> str | None:
         return _clean_text(code) or None
 
     return None
+
+
+def _safe_groq_log_fields(exc: Exception) -> dict[str, Any]:
+    """Extrai, de forma segura, os unicos tres campos "tecnicos" que o
+    Bloco 6 autoriza a incluir em log a partir da excecao original da SDK
+    Groq (quando houver): `status_code`, `groq_error_code` (via o mesmo
+    helper `_extract_groq_error_code` ja usado desde o Bloco 4) e
+    `groq_request_id`.
+
+    Usa somente `getattr(..., default=None)` - nunca acessa `.args`,
+    `repr(exc)`, `str(exc)`, nem qualquer atributo que possa conter o corpo
+    completo da requisicao/resposta, headers, prompt ou conteudo retornado
+    pela Groq. Para uma excecao que nao e um `APIStatusError` (ex.:
+    `APIConnectionError`/`APITimeoutError`, ou qualquer erro inesperado),
+    `getattr` simplesmente nao encontra os atributos e todos os campos saem
+    como `None` - nunca lanca excecao.
+
+    So inclui no dict de retorno os campos que nao sao `None`, para manter
+    os logs enxutos (sem `status_code=None, groq_error_code=None, ...`
+    poluindo cada linha quando a informacao simplesmente nao existe para
+    aquele tipo de erro).
+    """
+    status_code = getattr(exc, "status_code", None)
+    groq_error_code = _extract_groq_error_code(exc) if isinstance(exc, APIStatusError) else None
+    groq_request_id = getattr(exc, "request_id", None)
+
+    fields: dict[str, Any] = {}
+    if status_code is not None:
+        fields["status_code"] = status_code
+    if groq_error_code is not None:
+        fields["groq_error_code"] = groq_error_code
+    if groq_request_id is not None:
+        fields["groq_request_id"] = groq_request_id
+    return fields
 
 
 def _normalize_string_array(value: Any) -> list[str]:
