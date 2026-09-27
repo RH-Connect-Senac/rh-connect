@@ -9,7 +9,17 @@ import threading
 from typing import Any
 
 from dotenv import load_dotenv
-from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq
+from groq import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    Groq,
+    InternalServerError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 from key_pool import GroqKeyPool, GroqKeyPoolError
 from schemas import EVALUATION_CRITERIA, QUESTION_TYPES
@@ -20,9 +30,16 @@ logger = logging.getLogger(__name__)
 class GroqServiceError(Exception):
     """Controlled error raised by Groq integrations."""
 
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 502, category: str | None = None):
         super().__init__(message)
         self.status_code = status_code
+        # Bloco 4: categoria controlada e testavel do erro (ver
+        # GROQ_ERROR_CATEGORY_* abaixo), para que o restante do servico
+        # saiba qual tipo de erro da Groq aconteceu sem precisar analisar
+        # texto de mensagem. `None` para erros que nao vem de uma chamada a
+        # Groq (ex.: GroqConfigurationError, erros de validacao de
+        # payload).
+        self.category = category
 
 
 class GroqConfigurationError(GroqServiceError):
@@ -30,6 +47,109 @@ class GroqConfigurationError(GroqServiceError):
 
     def __init__(self, message: str):
         super().__init__(message, 500)
+
+
+# Bloco 4 - categorias controladas de erro da Groq.
+#
+# Strings simples, nao um enum/framework novo: o objetivo e so permitir que
+# o restante do servico (e testes) verifiquem `exc.category == "rate_limit"`
+# em vez de analisar o texto da mensagem. Nenhuma dessas categorias, por si
+# so, provoca retry, troca de key ou qualquer outra acao nesta rodada - isso
+# fica para o Bloco 5 (que vai reagir especificamente a
+# GROQ_ERROR_CATEGORY_RATE_LIMIT).
+GROQ_ERROR_CATEGORY_RATE_LIMIT = "rate_limit"
+GROQ_ERROR_CATEGORY_BAD_REQUEST = "bad_request"
+GROQ_ERROR_CATEGORY_AUTHENTICATION = "authentication"
+GROQ_ERROR_CATEGORY_PERMISSION_DENIED = "permission_denied"
+GROQ_ERROR_CATEGORY_UPSTREAM_SERVER_ERROR = "upstream_server_error"
+GROQ_ERROR_CATEGORY_TIMEOUT = "timeout"
+GROQ_ERROR_CATEGORY_CONNECTION_ERROR = "connection_error"
+GROQ_ERROR_CATEGORY_API_STATUS_ERROR = "api_status_error"
+
+
+def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
+    """Traduz uma excecao levantada pela chamada a Groq (ou qualquer outra
+    excecao inesperada) para um `GroqServiceError` com uma categoria
+    controlada, programatica e testavel - sem depender de comparacao de
+    texto da mensagem.
+
+    `action` e um texto curto e FIXO (ex.: "gerar perguntas",
+    "avaliar entrevista"), usado apenas para compor a mensagem de erro.
+    Nunca deve receber dado dinamico do payload do usuario, do prompt ou da
+    resposta da Groq.
+
+    IMPORTANTE (escopo do Bloco 4): esta funcao SO classifica o erro. Ela
+    nao chama `next_key()`, nao tenta outra key, nao faz retry manual nem
+    sleep/backoff - o erro classificado sobe normalmente. Em particular,
+    `RateLimitError` (429) e identificado com
+    `GROQ_ERROR_CATEGORY_RATE_LIMIT`, mas isso ainda NAO troca de key nesta
+    rodada; a reacao a essa categoria fica para o Bloco 5.
+
+    A ordem das checagens importa: subclasses mais especificas de
+    `APIStatusError` (RateLimitError, BadRequestError, AuthenticationError,
+    PermissionDeniedError, InternalServerError) sao checadas antes da
+    classe base `APIStatusError`; e `APITimeoutError` (subclasse de
+    `APIConnectionError` na SDK) e checado antes de `APIConnectionError`.
+
+    Seguranca: a mensagem retornada nunca inclui a API key, headers,
+    request/response completos, prompt, respostas do candidato ou o corpo
+    bruto retornado pela Groq - apenas texto fixo, a categoria e o status
+    code. Preservar mais contexto tecnico (ex.: error code seguro da Groq)
+    fica para um bloco de observabilidade futuro.
+    """
+    if isinstance(exc, RateLimitError):
+        return GroqServiceError(
+            f"A Groq retornou limite de requisicoes (429) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_RATE_LIMIT,
+        )
+    if isinstance(exc, BadRequestError):
+        return GroqServiceError(
+            f"A Groq retornou requisicao invalida (400) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_BAD_REQUEST,
+        )
+    if isinstance(exc, AuthenticationError):
+        return GroqServiceError(
+            f"A Groq retornou erro de autenticacao (401) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_AUTHENTICATION,
+        )
+    if isinstance(exc, PermissionDeniedError):
+        return GroqServiceError(
+            f"A Groq retornou erro de permissao (403) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_PERMISSION_DENIED,
+        )
+    if isinstance(exc, InternalServerError):
+        return GroqServiceError(
+            f"A Groq retornou erro interno (5xx) ao {action}.",
+            502,
+            category=GROQ_ERROR_CATEGORY_UPSTREAM_SERVER_ERROR,
+        )
+    if isinstance(exc, APITimeoutError):
+        return GroqServiceError(
+            f"Tempo esgotado ao {action}.",
+            504,
+            category=GROQ_ERROR_CATEGORY_TIMEOUT,
+        )
+    if isinstance(exc, APIConnectionError):
+        return GroqServiceError(
+            "Nao foi possivel conectar a Groq.",
+            502,
+            category=GROQ_ERROR_CATEGORY_CONNECTION_ERROR,
+        )
+    if isinstance(exc, APIStatusError):
+        return GroqServiceError(
+            f"A Groq retornou erro ao {action} (status nao classificado).",
+            502,
+            category=GROQ_ERROR_CATEGORY_API_STATUS_ERROR,
+        )
+
+    # Nao e nenhuma excecao conhecida da SDK da Groq - mesma categoria
+    # "nao classificada" (None) e mesmo status/mensagem que o servico ja
+    # usava antes do Bloco 4 para falhas inesperadas.
+    return GroqServiceError(f"Falha inesperada ao {action}.", 502)
 
 
 def parse_groq_api_keys() -> list[str]:
@@ -202,14 +322,12 @@ class GroqService:
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
-        except APITimeoutError as exc:
-            raise GroqServiceError("Tempo esgotado ao gerar perguntas.", 504) from exc
-        except APIConnectionError as exc:
-            raise GroqServiceError("Nao foi possivel conectar a Groq.", 502) from exc
-        except APIStatusError as exc:
-            raise GroqServiceError("A Groq retornou erro ao gerar perguntas.", 502) from exc
         except Exception as exc:
-            raise GroqServiceError("Falha inesperada ao gerar perguntas.", 502) from exc
+            # Bloco 4: toda classificacao de erro (429/400/401/403/5xx/
+            # timeout/conexao/residual/inesperado) passa por
+            # `_translate_groq_error`, que so identifica a categoria - nao
+            # tenta outra key, nao faz retry. Ver docstring da funcao.
+            raise _translate_groq_error(exc, action="gerar perguntas") from exc
 
         content = completion.choices[0].message.content if completion.choices else ""
         return self._parse_questions_response(content)
@@ -239,22 +357,22 @@ class GroqService:
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
-        except APITimeoutError as exc:
-            raise GroqServiceError("Tempo esgotado ao avaliar entrevista.", 504) from exc
-        except APIConnectionError as exc:
-            raise GroqServiceError("Nao foi possivel conectar a Groq.", 502) from exc
-        except APIStatusError as exc:
-            logger.warning(
-                "Groq APIStatusError while evaluating interview",
-                extra={
-                    "groq_status_code": getattr(exc, "status_code", None),
-                    "groq_error_code": _extract_groq_error_code(exc),
-                    "groq_request_id": getattr(exc, "request_id", None),
-                },
-            )
-            raise GroqServiceError("A Groq retornou erro ao avaliar entrevista.", 502) from exc
         except Exception as exc:
-            raise GroqServiceError("Falha inesperada ao avaliar entrevista.", 502) from exc
+            # Preserva o logging de observabilidade ja existente nesta
+            # branch para APIStatusError (inalterado - mesmos campos,
+            # mesmo nivel, nenhum dado sensivel). Bloco 4 nao amplia
+            # observabilidade, so adiciona a classificacao via
+            # `_translate_groq_error` (ver docstring da funcao).
+            if isinstance(exc, APIStatusError):
+                logger.warning(
+                    "Groq APIStatusError while evaluating interview",
+                    extra={
+                        "groq_status_code": getattr(exc, "status_code", None),
+                        "groq_error_code": _extract_groq_error_code(exc),
+                        "groq_request_id": getattr(exc, "request_id", None),
+                    },
+                )
+            raise _translate_groq_error(exc, action="avaliar entrevista") from exc
 
         content = completion.choices[0].message.content if completion.choices else ""
         return self._parse_evaluation_response(content, normalized_answers)
