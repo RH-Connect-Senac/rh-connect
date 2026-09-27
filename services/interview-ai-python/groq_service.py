@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 from dotenv import load_dotenv
 from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq
 
+from key_pool import GroqKeyPool, GroqKeyPoolError
 from schemas import EVALUATION_CRITERIA, QUESTION_TYPES
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,109 @@ def parse_groq_api_keys() -> list[str]:
     raise GroqConfigurationError(
         "Nenhuma API key da Groq configurada (defina GROQ_API_KEYS ou GROQ_API_KEY)."
     )
+
+
+# Bloco 3 - pool de keys por processo.
+#
+# `_key_pool` guarda a UNICA instancia de `GroqKeyPool` deste processo
+# Python, criada sob demanda (lazy initialization) na primeira chamada a
+# `_get_key_pool()` e reutilizada em todas as chamadas seguintes. Isso e
+# proposital: recriar o `GroqKeyPool` a cada chamada zeraria o indice
+# round-robin sempre para a primeira key, quebrando a rotacao entre
+# requisicoes. Nao usamos Redis, banco, singleton framework nem nenhuma
+# infraestrutura nova - apenas uma variavel de modulo, que e o mecanismo
+# mais simples possivel para manter um pool por processo em Python.
+#
+# Limitacao conhecida (fora do escopo deste bloco): esta variavel vive na
+# memoria de UM processo Python. Se a aplicacao rodar com multiplos
+# processos ou workers (ex.: `gunicorn -w N`), cada processo tera sua
+# propria instancia de `_key_pool` e seu proprio indice round-robin, sem
+# nenhuma coordenacao entre processos.
+_key_pool: GroqKeyPool | None = None
+
+# Lock dedicado EXCLUSIVAMENTE a inicializacao lazy de `_key_pool` (o
+# "criar a instancia, uma vez, por processo"). E um lock diferente do
+# `threading.Lock` interno de `GroqKeyPool` (que protege apenas a
+# leitura/avanco do indice round-robin dentro de `next_key()`). Sao dois
+# problemas de concorrencia distintos, cada um com seu proprio lock:
+# - `_key_pool_init_lock`: garante que apenas UMA instancia de
+#   `GroqKeyPool` seja criada, mesmo com threads concorrentes chamando
+#   `_get_key_pool()` antes de `_key_pool` existir.
+# - lock interno de `GroqKeyPool`: garante que, uma vez que a instancia
+#   exista, `next_key()` avance o indice corretamente entre threads.
+_key_pool_init_lock = threading.Lock()
+
+
+def _get_key_pool() -> GroqKeyPool:
+    """Retorna o pool de keys do processo, criando-o na primeira chamada.
+
+    Thread safety da inicializacao (double-checked locking): sem protecao,
+    duas threads Flask concorrentes poderiam ambas ver `_key_pool is None`
+    ao mesmo tempo, cada uma construir seu proprio `GroqKeyPool` (cada um
+    comecando no indice 0) e uma atribuicao sobrescrever a outra - quebrando
+    a garantia de "um unico pool, com round-robin continuo, por processo".
+    Para evitar isso:
+    1. Primeiro checa `_key_pool is None` sem lock (caminho rapido, comum,
+       depois que o pool ja foi criado - nao paga custo de lock a cada
+       chamada).
+    2. Se ainda nao existe, adquire `_key_pool_init_lock` e checa de novo
+       ("double-check") antes de criar - assim, se duas threads chegarem
+       quase juntas, so a primeira a entrar no lock efetivamente cria o
+       pool; a segunda, ao reobter o lock, ve que `_key_pool` ja foi
+       preenchido e reaproveita a mesma instancia.
+    O lock e liberado antes do `return`; nenhuma chamada de rede, ao Groq,
+    ou qualquer operacao externa acontece dentro da secao critica - so a
+    leitura de variaveis de ambiente (via `parse_groq_api_keys()`) e a
+    construcao do objeto `GroqKeyPool` em memoria.
+
+    Constroi o `GroqKeyPool` a partir de `parse_groq_api_keys()` (Bloco 1),
+    preservando a mesma precedencia entre `GROQ_API_KEYS`/`GROQ_API_KEY` e o
+    mesmo comportamento de erro definidos naquele bloco. `parse_groq_api_keys`
+    ja levanta `GroqConfigurationError` quando nenhuma key valida esta
+    configurada, entao `GroqKeyPool` normalmente so e construido com uma
+    lista nao vazia. Ainda assim, por seguranca e para reconciliar os dois
+    erros de configuracao existentes no projeto sem criar uma hierarquia
+    nova, qualquer `GroqKeyPoolError` (erro interno de `key_pool.py`, ex.:
+    lista vazia) que eventualmente ocorra aqui e convertido para
+    `GroqConfigurationError` - a mesma excecao de configuracao que o resto
+    do servico (`_model`, `_request_timeout` e o antigo `_client`) ja usa.
+    Nenhum valor de key e incluido na mensagem de erro em nenhum dos casos.
+    """
+    global _key_pool
+
+    if _key_pool is None:
+        with _key_pool_init_lock:
+            if _key_pool is None:
+                try:
+                    _key_pool = GroqKeyPool(parse_groq_api_keys())
+                except GroqKeyPoolError as exc:
+                    raise GroqConfigurationError(
+                        "Nenhuma API key da Groq configurada (defina GROQ_API_KEYS ou GROQ_API_KEY)."
+                    ) from exc
+
+    return _key_pool
+
+
+def _reset_key_pool_for_tests() -> None:
+    """Reseta o pool de keys do processo. Uso exclusivo dos testes.
+
+    Fora de testes, o pool deve persistir durante toda a vida do processo -
+    esta funcao nunca deve ser chamada em codigo de producao. Ela existe
+    apenas para permitir isolamento entre casos de teste que dependem do
+    estado lazy de `_get_key_pool()` (por exemplo, um teste que faz
+    `monkeypatch` de `GROQ_API_KEYS`/`GROQ_API_KEY` e precisa que o proximo
+    `_client()` reconstrua o pool a partir do novo valor, em vez de reusar
+    a instancia criada por um teste anterior).
+
+    O reset tambem e feito sob `_key_pool_init_lock`, pelo mesmo motivo que
+    a criacao e: evitar que um reset de teste e uma inicializacao lazy
+    concorrente (em tese, se algum teste rodasse em paralelo) pisem um no
+    outro. Isso nao adiciona nenhum lock novo - reutiliza o mesmo
+    `_key_pool_init_lock` ja usado por `_get_key_pool()`.
+    """
+    global _key_pool
+    with _key_pool_init_lock:
+        _key_pool = None
 
 
 class GroqService:
@@ -155,11 +260,25 @@ class GroqService:
         return self._parse_evaluation_response(content, normalized_answers)
 
     def _client(self) -> Groq:
-        api_key = os.getenv("GROQ_API_KEY", "").strip()
-        if not api_key:
-            raise GroqConfigurationError("GROQ_API_KEY nao configurada.")
-
-        return Groq(api_key=api_key, timeout=self._request_timeout())
+        # Bloco 3: a key nao vem mais direto de GROQ_API_KEY. Ela vem do
+        # pool de keys do processo (`_get_key_pool()`), que seleciona a
+        # proxima key em round-robin a cada chamada (com uma unica key
+        # configurada, `next_key()` sempre retorna essa mesma key, entao o
+        # comportamento observavel continua equivalente ao anterior).
+        #
+        # `max_retries=0` desabilita o retry interno automatico do SDK da
+        # Groq: sem isso, um 429 (ou outro status retryable) poderia ser
+        # tentado novamente pelo proprio SDK, de forma invisivel para este
+        # servico, antes de qualquer excecao chegar aqui. Com
+        # `max_retries=0`, um erro sobe imediatamente na primeira tentativa.
+        # O fallback para outra key do pool em caso de 429 fica para um
+        # bloco futuro (Bloco 5) - por enquanto, o erro apenas sobe.
+        api_key = _get_key_pool().next_key()
+        return Groq(
+            api_key=api_key,
+            timeout=self._request_timeout(),
+            max_retries=0,
+        )
 
     def _model(self) -> str:
         model = os.getenv("GROQ_MODEL", "").strip()
