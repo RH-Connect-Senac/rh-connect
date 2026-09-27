@@ -322,7 +322,9 @@ class GroqService:
                 response_format={"type": "json_object"},
             )
 
-        completion = self._execute_with_rate_limit_fallback(_call_groq, action="gerar perguntas")
+        completion = self._execute_with_rate_limit_fallback(
+            _call_groq, action="gerar perguntas", ai_operation="generate_questions"
+        )
 
         content = completion.choices[0].message.content if completion.choices else ""
         return self._parse_questions_response(content)
@@ -335,48 +337,55 @@ class GroqService:
         prompt = self._build_evaluation_prompt(context, normalized_answers)
 
         def _call_groq(client: Groq):
-            try:
-                return client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "Voce e um avaliador educacional de entrevistas profissionais. "
-                                "Avalie com foco em desenvolvimento do candidato. "
-                                "Responda somente com JSON valido, sem markdown."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.2,
-                    response_format={"type": "json_object"},
-                )
-            except APIStatusError as exc:
-                # Preserva o logging de observabilidade ja existente nesta
-                # branch (inalterado - mesmos campos, mesmo nivel, nenhum
-                # dado sensivel). Como agora pode haver mais de uma
-                # tentativa por operacao (Bloco 5, somente para 429), este
-                # log pode disparar uma vez por tentativa que falhar com
-                # APIStatusError - nao e observabilidade nova, e o mesmo
-                # log de sempre, agora natural de mais de uma tentativa
-                # existir. Ver secao de riscos da entrega do Bloco 5.
-                logger.warning(
-                    "Groq APIStatusError while evaluating interview",
-                    extra={
-                        "groq_status_code": getattr(exc, "status_code", None),
-                        "groq_error_code": _extract_groq_error_code(exc),
-                        "groq_request_id": getattr(exc, "request_id", None),
+            # Bloco 6: o log de observabilidade por tentativa que existia
+            # aqui (um `except APIStatusError` local, so em
+            # `evaluate_interview`, logando `groq_status_code`/
+            # `groq_error_code`/`groq_request_id` a cada tentativa que
+            # falhasse com `APIStatusError`) foi REMOVIDO nesta rodada -
+            # nao por perda de informacao, mas porque ficou estritamente
+            # redundante: `_execute_with_rate_limit_fallback` agora loga,
+            # de forma centralizada (para as duas operacoes, sem duplicar
+            # logica entre elas), TODOS os mesmos casos que esse bloco
+            # cobria - e com os MESMOS tres campos tecnicos seguros
+            # (`status_code`/`groq_error_code`/`groq_request_id`, via
+            # `_safe_groq_log_fields`, reaproveitando o mesmo
+            # `_extract_groq_error_code` de sempre) - so que agora
+            # enriquecidos com `ai_operation`/`attempt_number`/
+            # `max_attempts`/`error_category`/`fallback_triggered`, o que
+            # esse bloco antigo nao tinha. Nenhuma observabilidade foi
+            # perdida: o unico ganho e a remocao de uma segunda mensagem de
+            # log para o MESMO evento (ex.: um 429 em `evaluate_interview`
+            # antes gerava duas linhas de log - uma aqui, outra no
+            # fallback - agora gera so uma, mais completa). Como bonus,
+            # `evaluate_interview` passa a ter cobertura de log tambem para
+            # timeout/erro de conexao (categorias que este bloco antigo,
+            # por so capturar `APIStatusError`, nunca cobria), alinhando o
+            # comportamento com `generate_questions`.
+            return client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Voce e um avaliador educacional de entrevistas profissionais. "
+                            "Avalie com foco em desenvolvimento do candidato. "
+                            "Responda somente com JSON valido, sem markdown."
+                        ),
                     },
-                )
-                raise
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
 
-        completion = self._execute_with_rate_limit_fallback(_call_groq, action="avaliar entrevista")
+        completion = self._execute_with_rate_limit_fallback(
+            _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
+        )
 
         content = completion.choices[0].message.content if completion.choices else ""
         return self._parse_evaluation_response(content, normalized_answers)
 
-    def _execute_with_rate_limit_fallback(self, call_groq, *, action: str) -> Any:
+    def _execute_with_rate_limit_fallback(self, call_groq, *, action: str, ai_operation: str) -> Any:
         """Executa `call_groq(client)` com fallback controlado, restrito a
         rate limit (429 / `RateLimitError` / categoria `rate_limit`).
 
@@ -450,15 +459,51 @@ class GroqService:
         (implicito no numero de iteracoes) e a categoria do erro, via
         `_translate_groq_error`. `tried_keys` e uma variavel local desta
         chamada, nunca logada, nunca exposta.
+
+        `action`: texto humano curto e FIXO, usado somente para compor a
+        mensagem de erro via `_translate_groq_error` (ex.: "gerar
+        perguntas") - nunca usado nos campos estruturados de log.
+        `ai_operation`: identificador tecnico estavel, usado somente nos
+        campos estruturados de log do Bloco 6 (ex.: "generate_questions") -
+        recebido explicitamente do chamador, nunca inferido a partir de
+        `action` nem de qualquer texto traduzido, para que observabilidade
+        estruturada nao dependa (nem quebre por causa) de mudancas futuras
+        no texto humano das mensagens de erro.
         """
         pool = _get_key_pool()
         max_attempts = len(set(pool.keys))
 
+        # Bloco 6 - observabilidade segura do roteamento/fallback: os logs
+        # abaixo NAO alteram nenhuma decisao de roteamento (nenhuma
+        # condicao do loop, nenhum calculo de `max_attempts`/`tried_keys`
+        # foi tocado nesta rodada) - so registram, para diagnostico na VPS,
+        # qual operacao/tentativa/categoria estava em jogo. Campos usados
+        # em todos os eventos abaixo: `ai_operation` (identificador tecnico
+        # estavel recebido do chamador, ex.: "generate_questions"/
+        # "evaluate_interview" - nunca dado dinamico do usuario, nunca o
+        # texto humano `action`), `attempt_number` (1-based), `max_attempts`,
+        # e, quando aplicavel, `error_category`/`fallback_triggered`/
+        # `exhausted_credentials` mais os campos tecnicos seguros de
+        # `_safe_groq_log_fields` (status_code/groq_error_code/
+        # groq_request_id, quando disponiveis). Nunca inclui o valor de
+        # nenhuma key, header, Authorization, prompt, resposta da
+        # entrevista, contexto da vaga ou conteudo bruto da Groq.
         tried_keys: set[str] = set()
         last_rate_limit_error: GroqServiceError | None = None
         last_rate_limit_cause: Exception | None = None
+        # Flag explicita e direta (nao inferida de `max_attempts`/
+        # `attempt_number`): fica `True` assim que esta operacao realmente
+        # chega a tentar OUTRA credencial apos um 429 - ou seja, no exato
+        # momento em que o evento de fallback (abaixo) e emitido. Com uma
+        # unica credencial distinta configurada, essa transicao nunca
+        # acontece (a primeira e unica tentativa vai direto para o
+        # esgotamento), entao a flag permanece `False` corretamente nesse
+        # caso - sem depender de comparar `max_attempts > 1`.
+        fallback_occurred = False
 
-        for _attempt_number in range(max_attempts):
+        for loop_index in range(max_attempts):
+            attempt_number = loop_index + 1
+
             api_key = pool.next_unique_key(tried_keys)
             if api_key is None:
                 # Estruturalmente inalcancavel: `max_attempts` e o numero de
@@ -473,22 +518,100 @@ class GroqService:
             tried_keys.add(api_key)
             client = self._client(api_key=api_key)
             try:
-                return call_groq(client)
+                result = call_groq(client)
             except Exception as exc:
                 translated = _translate_groq_error(exc, action=action)
                 if translated.category != GROQ_ERROR_CATEGORY_RATE_LIMIT:
+                    # Evento: erro nao-rate-limit encerra a operacao
+                    # imediatamente, sem tentar outra credencial - nenhum
+                    # fallback ocorreu.
+                    logger.warning(
+                        "Groq: operacao encerrada sem fallback (categoria nao elegivel para nova tentativa)",
+                        extra={
+                            "ai_operation": ai_operation,
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                            "error_category": translated.category,
+                            "fallback_triggered": False,
+                            **_safe_groq_log_fields(exc),
+                        },
+                    )
                     raise translated from exc
 
-                # Categoria rate_limit: NAO sobe ainda - tenta a proxima
-                # credencial ainda nao tentada na proxima iteracao (se
-                # houver alguma restante).
                 last_rate_limit_error = translated
                 last_rate_limit_cause = exc
 
+                if attempt_number < max_attempts:
+                    # Evento: fallback para a proxima credencial ainda nao
+                    # tentada, por rate limit - ainda ha ao menos uma
+                    # credencial distinta restante para esta operacao. Este
+                    # e o UNICO ponto do codigo onde um fallback de fato
+                    # ocorre (a operacao esta prestes a tentar outra
+                    # credencial), entao e aqui, e so aqui, que
+                    # `fallback_occurred` passa a `True`.
+                    fallback_occurred = True
+                    logger.warning(
+                        "Groq: fallback para proxima credencial por rate limit (429)",
+                        extra={
+                            "ai_operation": ai_operation,
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                            "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
+                            "fallback_triggered": True,
+                            **_safe_groq_log_fields(exc),
+                        },
+                    )
+                # Quando `attempt_number == max_attempts`, esta era a
+                # ultima credencial distinta disponivel - nao ha "proxima
+                # credencial" para anunciar; o evento de esgotamento,
+                # abaixo (apos o loop), cobre esse caso sozinho, sem
+                # duplicar um log de fallback que seria enganoso (diria
+                # "tentando a proxima" quando na verdade nao ha mais
+                # nenhuma).
+                continue
+            else:
+                if attempt_number > 1:
+                    # Evento (opcional, so quando houve fallback): a
+                    # operacao teve sucesso depois de ao menos uma troca de
+                    # credencial por rate limit. Nao loga sucesso de
+                    # primeira tentativa (Caso 1) para nao gerar ruido em
+                    # volume alto de chamadas bem-sucedidas comuns.
+                    logger.info(
+                        "Groq: operacao teve sucesso apos fallback por rate limit",
+                        extra={
+                            "ai_operation": ai_operation,
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                            "fallback_triggered": True,
+                        },
+                    )
+                return result
+
         # As `max_attempts` tentativas (uma por credencial distinta
-        # disponivel) esgotaram, todas com rate_limit. Levanta o ultimo erro
-        # classificado, preservando o encadeamento da causa original.
+        # disponivel) esgotaram, todas com rate_limit. Evento: todas as
+        # credenciais foram esgotadas por rate limit - nenhuma credencial
+        # distinta restante para esta operacao.
+        #
+        # `fallback_triggered` aqui usa a flag explicita `fallback_occurred`
+        # (setada so no ponto real de transicao para outra credencial,
+        # acima) - NAO `max_attempts > 1` nem qualquer outra inferencia.
+        # Com uma unica credencial distinta configurada (A -> 429 ->
+        # esgotamento, sem nenhuma troca de credencial), `fallback_occurred`
+        # permanece `False` e o esgotamento e corretamente reportado sem
+        # fallback: so a mesma (unica) credencial foi tentada, uma vez.
         assert last_rate_limit_error is not None  # max_attempts >= 1 (pool nunca vazio)
+        logger.warning(
+            "Groq: todas as credenciais distintas disponiveis foram esgotadas por rate limit (429)",
+            extra={
+                "ai_operation": ai_operation,
+                "attempt_number": max_attempts,
+                "max_attempts": max_attempts,
+                "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
+                "fallback_triggered": fallback_occurred,
+                "exhausted_credentials": True,
+                **_safe_groq_log_fields(last_rate_limit_cause),
+            },
+        )
         raise last_rate_limit_error from last_rate_limit_cause
 
     def _client(self, api_key: str | None = None) -> Groq:
@@ -917,6 +1040,40 @@ def _extract_groq_error_code(exc: APIStatusError) -> str | None:
         return _clean_text(code) or None
 
     return None
+
+
+def _safe_groq_log_fields(exc: Exception) -> dict[str, Any]:
+    """Extrai, de forma segura, os unicos tres campos "tecnicos" que o
+    Bloco 6 autoriza a incluir em log a partir da excecao original da SDK
+    Groq (quando houver): `status_code`, `groq_error_code` (via o mesmo
+    helper `_extract_groq_error_code` ja usado desde o Bloco 4) e
+    `groq_request_id`.
+
+    Usa somente `getattr(..., default=None)` - nunca acessa `.args`,
+    `repr(exc)`, `str(exc)`, nem qualquer atributo que possa conter o corpo
+    completo da requisicao/resposta, headers, prompt ou conteudo retornado
+    pela Groq. Para uma excecao que nao e um `APIStatusError` (ex.:
+    `APIConnectionError`/`APITimeoutError`, ou qualquer erro inesperado),
+    `getattr` simplesmente nao encontra os atributos e todos os campos saem
+    como `None` - nunca lanca excecao.
+
+    So inclui no dict de retorno os campos que nao sao `None`, para manter
+    os logs enxutos (sem `status_code=None, groq_error_code=None, ...`
+    poluindo cada linha quando a informacao simplesmente nao existe para
+    aquele tipo de erro).
+    """
+    status_code = getattr(exc, "status_code", None)
+    groq_error_code = _extract_groq_error_code(exc) if isinstance(exc, APIStatusError) else None
+    groq_request_id = getattr(exc, "request_id", None)
+
+    fields: dict[str, Any] = {}
+    if status_code is not None:
+        fields["status_code"] = status_code
+    if groq_error_code is not None:
+        fields["groq_error_code"] = groq_error_code
+    if groq_request_id is not None:
+        fields["groq_request_id"] = groq_request_id
+    return fields
 
 
 def _normalize_string_array(value: Any) -> list[str]:
