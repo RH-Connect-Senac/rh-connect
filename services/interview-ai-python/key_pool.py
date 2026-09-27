@@ -91,5 +91,67 @@ class GroqKeyPool:
 
         return key
 
+    def next_unique_key(self, excluded: set[str]) -> str | None:
+        """Retorna a proxima key em round-robin que NAO esteja em `excluded`.
+
+        Resolve, em uma unica secao critica, dois problemas ao mesmo tempo:
+
+        1. Concorrencia entre operacoes: como o indice global e compartilhado
+           por todas as operacoes que usam o mesmo `GroqKeyPool`, uma chamada
+           comum a `next_key()` pode devolver, para esta operacao, uma key
+           que OUTRA operacao concorrente ja fez o indice avancar sobre - ou
+           pior, uma key que a propria operacao chamadora ja tentou antes,
+           caso o indice tenha dado a volta completa por causa de chamadas
+           concorrentes de outras operacoes. `next_unique_key` elimina esse
+           risco: quem chama informa o conjunto de keys (valores, nao
+           posicoes) que ja tentou NESTA operacao, e o metodo garante que o
+           valor devolvido nao esta nesse conjunto - nao importa quantas
+           voltas o indice global tenha dado por causa de outras operacoes.
+        2. Keys duplicadas na configuracao (ex.: `GROQ_API_KEYS=A,A,B`): sem
+           este metodo, uma politica de "no maximo `len(pool)` tentativas"
+           poderia selecionar o mesmo valor "A" duas vezes dentro de uma
+           unica operacao, simplesmente porque ele ocupa duas posicoes/slots
+           do round-robin. Como a comparacao aqui e por VALOR (`excluded` e
+           um conjunto de valores de key, nao de indices), a segunda
+           ocorrencia de "A" e pulada automaticamente, sem que o parser
+           global (`parse_groq_api_keys`) ou a lista armazenada precisem
+           mudar - a deduplicacao de fato acontece apenas na fronteira desta
+           chamada, por operacao, e nunca de forma global/permanente.
+
+        Comportamento e garantias:
+
+        - Secao critica minima, protegida pelo MESMO `threading.Lock` usado
+          por `next_key()` (nao ha lock adicional nem lock separado): varre,
+          a partir do indice atual, no maximo `len(self._keys)` posicoes,
+          avancando o indice a cada posicao examinada exatamente como
+          `next_key()` faz (`(indice + 1) % len(self._keys)`), ate encontrar
+          um valor que nao esteja em `excluded`. Assim que encontra, retorna
+          esse valor - o lock e liberado antes do `return`.
+        - Nunca reinicia nem retrocede o indice global: sempre continua a
+          partir de onde o round-robin global estava, preservando a
+          continuidade entre operacoes diferentes (a proxima operacao a
+          chamar `next_key()`/`next_unique_key()` comeca de onde esta
+          operacao parou, e nao do inicio).
+        - Se a varredura completa (`len(self._keys)` posicoes examinadas) nao
+          encontrar nenhum valor fora de `excluded`, retorna `None` - nao ha
+          loop infinito, nao ha excecao lancada por este metodo, e nenhuma
+          posicao e examinada mais de uma vez por chamada.
+        - Nenhuma operacao de rede, chamada a Groq, log ou exposicao de
+          valor de key acontece dentro da secao critica nem em nenhum outro
+          ponto deste metodo - identico, nesse aspecto, a `next_key()`.
+        - Assim como `next_key()`, o lock protege apenas threads dentro do
+          mesmo processo Python; nao ha coordenacao entre processos ou
+          workers distintos.
+        """
+        with self._lock:
+            total = len(self._keys)
+            for _ in range(total):
+                candidate = self._keys[self._index]
+                self._index = (self._index + 1) % total
+                if candidate not in excluded:
+                    return candidate
+
+        return None
+
     def __len__(self) -> int:
         return len(self._keys)
