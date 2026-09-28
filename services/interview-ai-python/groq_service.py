@@ -965,6 +965,8 @@ class GroqService:
             raise GroqServiceError("A Groq retornou avaliacao por pergunta invalida.", 502)
 
         by_question_id: dict[int, dict[str, Any]] = {}
+        returned_question_ids: list[int] = []
+
         for index, item in enumerate(raw_questions_evaluation):
             if not isinstance(item, dict):
                 raise GroqServiceError("A Groq retornou item de avaliacao invalido.", 502)
@@ -979,13 +981,31 @@ class GroqService:
                 )
             except (TypeError, ValueError) as exc:
                 raise GroqServiceError("A Groq retornou questionId invalido na avaliacao.", 502) from exc
+            returned_question_ids.append(question_id)
             by_question_id[question_id] = item
+
+        expected_question_ids = [answer["questionId"] for answer in answers]
 
         normalized: list[dict[str, Any]] = []
         for answer in answers:
             question_id = answer["questionId"]
             item = by_question_id.get(question_id)
             if not item:
+                missing_question_ids = [
+                    expected_id
+                    for expected_id in expected_question_ids
+                    if expected_id not in by_question_id
+                ]
+                logger.warning(
+                    "Avaliacao por pergunta incompleta: %s",
+                    {
+                        "expected_question_ids": expected_question_ids,
+                        "returned_question_ids": returned_question_ids,
+                        "missing_question_ids": missing_question_ids,
+                        "returned_count": len(raw_questions_evaluation),
+                        "unique_returned_count": len(by_question_id),
+                    },
+                )
                 raise GroqServiceError("A Groq retornou avaliacao por pergunta incompleta.", 502)
 
             max_score = _answer_score_cap(answer["answer"])
