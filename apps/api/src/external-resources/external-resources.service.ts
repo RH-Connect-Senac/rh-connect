@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ListExternalResourceCategoriesQueryDto } from './dto/list-external-resource-categories-query.dto';
 import {
   ListExternalResourcesQueryDto,
   SUPPORTED_EXTERNAL_RESOURCE_SOURCES,
@@ -90,6 +91,41 @@ export class ExternalResourcesService {
           name: link.category.name,
           slug: link.category.slug,
         })),
+      })),
+    };
+  }
+
+  /**
+   * Lista as categorias de UMA fonte a partir de `external_resource_category`
+   * — a mesma tabela usada como fonte de verdade pelo `include` de
+   * `listExternalResources` acima. Não depende dos recursos retornados por
+   * aquele endpoint nem do seu `limit`/paginação: é uma consulta própria e
+   * completa na tabela de categorias, então nenhuma categoria persistida
+   * fica de fora por causa do recorte de recursos carregados.
+   *
+   * Nada aqui é hardcoded: para ORANGO, retorna as categorias que o seed
+   * populou (hoje 16); para CACHOLA, a tabela simplesmente não tem nenhuma
+   * linha com `source = 'CACHOLA'` ainda, então a mesma consulta já resolve
+   * para lista vazia sem nenhum caso especial no código.
+   */
+  async listExternalResourceCategories(
+    query: ListExternalResourceCategoriesQueryDto,
+  ): Promise<{ categories: { code: string; name: string; slug: string }[] }> {
+    const categories = await this.prisma.external_resource_category.findMany({
+      where: { source: query.source },
+      select: {
+        external_code: true,
+        name: true,
+        slug: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return {
+      categories: categories.map((category) => ({
+        code: category.external_code,
+        name: category.name,
+        slug: category.slug,
       })),
     };
   }
