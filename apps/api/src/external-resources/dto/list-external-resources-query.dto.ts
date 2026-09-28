@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 /**
  * Fontes de recursos externos atualmente suportadas pelo endpoint
@@ -23,6 +23,17 @@ export class ListExternalResourcesQueryDto {
   @IsOptional()
   @IsIn(SUPPORTED_EXTERNAL_RESOURCE_SOURCES)
   source?: ExternalResourceSource;
+
+  /**
+   * Slug da categoria (ex.: "marketing", "inteligencia-artificial"), não o
+   * código numérico interno. Opcional; sem correspondência retorna lista
+   * vazia, nunca erro. Limite alinhado à coluna `external_resource_category.slug`
+   * (VarChar(150)).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  category?: string;
 
   @IsOptional()
   @Type(() => Number)
