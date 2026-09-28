@@ -16,6 +16,7 @@ export class ExternalResourcesService {
 
   async listExternalResources(query: ListExternalResourcesQueryDto) {
     const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+    const offset = query.offset ?? 0;
 
     // Com `source` informado (já validado pelo DTO contra
     // SUPPORTED_EXTERNAL_RESOURCE_SOURCES), filtra exclusivamente aquela
@@ -52,28 +53,36 @@ export class ExternalResourcesService {
       };
     }
 
-    const resources = await this.prisma.external_learning_resource.findMany({
-      where,
-      orderBy: [{ area: 'asc' }, { title: 'asc' }],
-      take: limit,
-      include: {
-        // Traz o conjunto COMPLETO de categorias de cada recurso numa única
-        // consulta (join), independente de `query.category` ter sido usado
-        // para filtrar quais recursos entram. Sem select por recurso à
-        // parte — evita N+1.
-        category_links: {
-          select: {
-            category: {
-              select: {
-                external_code: true,
-                name: true,
-                slug: true,
+    // `where` é montado uma única vez acima e reutilizado tanto no
+    // `findMany` quanto no `count` logo abaixo, para que `total` (e,
+    // consequentemente, `hasMore`) nunca corra o risco de divergir dos
+    // filtros realmente aplicados à página de recursos retornada.
+    const [resources, total] = await Promise.all([
+      this.prisma.external_learning_resource.findMany({
+        where,
+        orderBy: [{ area: 'asc' }, { title: 'asc' }],
+        take: limit,
+        skip: offset,
+        include: {
+          // Traz o conjunto COMPLETO de categorias de cada recurso numa única
+          // consulta (join), independente de `query.category` ter sido usado
+          // para filtrar quais recursos entram. Sem select por recurso à
+          // parte — evita N+1.
+          category_links: {
+            select: {
+              category: {
+                select: {
+                  external_code: true,
+                  name: true,
+                  slug: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+      this.prisma.external_learning_resource.count({ where }),
+    ]);
 
     return {
       resources: resources.map((resource) => ({
@@ -92,6 +101,12 @@ export class ExternalResourcesService {
           slug: link.category.slug,
         })),
       })),
+      pagination: {
+        limit,
+        offset,
+        total,
+        hasMore: offset + resources.length < total,
+      },
     };
   }
 

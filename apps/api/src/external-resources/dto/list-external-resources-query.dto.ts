@@ -41,4 +41,18 @@ export class ListExternalResourcesQueryDto {
   @Min(1)
   @Max(25)
   limit?: number;
+
+  /**
+   * Deslocamento (em número de registros) para paginação real no backend.
+   * Opcional; default 0 (primeira página) quando ausente. Inteiro e não
+   * negativo — não há limite superior aqui porque `offset` sozinho não
+   * amplia o volume de dados retornado por requisição (quem faz isso é
+   * `limit`, já limitado a `MAX_LIMIT`); um offset além do total apenas
+   * resulta em `resources: []`.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
 }
