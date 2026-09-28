@@ -1,5 +1,8 @@
+export type ExternalResourceSource = "CACHOLA" | "ORANGO";
+
 export type ExternalLearningResource = {
   id: string;
+  source: ExternalResourceSource;
   title: string;
   resourceType: string;
   section: string | null;
@@ -10,11 +13,11 @@ export type ExternalLearningResource = {
 };
 
 type ExternalResourcesResponse = {
-  source: string;
   resources: ExternalLearningResource[];
 };
 
-type ListCacholaResourcesParams = {
+type ListExternalResourcesParams = {
+  source?: ExternalResourceSource;
   limit?: number;
   area?: string;
   type?: string;
@@ -32,7 +35,7 @@ function getOptionalAccessToken() {
   );
 }
 
-function buildCacholaResourcesUrl(params: ListCacholaResourcesParams) {
+function buildExternalResourcesUrl(params: ListExternalResourcesParams) {
   const baseUrl = `${API_BASE_URL.replace(/\/+$/, "")}/`;
 
   const url = new URL(
@@ -52,19 +55,37 @@ function buildCacholaResourcesUrl(params: ListCacholaResourcesParams) {
     url.searchParams.set("type", params.type);
   }
 
+  if (params.source) {
+    url.searchParams.set("source", params.source);
+  }
+
   return url;
 }
 
-export async function listCacholaResources(params: ListCacholaResourcesParams = {}) {
+export async function listExternalResources(params: ListExternalResourcesParams = {}) {
   const token = getOptionalAccessToken();
-  const response = await fetch(buildCacholaResourcesUrl(params), {
+  const response = await fetch(buildExternalResourcesUrl(params), {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
   if (!response.ok) {
-    throw new Error("Não foi possível carregar os recursos da Cachola.");
+    throw new Error("Não foi possível carregar os recursos externos.");
   }
 
   const data = await response.json() as ExternalResourcesResponse;
   return Array.isArray(data.resources) ? data.resources : [];
+}
+
+/**
+ * @deprecated Alias temporário de compatibilidade. `MaterialsScreen`
+ * (App.tsx) ainda importa `listCacholaResources` e não deve ser alterado
+ * nesta etapa — este wrapper preserva exatamente o comportamento atual
+ * (busca multi-fonte, sem filtro de `source`) delegando para
+ * `listExternalResources`. Remover quando `App.tsx` passar a chamar
+ * `listExternalResources` diretamente.
+ */
+export async function listCacholaResources(
+  params: Omit<ListExternalResourcesParams, "source"> = {},
+) {
+  return listExternalResources(params);
 }
