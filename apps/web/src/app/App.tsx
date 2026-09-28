@@ -87,6 +87,7 @@ import {
   listExternalResources,
   type ExternalLearningResource,
   type ExternalResourceCategory,
+  type ExternalResourcesPagination,
   type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
@@ -5029,7 +5030,11 @@ function sortMaterialsByLastAccess(items: MaterialCardView[]) {
     });
 }
 
-const EXTERNAL_VISIBLE_STEP = 6;
+// Tamanho de página usado nas requisições de recursos externos (tanto a
+// primeira página quanto cada "Ver mais"). Antes da 3E.2 esse número (25)
+// só definia o único lote buscado; agora define o tamanho de CADA página
+// real da paginação do backend.
+const EXTERNAL_PAGE_SIZE = 25;
 
 const EXTERNAL_SOURCE_SELECTOR_LABEL: Record<ExternalResourceSource, string> = {
   CACHOLA: "Cachola",
@@ -5156,54 +5161,68 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
   const [selectedExternalSource, setSelectedExternalSource] = useState<ExternalResourceSource>("CACHOLA");
   const [externalResources, setExternalResources] = useState<ExternalLearningResource[]>([]);
+  const [externalResourcesPagination, setExternalResourcesPagination] = useState<ExternalResourcesPagination | null>(null);
   const [loadingExternalResources, setLoadingExternalResources] = useState(false);
+  const [loadingMoreExternalResources, setLoadingMoreExternalResources] = useState(false);
   const [externalSearch, setExternalSearch] = useState("");
   const [selectedCacholaArea, setSelectedCacholaArea] = useState("Todos");
   const [selectedOrangoCategory, setSelectedOrangoCategory] = useState("");
   const [orangoCategories, setOrangoCategories] = useState<ExternalResourceCategory[]>([]);
   const [loadingOrangoCategories, setLoadingOrangoCategories] = useState(false);
   const [showOrangoCategories, setShowOrangoCategories] = useState(false);
-  const [visibleExternalCount, setVisibleExternalCount] = useState(EXTERNAL_VISIBLE_STEP);
   const [showCats, setShowCats] = useState(false);
+  // Identificador da requisição de recursos externos "em vigor". Incrementado
+  // tanto pelo efeito de primeira página (troca de fonte/categoria) quanto
+  // pelo handler de "Ver mais": qualquer resposta cujo id não bata mais com
+  // o valor corrente é stale e é descartada, sem sobrescrever/acumular no
+  // estado atual. Cobre os dois casos pedidos: trocar fonte/categoria
+  // enquanto uma página carrega, e um "Ver mais" cuja resposta chega depois
+  // de uma troca de fonte/categoria já ter iniciado uma nova busca.
+  const externalResourcesRequestIdRef = useRef(0);
 
   const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
 
+  // Primeira página: dispara sempre que a fonte ou a categoria Orango mudam.
+  // Sempre busca com offset 0 e SUBSTITUI (nunca acumula) os recursos atuais.
   useEffect(() => {
-    let active = true;
+    const requestId = ++externalResourcesRequestIdRef.current;
 
+    // Qualquer "Ver mais" em andamento é invalidado por este novo requestId
+    // (troca de fonte/categoria) e nunca mais vai resolver como atual — seu
+    // `finally` fica sem efeito, então sem isso `loadingMoreExternalResources`
+    // ficaria travado em `true`. Zera aqui, já que esta é a única entrada de
+    // efeito que sempre roda quando a paginação é reiniciada do zero.
     setLoadingExternalResources(true);
+    setLoadingMoreExternalResources(false);
     listExternalResources({
       source: selectedExternalSource,
-      limit: 25,
+      limit: EXTERNAL_PAGE_SIZE,
+      offset: 0,
       // Filtro por categoria é aplicado no backend (via slug) — só faz
       // sentido para ORANGO; "Todas as categorias" (string vazia) omite o
       // parâmetro e preserva o comportamento multi-fonte já existente.
       category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
     })
-      .then((resources) => {
-        if (active) {
-          setExternalResources(resources);
-        }
+      .then(({ resources, pagination }) => {
+        if (externalResourcesRequestIdRef.current !== requestId) return;
+        setExternalResources(resources);
+        setExternalResourcesPagination(pagination);
       })
       .catch(() => {
-        if (active) {
-          setExternalResources([]);
-        }
+        if (externalResourcesRequestIdRef.current !== requestId) return;
+        setExternalResources([]);
+        setExternalResourcesPagination(null);
       })
       .finally(() => {
-        if (active) {
+        if (externalResourcesRequestIdRef.current === requestId) {
           setLoadingExternalResources(false);
         }
       });
-
-    return () => {
-      active = false;
-    };
   }, [selectedExternalSource, selectedOrangoCategory]);
 
   // Lista completa de categorias Orango, carregada do endpoint dedicado
   // (`/external-resources/categories`) — nunca derivada de `externalResources`,
-  // que só contém a página de até 25 recursos atualmente carregada.
+  // que só contém as páginas já carregadas até o momento.
   useEffect(() => {
     if (selectedExternalSource !== "ORANGO") {
       setOrangoCategories([]);
@@ -5241,7 +5260,47 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     setSelectedCacholaArea("Todos");
     setSelectedOrangoCategory("");
     setShowOrangoCategories(false);
-    setVisibleExternalCount(EXTERNAL_VISIBLE_STEP);
+  };
+
+  // "Ver mais": busca a PRÓXIMA página real na API (offset = onde a última
+  // página carregada terminou) e ACUMULA no array existente, sem substituir.
+  // Ignora cliques repetidos enquanto uma página já está sendo carregada, e
+  // não faz nada se o backend já sinalizou que não há mais páginas.
+  const handleLoadMoreExternalResources = () => {
+    if (loadingExternalResources || loadingMoreExternalResources) return;
+    if (!externalResourcesPagination?.hasMore) return;
+
+    const requestId = ++externalResourcesRequestIdRef.current;
+    const offset = externalResourcesPagination.offset + externalResourcesPagination.limit;
+
+    setLoadingMoreExternalResources(true);
+    listExternalResources({
+      source: selectedExternalSource,
+      limit: EXTERNAL_PAGE_SIZE,
+      offset,
+      category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
+    })
+      .then(({ resources, pagination }) => {
+        if (externalResourcesRequestIdRef.current !== requestId) return;
+
+        setExternalResources((current) => {
+          // Evita duplicatas por `id` — defensivo contra uma eventual
+          // sobreposição entre páginas.
+          const existingIds = new Set(current.map((resource) => resource.id));
+          const newResources = resources.filter((resource) => !existingIds.has(resource.id));
+          return [...current, ...newResources];
+        });
+        setExternalResourcesPagination(pagination);
+      })
+      .catch(() => {
+        // Falha ao buscar a próxima página: mantém a lista já carregada,
+        // só não avança — sem quebrar a tela.
+      })
+      .finally(() => {
+        if (externalResourcesRequestIdRef.current === requestId) {
+          setLoadingMoreExternalResources(false);
+        }
+      });
   };
 
   const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates(candidateIdentity.id));
@@ -5280,9 +5339,12 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
         .some((value) => value?.toLowerCase().includes(normalizedExternalSearch));
     })
     .filter((resource) => selectedCacholaArea === "Todos" || resource.area === selectedCacholaArea);
-  const visibleExternalResources = filteredExternalResources.slice(0, visibleExternalCount);
-  const hasMoreExternalResources = visibleExternalResources.length < filteredExternalResources.length;
-  const resetExternalVisibleCount = () => setVisibleExternalCount(EXTERNAL_VISIBLE_STEP);
+  // A paginação agora é real (server-side): o que foi carregado até aqui é
+  // exibido por inteiro (filtrado só por busca/área, ambas client-side); não
+  // há mais um recorte local adicional por "visibleCount". "Tem mais" passa
+  // a refletir exclusivamente `pagination.hasMore` do backend.
+  const visibleExternalResources = filteredExternalResources;
+  const hasMoreExternalResources = externalResourcesPagination?.hasMore === true;
   const selectedOrangoCategoryLabel = selectedOrangoCategory
     ? orangoCategories.find((category) => category.slug === selectedOrangoCategory)?.name ?? "Todas as categorias"
     : "Todas as categorias";
@@ -5360,12 +5422,12 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                 <SearchInput
                   value={externalSearch}
                   onChange={(event) => {
+                    // Busca textual permanece 100% client-side sobre o que já
+                    // foi carregado — não dispara nenhuma chamada ao backend.
                     setExternalSearch(event.target.value);
-                    resetExternalVisibleCount();
                   }}
                   onClear={() => {
                     setExternalSearch("");
-                    resetExternalVisibleCount();
                   }}
                   placeholder={`Buscar conteúdos da ${EXTERNAL_SOURCE_SELECTOR_LABEL[selectedExternalSource]}...`}
                   aria-label={`Buscar conteúdos da ${EXTERNAL_SOURCE_SELECTOR_LABEL[selectedExternalSource]}`}
@@ -5378,7 +5440,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                         selected={selectedCacholaArea === area}
                         onClick={() => {
                           setSelectedCacholaArea(area);
-                          resetExternalVisibleCount();
                         }}
                       >
                         {area}
@@ -5402,7 +5463,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                           onClick={() => {
                             setSelectedOrangoCategory("");
                             setShowOrangoCategories(false);
-                            resetExternalVisibleCount();
                           }}
                           className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
                         >
@@ -5414,7 +5474,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                             onClick={() => {
                               setSelectedOrangoCategory(category.slug);
                               setShowOrangoCategories(false);
-                              resetExternalVisibleCount();
                             }}
                             className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
                           >
@@ -5440,10 +5499,11 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                       <div className="flex justify-center pt-1">
                         <Btn
                           variant="primary"
-                          onClick={() => setVisibleExternalCount((current) => current + EXTERNAL_VISIBLE_STEP)}
-                          className="px-5 py-2.5 font-semibold"
+                          onClick={handleLoadMoreExternalResources}
+                          disabled={loadingMoreExternalResources}
+                          className="px-5 py-2.5 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                          Ver mais conteúdos
+                          {loadingMoreExternalResources ? "Carregando..." : "Ver mais conteúdos"}
                           <ChevronDown className="ml-1.5 h-4 w-4" />
                         </Btn>
                       </div>
