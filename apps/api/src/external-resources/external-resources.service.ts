@@ -1,16 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ListExternalResourcesQueryDto } from './dto/list-external-resources-query.dto';
-
-/**
- * Fontes de recursos externos atualmente suportadas pelo endpoint único
- * `GET /candidate/materials/external-resources`. Qualquer valor de `source`
- * fora desta lista é ignorado pela consulta, mesmo que já exista (ou venha a
- * existir) na tabela `external_learning_resource` — a exposição pelo
- * endpoint é sempre uma decisão explícita, nunca automática.
- */
-const SUPPORTED_SOURCES = ['CACHOLA', 'ORANGO'] as const;
+import {
+  ListExternalResourcesQueryDto,
+  SUPPORTED_EXTERNAL_RESOURCE_SOURCES,
+} from './dto/list-external-resources-query.dto';
 
 const DEFAULT_LIMIT = 6;
 const MAX_LIMIT = 25;
@@ -21,8 +15,13 @@ export class ExternalResourcesService {
 
   async listExternalResources(query: ListExternalResourcesQueryDto) {
     const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+
+    // Com `source` informado (já validado pelo DTO contra
+    // SUPPORTED_EXTERNAL_RESOURCE_SOURCES), filtra exclusivamente aquela
+    // fonte. Sem `source`, preserva o comportamento multi-fonte da Etapa 2:
+    // todas as fontes suportadas. Em ambos os casos é uma única consulta.
     const where: Prisma.external_learning_resourceWhereInput = {
-      source: { in: [...SUPPORTED_SOURCES] },
+      source: query.source ? query.source : { in: [...SUPPORTED_EXTERNAL_RESOURCE_SOURCES] },
       is_active: true,
     };
 
