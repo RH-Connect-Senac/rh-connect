@@ -3,6 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { seedOrangoResources } from './seed-orango';
 
 const prisma = new PrismaClient();
 const CACHOLA_SOURCE = 'CACHOLA';
@@ -204,7 +205,12 @@ async function main() {
 
   const cacholaResourcesCount = await seedCacholaResources();
 
+  const orangoResult = await seedOrangoResources(prisma);
+
   console.log(`Seed concluído. Recursos Cachola importados: ${cacholaResourcesCount}.`);
+  console.log(
+    `Recursos Orango importados: ${orangoResult.importedCount} de ${orangoResult.totalRecords} registros lidos.`,
+  );
 }
 
 main()
