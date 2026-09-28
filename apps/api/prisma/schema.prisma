@@ -84,11 +84,40 @@ model external_learning_resource {
   is_active             Boolean  @default(true)
   created_at            DateTime @default(now()) @db.Timestamptz(6)
   updated_at            DateTime @default(now()) @db.Timestamptz(6)
+  category_links        external_resource_category_link[]
 
   @@index([source], map: "idx_external_learning_resource_source")
   @@index([area], map: "idx_external_learning_resource_area")
   @@index([resource_type], map: "idx_external_learning_resource_type")
   @@index([is_active], map: "idx_external_learning_resource_active")
+}
+
+model external_resource_category {
+  category_id   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source        String   @db.VarChar(50)
+  external_code String   @db.VarChar(50)
+  name          String   @db.VarChar(150)
+  slug          String   @db.VarChar(150)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+  links         external_resource_category_link[]
+
+  @@unique([source, external_code])
+  @@unique([source, slug])
+  @@index([source], map: "idx_external_resource_category_source")
+}
+
+model external_resource_category_link {
+  link_id     String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resource_id String                      @db.Uuid
+  category_id String                      @db.Uuid
+  created_at  DateTime                    @default(now()) @db.Timestamptz(6)
+  resource    external_learning_resource  @relation(fields: [resource_id], references: [resource_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_external_resource_category_link_resource")
+  category    external_resource_category  @relation(fields: [category_id], references: [category_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_external_resource_category_link_category")
+
+  @@unique([resource_id, category_id])
+  @@index([resource_id], map: "idx_external_resource_category_link_resource_id")
+  @@index([category_id], map: "idx_external_resource_category_link_category_id")
 }
 
 model session {
