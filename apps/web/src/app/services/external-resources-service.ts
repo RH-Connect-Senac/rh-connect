@@ -1,5 +1,11 @@
 export type ExternalResourceSource = "CACHOLA" | "ORANGO";
 
+export type ExternalResourceCategory = {
+  code: string;
+  name: string;
+  slug: string;
+};
+
 export type ExternalLearningResource = {
   id: string;
   source: ExternalResourceSource;
@@ -10,10 +16,15 @@ export type ExternalLearningResource = {
   url: string | null;
   coverUrl: string | null;
   directLinkAvailable: boolean;
+  categories: ExternalResourceCategory[];
 };
 
 type ExternalResourcesResponse = {
   resources: ExternalLearningResource[];
+};
+
+type ExternalResourceCategoriesResponse = {
+  categories: ExternalResourceCategory[];
 };
 
 type ListExternalResourcesParams = {
@@ -21,6 +32,11 @@ type ListExternalResourcesParams = {
   limit?: number;
   area?: string;
   type?: string;
+  category?: string;
+};
+
+type ListExternalResourceCategoriesParams = {
+  source: ExternalResourceSource;
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -59,6 +75,23 @@ function buildExternalResourcesUrl(params: ListExternalResourcesParams) {
     url.searchParams.set("source", params.source);
   }
 
+  if (params.category) {
+    url.searchParams.set("category", params.category);
+  }
+
+  return url;
+}
+
+function buildExternalResourceCategoriesUrl(params: ListExternalResourceCategoriesParams) {
+  const baseUrl = `${API_BASE_URL.replace(/\/+$/, "")}/`;
+
+  const url = new URL(
+    "candidate/materials/external-resources/categories",
+    baseUrl,
+  );
+
+  url.searchParams.set("source", params.source);
+
   return url;
 }
 
@@ -74,4 +107,18 @@ export async function listExternalResources(params: ListExternalResourcesParams 
 
   const data = await response.json() as ExternalResourcesResponse;
   return Array.isArray(data.resources) ? data.resources : [];
+}
+
+export async function listExternalResourceCategories(params: ListExternalResourceCategoriesParams) {
+  const token = getOptionalAccessToken();
+  const response = await fetch(buildExternalResourceCategoriesUrl(params), {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+
+  if (!response.ok) {
+    throw new Error("Não foi possível carregar as categorias dos recursos externos.");
+  }
+
+  const data = await response.json() as ExternalResourceCategoriesResponse;
+  return Array.isArray(data.categories) ? data.categories : [];
 }

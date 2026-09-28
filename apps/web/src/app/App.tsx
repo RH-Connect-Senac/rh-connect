@@ -83,8 +83,10 @@ import {
   toggleMaterialFavorite,
 } from "./services/materials-service";
 import {
+  listExternalResourceCategories,
   listExternalResources,
   type ExternalLearningResource,
+  type ExternalResourceCategory,
   type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
@@ -5157,6 +5159,10 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const [loadingExternalResources, setLoadingExternalResources] = useState(false);
   const [externalSearch, setExternalSearch] = useState("");
   const [selectedCacholaArea, setSelectedCacholaArea] = useState("Todos");
+  const [selectedOrangoCategory, setSelectedOrangoCategory] = useState("");
+  const [orangoCategories, setOrangoCategories] = useState<ExternalResourceCategory[]>([]);
+  const [loadingOrangoCategories, setLoadingOrangoCategories] = useState(false);
+  const [showOrangoCategories, setShowOrangoCategories] = useState(false);
   const [visibleExternalCount, setVisibleExternalCount] = useState(EXTERNAL_VISIBLE_STEP);
   const [showCats, setShowCats] = useState(false);
 
@@ -5166,7 +5172,14 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     let active = true;
 
     setLoadingExternalResources(true);
-    listExternalResources({ source: selectedExternalSource, limit: 25 })
+    listExternalResources({
+      source: selectedExternalSource,
+      limit: 25,
+      // Filtro por categoria é aplicado no backend (via slug) — só faz
+      // sentido para ORANGO; "Todas as categorias" (string vazia) omite o
+      // parâmetro e preserva o comportamento multi-fonte já existente.
+      category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
+    })
       .then((resources) => {
         if (active) {
           setExternalResources(resources);
@@ -5186,12 +5199,48 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     return () => {
       active = false;
     };
+  }, [selectedExternalSource, selectedOrangoCategory]);
+
+  // Lista completa de categorias Orango, carregada do endpoint dedicado
+  // (`/external-resources/categories`) — nunca derivada de `externalResources`,
+  // que só contém a página de até 25 recursos atualmente carregada.
+  useEffect(() => {
+    if (selectedExternalSource !== "ORANGO") {
+      setOrangoCategories([]);
+      return;
+    }
+
+    let active = true;
+
+    setLoadingOrangoCategories(true);
+    listExternalResourceCategories({ source: "ORANGO" })
+      .then((categories) => {
+        if (active) {
+          setOrangoCategories(categories);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setOrangoCategories([]);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingOrangoCategories(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, [selectedExternalSource]);
 
   const handleSelectExternalSource = (source: ExternalResourceSource) => {
     setSelectedExternalSource(source);
     setExternalSearch("");
     setSelectedCacholaArea("Todos");
+    setSelectedOrangoCategory("");
+    setShowOrangoCategories(false);
     setVisibleExternalCount(EXTERNAL_VISIBLE_STEP);
   };
 
@@ -5234,6 +5283,9 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const visibleExternalResources = filteredExternalResources.slice(0, visibleExternalCount);
   const hasMoreExternalResources = visibleExternalResources.length < filteredExternalResources.length;
   const resetExternalVisibleCount = () => setVisibleExternalCount(EXTERNAL_VISIBLE_STEP);
+  const selectedOrangoCategoryLabel = selectedOrangoCategory
+    ? orangoCategories.find((category) => category.slug === selectedOrangoCategory)?.name ?? "Todas as categorias"
+    : "Todas as categorias";
 
   return (
     <AuthLayout
@@ -5332,6 +5384,45 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                         {area}
                       </FilterChip>
                     ))}
+                  </div>
+                )}
+                {selectedExternalSource === "ORANGO" && (
+                  <div className="relative sm:w-56">
+                    <button
+                      onClick={() => setShowOrangoCategories(!showOrangoCategories)}
+                      disabled={loadingOrangoCategories}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <span className="truncate">{selectedOrangoCategoryLabel}</span>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                    {showOrangoCategories && (
+                      <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                        <button
+                          onClick={() => {
+                            setSelectedOrangoCategory("");
+                            setShowOrangoCategories(false);
+                            resetExternalVisibleCount();
+                          }}
+                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                        >
+                          Todas as categorias
+                        </button>
+                        {orangoCategories.map((category) => (
+                          <button
+                            key={category.slug}
+                            onClick={() => {
+                              setSelectedOrangoCategory(category.slug);
+                              setShowOrangoCategories(false);
+                              resetExternalVisibleCount();
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                          >
+                            {category.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {filteredExternalResources.length === 0 ? (
