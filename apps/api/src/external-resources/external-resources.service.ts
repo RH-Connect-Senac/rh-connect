@@ -33,10 +33,45 @@ export class ExternalResourcesService {
       where.resource_type = query.type;
     }
 
+    // Filtro por categoria (slug): o recurso entra no resultado se possuir
+    // ao menos um vínculo cuja categoria tenha esse slug. A categoria é
+    // restrita à mesma `source` quando ela é conhecida (informada em
+    // `query.source`, ou implícita quando só uma fonte é suportada), para
+    // que um slug igual pertencente a outra fonte no futuro não gere
+    // correspondência indevida. Isso NÃO limita quais categorias voltam no
+    // campo `categories` de cada item — só decide se o recurso é incluído.
+    if (query.category) {
+      where.category_links = {
+        some: {
+          category: {
+            slug: query.category,
+            source: query.source ? query.source : { in: [...SUPPORTED_EXTERNAL_RESOURCE_SOURCES] },
+          },
+        },
+      };
+    }
+
     const resources = await this.prisma.external_learning_resource.findMany({
       where,
       orderBy: [{ area: 'asc' }, { title: 'asc' }],
       take: limit,
+      include: {
+        // Traz o conjunto COMPLETO de categorias de cada recurso numa única
+        // consulta (join), independente de `query.category` ter sido usado
+        // para filtrar quais recursos entram. Sem select por recurso à
+        // parte — evita N+1.
+        category_links: {
+          select: {
+            category: {
+              select: {
+                external_code: true,
+                name: true,
+                slug: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     return {
@@ -50,6 +85,11 @@ export class ExternalResourcesService {
         url: resource.url,
         coverUrl: resource.cover_url,
         directLinkAvailable: resource.direct_link_available,
+        categories: resource.category_links.map((link) => ({
+          code: link.category.external_code,
+          name: link.category.name,
+          slug: link.category.slug,
+        })),
       })),
     };
   }
