@@ -85,6 +85,7 @@ import {
 import {
   listCacholaResources,
   type ExternalLearningResource,
+  type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
 import { DEFAULT_CANDIDATE, DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
@@ -5064,10 +5065,28 @@ function MaterialCard({
   );
 }
 
+const EXTERNAL_RESOURCE_PLATFORM_LABEL: Record<ExternalResourceSource, string> = {
+  CACHOLA: "Cachola Senac",
+  ORANGO: "Orango",
+};
+
+const EXTERNAL_RESOURCE_CTA_LABEL: Record<ExternalResourceSource, string> = {
+  CACHOLA: "Acessar na Cachola",
+  ORANGO: "Acessar no Orango",
+};
+
+const EXTERNAL_RESOURCE_NO_URL_MESSAGE: Record<ExternalResourceSource, string> = {
+  CACHOLA: "Este recurso abre pela plataforma Cachola.",
+  ORANGO: "Este recurso abre pela plataforma Orango.",
+};
+
 function ExternalResourceCard({ resource }: { resource: ExternalLearningResource }) {
+  const platformLabel = EXTERNAL_RESOURCE_PLATFORM_LABEL[resource.source];
+  const ctaLabel = EXTERNAL_RESOURCE_CTA_LABEL[resource.source];
+
   const handleOpen = () => {
     if (!resource.url) {
-      toast.info("Este recurso abre pela plataforma Cachola.");
+      toast.info(EXTERNAL_RESOURCE_NO_URL_MESSAGE[resource.source]);
       return;
     }
 
@@ -5099,7 +5118,7 @@ function ExternalResourceCard({ resource }: { resource: ExternalLearningResource
               <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">
                 {resource.resourceType}
               </UIBadge>
-              <span className="text-[11px] text-muted-foreground">Cachola Senac</span>
+              <span className="text-[11px] text-muted-foreground">{platformLabel}</span>
             </div>
             <p className="font-bold text-foreground text-sm leading-snug mb-1">{resource.title}</p>
             {resource.section && resource.section !== "Sem seção" && (
@@ -5113,9 +5132,9 @@ function ExternalResourceCard({ resource }: { resource: ExternalLearningResource
           <BookOpen className="w-4 h-4" />
         </div>
       </div>
-      <div className="mt-auto flex items-center justify-between gap-3 pt-3 border-t border-border">
-        <UIBadge variant="primary">{resource.area ?? "Cachola"}</UIBadge>
-        <Btn variant="primary" size="sm" onClick={handleOpen}>Acessar na Cachola</Btn>
+      <div className={`mt-auto flex items-center gap-3 pt-3 border-t border-border ${resource.area ? "justify-between" : "justify-end"}`}>
+        {resource.area && <UIBadge variant="primary">{resource.area}</UIBadge>}
+        <Btn variant="primary" size="sm" onClick={handleOpen}>{ctaLabel}</Btn>
       </div>
     </Card>
   );
