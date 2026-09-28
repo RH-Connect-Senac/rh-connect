@@ -19,8 +19,16 @@ export type ExternalLearningResource = {
   categories: ExternalResourceCategory[];
 };
 
+export type ExternalResourcesPagination = {
+  limit: number;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+};
+
 type ExternalResourcesResponse = {
   resources: ExternalLearningResource[];
+  pagination?: ExternalResourcesPagination;
 };
 
 type ExternalResourceCategoriesResponse = {
@@ -30,6 +38,7 @@ type ExternalResourceCategoriesResponse = {
 type ListExternalResourcesParams = {
   source?: ExternalResourceSource;
   limit?: number;
+  offset?: number;
   area?: string;
   type?: string;
   category?: string;
@@ -79,7 +88,24 @@ function buildExternalResourcesUrl(params: ListExternalResourcesParams) {
     url.searchParams.set("category", params.category);
   }
 
+  // `offset` é enviado sempre que definido numericamente — inclusive 0 — já
+  // que 0 é um valor válido e explícito (primeira página), não "ausente".
+  if (typeof params.offset === "number") {
+    url.searchParams.set("offset", String(params.offset));
+  }
+
   return url;
+}
+
+function isValidExternalResourcesPagination(value: unknown): value is ExternalResourcesPagination {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as ExternalResourcesPagination).limit === "number" &&
+    typeof (value as ExternalResourcesPagination).offset === "number" &&
+    typeof (value as ExternalResourcesPagination).total === "number" &&
+    typeof (value as ExternalResourcesPagination).hasMore === "boolean"
+  );
 }
 
 function buildExternalResourceCategoriesUrl(params: ListExternalResourceCategoriesParams) {
@@ -106,7 +132,14 @@ export async function listExternalResources(params: ListExternalResourcesParams 
   }
 
   const data = await response.json() as ExternalResourcesResponse;
-  return Array.isArray(data.resources) ? data.resources : [];
+
+  // Defensivo: se a API não vier com `pagination` (ou vier num formato
+  // inesperado), a tela não deve quebrar — só perde a paginação real e
+  // volta a se comportar como se não houvesse mais páginas.
+  return {
+    resources: Array.isArray(data.resources) ? data.resources : [],
+    pagination: isValidExternalResourcesPagination(data.pagination) ? data.pagination : null,
+  };
 }
 
 export async function listExternalResourceCategories(params: ListExternalResourceCategoriesParams) {
