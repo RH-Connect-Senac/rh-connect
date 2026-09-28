@@ -83,7 +83,7 @@ import {
   toggleMaterialFavorite,
 } from "./services/materials-service";
 import {
-  listCacholaResources,
+  listExternalResources,
   type ExternalLearningResource,
   type ExternalResourceSource,
 } from "./services/external-resources-service";
@@ -5027,7 +5027,12 @@ function sortMaterialsByLastAccess(items: MaterialCardView[]) {
     });
 }
 
-const CACHOLA_VISIBLE_STEP = 6;
+const EXTERNAL_VISIBLE_STEP = 6;
+
+const EXTERNAL_SOURCE_SELECTOR_LABEL: Record<ExternalResourceSource, string> = {
+  CACHOLA: "Cachola",
+  ORANGO: "Orango",
+};
 
 function MaterialCard({
   material, onFavorite, onOpen,
@@ -5147,11 +5152,12 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const [categoria, setCategoria] = useState("Todas as categorias");
   const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
-  const [cacholaResources, setCacholaResources] = useState<ExternalLearningResource[]>([]);
-  const [loadingCacholaResources, setLoadingCacholaResources] = useState(false);
-  const [cacholaSearch, setCacholaSearch] = useState("");
+  const [selectedExternalSource, setSelectedExternalSource] = useState<ExternalResourceSource>("CACHOLA");
+  const [externalResources, setExternalResources] = useState<ExternalLearningResource[]>([]);
+  const [loadingExternalResources, setLoadingExternalResources] = useState(false);
+  const [externalSearch, setExternalSearch] = useState("");
   const [selectedCacholaArea, setSelectedCacholaArea] = useState("Todos");
-  const [visibleCacholaCount, setVisibleCacholaCount] = useState(CACHOLA_VISIBLE_STEP);
+  const [visibleExternalCount, setVisibleExternalCount] = useState(EXTERNAL_VISIBLE_STEP);
   const [showCats, setShowCats] = useState(false);
 
   const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
@@ -5159,28 +5165,35 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   useEffect(() => {
     let active = true;
 
-    setLoadingCacholaResources(true);
-    listCacholaResources({ limit: 25 })
+    setLoadingExternalResources(true);
+    listExternalResources({ source: selectedExternalSource, limit: 25 })
       .then((resources) => {
         if (active) {
-          setCacholaResources(resources);
+          setExternalResources(resources);
         }
       })
       .catch(() => {
         if (active) {
-          setCacholaResources([]);
+          setExternalResources([]);
         }
       })
       .finally(() => {
         if (active) {
-          setLoadingCacholaResources(false);
+          setLoadingExternalResources(false);
         }
       });
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedExternalSource]);
+
+  const handleSelectExternalSource = (source: ExternalResourceSource) => {
+    setSelectedExternalSource(source);
+    setExternalSearch("");
+    setSelectedCacholaArea("Todos");
+    setVisibleExternalCount(EXTERNAL_VISIBLE_STEP);
+  };
 
   const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates(candidateIdentity.id));
 
@@ -5205,22 +5218,22 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
   const recomendados = materiais.filter(m => m.recommended).slice(0, 3);
   const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
-  const cacholaAreas = cacholaResources.reduce<string[]>((areas, resource) => {
+  const cacholaAreas = externalResources.reduce<string[]>((areas, resource) => {
     const area = resource.area?.trim();
     return area && !areas.includes(area) ? [...areas, area] : areas;
   }, []);
-  const normalizedCacholaSearch = cacholaSearch.trim().toLowerCase();
-  const filteredCacholaResources = cacholaResources
+  const normalizedExternalSearch = externalSearch.trim().toLowerCase();
+  const filteredExternalResources = externalResources
     .filter((resource) => {
-      if (!normalizedCacholaSearch) return true;
+      if (!normalizedExternalSearch) return true;
 
       return [resource.title, resource.area, resource.resourceType]
-        .some((value) => value?.toLowerCase().includes(normalizedCacholaSearch));
+        .some((value) => value?.toLowerCase().includes(normalizedExternalSearch));
     })
     .filter((resource) => selectedCacholaArea === "Todos" || resource.area === selectedCacholaArea);
-  const visibleCacholaResources = filteredCacholaResources.slice(0, visibleCacholaCount);
-  const hasMoreCacholaResources = visibleCacholaResources.length < filteredCacholaResources.length;
-  const resetCacholaVisibleCount = () => setVisibleCacholaCount(CACHOLA_VISIBLE_STEP);
+  const visibleExternalResources = filteredExternalResources.slice(0, visibleExternalCount);
+  const hasMoreExternalResources = visibleExternalResources.length < filteredExternalResources.length;
+  const resetExternalVisibleCount = () => setVisibleExternalCount(EXTERNAL_VISIBLE_STEP);
 
   return (
     <AuthLayout
@@ -5264,66 +5277,79 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
           </section>
         )}
 
-        {/* Fonte complementar: Cachola */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingCacholaResources || cacholaResources.length > 0) && (
+        {/* Fonte complementar: conteúdos externos (Cachola / Orango) */}
+        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingExternalResources || externalResources.length > 0) && (
           <section>
             <div className="mb-4">
               <h2 className="font-bold text-foreground mb-1 flex items-center gap-2">
-                <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares da Cachola
+                <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares
               </h2>
               <p className="text-sm text-muted-foreground">
-                Explore materiais complementares selecionados para apoiar seu desenvolvimento.
+                Explore conteúdos de plataformas parceiras para complementar sua preparação.
               </p>
             </div>
-            {loadingCacholaResources ? (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {(["CACHOLA", "ORANGO"] as ExternalResourceSource[]).map((source) => (
+                <FilterChip
+                  key={source}
+                  selected={selectedExternalSource === source}
+                  onClick={() => handleSelectExternalSource(source)}
+                >
+                  {EXTERNAL_SOURCE_SELECTOR_LABEL[source]}
+                </FilterChip>
+              ))}
+            </div>
+            {loadingExternalResources ? (
               <Card className="p-4 text-sm text-muted-foreground">
                 Buscando recomendações complementares...
               </Card>
             ) : (
               <div className="space-y-4">
                 <SearchInput
-                  value={cacholaSearch}
+                  value={externalSearch}
                   onChange={(event) => {
-                    setCacholaSearch(event.target.value);
-                    resetCacholaVisibleCount();
+                    setExternalSearch(event.target.value);
+                    resetExternalVisibleCount();
                   }}
                   onClear={() => {
-                    setCacholaSearch("");
-                    resetCacholaVisibleCount();
+                    setExternalSearch("");
+                    resetExternalVisibleCount();
                   }}
-                  placeholder="Buscar conteúdos da Cachola..."
-                  aria-label="Buscar conteúdos da Cachola"
+                  placeholder={`Buscar conteúdos da ${EXTERNAL_SOURCE_SELECTOR_LABEL[selectedExternalSource]}...`}
+                  aria-label={`Buscar conteúdos da ${EXTERNAL_SOURCE_SELECTOR_LABEL[selectedExternalSource]}`}
                 />
-                <div className="flex flex-wrap gap-2">
-                  {["Todos", ...cacholaAreas].map((area) => (
-                    <FilterChip
-                      key={area}
-                      selected={selectedCacholaArea === area}
-                      onClick={() => {
-                        setSelectedCacholaArea(area);
-                        resetCacholaVisibleCount();
-                      }}
-                    >
-                      {area}
-                    </FilterChip>
-                  ))}
-                </div>
-                {filteredCacholaResources.length === 0 ? (
+                {selectedExternalSource === "CACHOLA" && (
+                  <div className="flex flex-wrap gap-2">
+                    {["Todos", ...cacholaAreas].map((area) => (
+                      <FilterChip
+                        key={area}
+                        selected={selectedCacholaArea === area}
+                        onClick={() => {
+                          setSelectedCacholaArea(area);
+                          resetExternalVisibleCount();
+                        }}
+                      >
+                        {area}
+                      </FilterChip>
+                    ))}
+                  </div>
+                )}
+                {filteredExternalResources.length === 0 ? (
                   <Card className="p-4 text-sm text-muted-foreground">
                     Nenhum conteúdo encontrado para os filtros selecionados.
                   </Card>
                 ) : (
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                      {visibleCacholaResources.map(resource => (
+                      {visibleExternalResources.map(resource => (
                         <ExternalResourceCard key={resource.id} resource={resource} />
                       ))}
                     </div>
-                    {hasMoreCacholaResources && (
+                    {hasMoreExternalResources && (
                       <div className="flex justify-center pt-1">
                         <Btn
                           variant="primary"
-                          onClick={() => setVisibleCacholaCount((current) => current + CACHOLA_VISIBLE_STEP)}
+                          onClick={() => setVisibleExternalCount((current) => current + EXTERNAL_VISIBLE_STEP)}
                           className="px-5 py-2.5 font-semibold"
                         >
                           Ver mais conteúdos

@@ -75,17 +75,3 @@ export async function listExternalResources(params: ListExternalResourcesParams 
   const data = await response.json() as ExternalResourcesResponse;
   return Array.isArray(data.resources) ? data.resources : [];
 }
-
-/**
- * @deprecated Alias temporário de compatibilidade. `MaterialsScreen`
- * (App.tsx) ainda importa `listCacholaResources` e não deve ser alterado
- * nesta etapa — este wrapper preserva exatamente o comportamento atual
- * (busca multi-fonte, sem filtro de `source`) delegando para
- * `listExternalResources`. Remover quando `App.tsx` passar a chamar
- * `listExternalResources` diretamente.
- */
-export async function listCacholaResources(
-  params: Omit<ListExternalResourcesParams, "source"> = {},
-) {
-  return listExternalResources(params);
-}
