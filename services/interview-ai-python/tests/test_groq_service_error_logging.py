@@ -161,3 +161,71 @@ class TestEvaluateRouteLogging:
 
         # A resposta do candidato (dado sensível) nunca deve aparecer no log.
         assert candidate_answer_marker not in logged_text
+
+
+def test_avaliacao_incompleta_loga_apenas_metadados_estruturais(caplog):
+    from groq_service import GroqService
+
+    service = GroqService()
+
+    answers = [
+        {
+            "questionId": 1,
+            "questionText": "Pergunta 1",
+            "answer": "Resposta confidencial que nao deve aparecer no log.",
+        },
+        {
+            "questionId": 2,
+            "questionText": "Pergunta 2",
+            "answer": "Outra resposta confidencial.",
+        },
+        {
+            "questionId": 3,
+            "questionText": "Pergunta 3",
+            "answer": "Mais uma resposta confidencial.",
+        },
+    ]
+
+    raw_questions_evaluation = [
+        {
+            "questionId": 1,
+            "score": 8,
+            "reason": "ok",
+            "positives": [],
+            "improvements": [],
+            "suggestion": "",
+        },
+        {
+            "questionId": 3,
+            "score": 7,
+            "reason": "ok",
+            "positives": [],
+            "improvements": [],
+            "suggestion": "",
+        },
+    ]
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(
+            GroqServiceError,
+            match="A Groq retornou avaliacao por pergunta incompleta.",
+        ):
+            service._normalize_questions_evaluation(
+                raw_questions_evaluation,
+                answers,
+            )
+
+    logged_text = "\n".join(record.getMessage() for record in caplog.records)
+
+    assert "expected_question_ids" in logged_text
+    assert "[1, 2, 3]" in logged_text
+    assert "returned_question_ids" in logged_text
+    assert "[1, 3]" in logged_text
+    assert "missing_question_ids" in logged_text
+    assert "[2]" in logged_text
+    assert "returned_count" in logged_text
+    assert "unique_returned_count" in logged_text
+
+    assert "Resposta confidencial" not in logged_text
+    assert "Outra resposta confidencial" not in logged_text
+    assert "Mais uma resposta confidencial" not in logged_text
