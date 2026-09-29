@@ -28,6 +28,7 @@ bloco (ver item R do relatorio de entrega).
 from __future__ import annotations
 
 import threading
+import time
 
 
 class GroqKeyPoolError(Exception):
@@ -63,6 +64,7 @@ class GroqKeyPool:
         # (antes ou depois da construcao) nunca afetam o pool, e o pool
         # nunca expoe nem modifica a lista original recebida.
         self._keys: list[str] = list(keys)
+        self._cooldowns: dict[str, float] = {}
         self._index = 0
         self._lock = threading.Lock()
 
@@ -85,11 +87,37 @@ class GroqKeyPool:
         mesmo processo Python; nao ha nenhuma coordenacao entre processos ou
         workers distintos.
         """
+        key, _slot = self.next_key_with_slot()
+        return key
+
+    def next_key_with_slot(self) -> tuple[str, int]:
+        """Retorna a proxima key e o slot logico 1-based usado.
+
+        O slot representa somente a posicao da credencial na lista carregada
+        em memoria. Ele nao e derivado do valor da key e nao permite
+        reconstruir a credencial.
+        """
         with self._lock:
+            slot = self._index + 1
             key = self._keys[self._index]
             self._index = (self._index + 1) % len(self._keys)
 
-        return key
+        return key, slot
+
+    def mark_rate_limited(self, key: str, cooldown_seconds: float) -> None:
+        """Marca uma credencial como temporariamente indisponivel por 429.
+
+        O estado fica apenas em memoria, por processo, e nunca e logado ou
+        exposto. A chave volta a ser elegivel automaticamente quando o
+        timestamp monotonic armazenado expira.
+        """
+        if cooldown_seconds <= 0:
+            return
+
+        cooldown_until = time.monotonic() + cooldown_seconds
+        with self._lock:
+            current_until = self._cooldowns.get(key, 0.0)
+            self._cooldowns[key] = max(current_until, cooldown_until)
 
     def next_unique_key(self, excluded: set[str]) -> str | None:
         """Retorna a proxima key em round-robin que NAO esteja em `excluded`.
@@ -143,13 +171,31 @@ class GroqKeyPool:
           mesmo processo Python; nao ha coordenacao entre processos ou
           workers distintos.
         """
+        result = self.next_unique_key_with_slot(excluded)
+        if result is None:
+            return None
+        key, _slot = result
+        return key
+
+    def next_unique_key_with_slot(self, excluded: set[str]) -> tuple[str, int] | None:
+        """Retorna a proxima key unica e o slot logico 1-based usado.
+
+        A politica de selecao e identica a `next_unique_key`; o segundo item
+        da tupla e apenas observabilidade anonima da posicao no pool.
+        """
         with self._lock:
             total = len(self._keys)
+            now = time.monotonic()
             for _ in range(total):
+                slot = self._index + 1
                 candidate = self._keys[self._index]
                 self._index = (self._index + 1) % total
-                if candidate not in excluded:
-                    return candidate
+                cooldown_until = self._cooldowns.get(candidate)
+                if cooldown_until is not None and cooldown_until <= now:
+                    self._cooldowns.pop(candidate, None)
+                    cooldown_until = None
+                if candidate not in excluded and cooldown_until is None:
+                    return candidate, slot
 
         return None
 

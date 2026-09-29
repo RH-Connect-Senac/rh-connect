@@ -72,12 +72,50 @@ A leitura da configuração e a montagem do pool de keys são feitas de forma la
 
 - o cliente Groq é sempre instanciado com `max_retries=0` (o SDK nunca tenta novamente sozinho, de forma invisível);
 - o fallback interno do RH Connect troca de credencial **somente** quando a Groq responde `429` / rate limit;
+- quando uma credencial recebe `429`, ela fica temporariamente fora do pool neste processo; se a Groq enviar `Retry-After`, esse valor é usado; caso contrário, usa-se `GROQ_RATE_LIMIT_COOLDOWN_SECONDS` ou o default conservador de **30 segundos**;
 - qualquer outra categoria de erro (ex.: `400`, `401`, `403`, `5xx`, timeout, erro de conexão) encerra a operação imediatamente, sem tentar outra key;
 - cada operação tenta, no máximo, uma vez cada credencial distinta configurada.
 
 ### Observabilidade
 
 O serviço registra, em log, informações técnicas do fallback — operação (`generate_questions`/`evaluate_interview`), número da tentativa, categoria do erro, e se as credenciais se esgotaram — **nunca o valor de nenhuma API key**.
+
+## Modo de resposta da avaliação `/evaluate`
+
+Para comparar, de forma temporária e isolada, a robustez dos formatos de resposta da Groq na avaliação da entrevista, o serviço aceita:
+
+```dotenv
+GROQ_EVALUATION_RESPONSE_MODE=strict
+```
+
+Valores aceitos:
+
+- `strict`: usa `response_format` com `json_schema` e `strict=true`. Este é o default atual.
+- `schema`: usa o mesmo JSON Schema da avaliação, mas com `strict=false`.
+- `json_object`: usa `response_format={"type":"json_object"}`.
+
+Essa configuração não altera modelo, prompt, temperatura, retry estrutural, fallback por `429`, cooldown, limiter, timeout nem o parser local. Em todos os modos, as validações locais continuam ativas para cardinalidade, IDs esperados, IDs ausentes, IDs duplicados e IDs inesperados em `questionsEvaluation`.
+
+O modo selecionado é registrado em log apenas como metadado seguro (`evaluation_response_mode`), sem API key, prompt, respostas, schema completo, payload ou completion.
+
+## Controle local de concorrência em `/evaluate`
+
+Além do cooldown por credencial, o serviço limita quantas avaliações completas podem executar simultaneamente dentro do mesmo processo Python. O limite envolve a operação inteira:
+
+```text
+adquirir capacidade local -> GroqService().evaluate_interview(...) -> liberar capacidade local
+```
+
+Assim, fallback entre credenciais e retry estrutural continuam acontecendo dentro da mesma vaga adquirida, sem criar novas vagas internas.
+
+Variáveis:
+
+- `GROQ_EVALUATE_MAX_CONCURRENCY`: quantidade máxima de avaliações completas simultâneas por processo. Default conservador validado: `2`.
+- `GROQ_EVALUATE_QUEUE_TIMEOUT_SECONDS`: tempo máximo que uma requisição `/evaluate` aguarda por capacidade local antes de falhar sem chamar a Groq. Default: `10`.
+
+Quando a capacidade local não é obtida dentro do tempo configurado, `/evaluate` retorna erro controlado de indisponibilidade temporária (`503`) e nenhuma chamada à Groq é feita para aquela requisição.
+
+Esse controle é técnico e local ao processo, não um SLA oficial. Se o serviço for executado com múltiplos workers/processos, cada processo terá seu próprio limite local.
 
 ### Limitação conhecida (solução temporária)
 

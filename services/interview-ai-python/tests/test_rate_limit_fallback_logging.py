@@ -152,11 +152,11 @@ def _all_text(record) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Caso 1: sucesso de primeira - sem log de fallback.
+# Caso 1: sucesso de primeira - log operacional de tentativa, sem fallback.
 # ---------------------------------------------------------------------------
 
 
-def test_sucesso_de_primeira_nao_gera_log_de_fallback(monkeypatch, reset_key_pool, valid_context, caplog):
+def test_sucesso_de_primeira_loga_slot_sem_fallback(monkeypatch, reset_key_pool, valid_context, caplog):
     _patch_groq(monkeypatch, keys="fake-key-A", outcomes=[SUCCESS_QUESTIONS_JSON])
 
     with caplog.at_level("INFO"):
@@ -164,7 +164,17 @@ def test_sucesso_de_primeira_nao_gera_log_de_fallback(monkeypatch, reset_key_poo
 
     assert len(questions) == 5
     assert _warning_records(caplog) == []
-    assert _info_records(caplog) == []
+    info_records = _info_records(caplog)
+    assert len(info_records) == 1
+    record = info_records[0]
+    assert record.ai_operation == "generate_questions"
+    assert record.attempt_number == 1
+    assert record.max_attempts == 1
+    assert record.credential_slot == 1
+    assert record.error_category is None
+    assert "credential_slot" in record.getMessage()
+    assert "'credential_slot': 1" in record.getMessage()
+    assert "fake-key-A" not in _all_text(record)
 
 
 # ---------------------------------------------------------------------------
@@ -196,13 +206,21 @@ def test_a_429_b_sucesso_gera_log_de_fallback_com_campos_esperados(
     assert record.ai_operation == "generate_questions"
     assert record.attempt_number == 1
     assert record.max_attempts == 2
+    assert record.credential_slot == 1
     assert record.error_category == "rate_limit"
     assert record.status_code == 429
 
-    # Log opcional de sucesso apos fallback tambem deve existir.
+    # Log de tentativa bem-sucedida e log opcional de sucesso apos fallback
+    # tambem devem existir.
     success_records = _info_records(caplog)
-    assert len(success_records) == 1
+    assert len(success_records) == 2
     assert success_records[0].attempt_number == 2
+    assert success_records[0].credential_slot == 2
+    assert success_records[0].error_category is None
+    assert "'credential_slot': 2" in success_records[0].getMessage()
+    assert success_records[1].attempt_number == 2
+    assert success_records[1].credential_slot == 2
+    assert "'credential_slot': 2" in success_records[1].getMessage()
 
     for r in caplog.records:
         assert FAKE_KEY_MARKER not in _all_text(r)
@@ -236,6 +254,7 @@ def test_tres_keys_dois_fallbacks_logados_sem_expor_key(
     ]
     assert len(fallback_records) == 2
     assert [r.attempt_number for r in fallback_records] == [1, 2]
+    assert [r.credential_slot for r in fallback_records] == [1, 2]
     assert all(r.max_attempts == 3 for r in fallback_records)
     assert all(r.error_category == "rate_limit" for r in fallback_records)
 
@@ -272,8 +291,10 @@ def test_todas_as_keys_429_gera_log_de_esgotamento(monkeypatch, reset_key_pool, 
     record = exhausted_records[0]
     assert record.ai_operation == "generate_questions"
     assert record.max_attempts == 2
+    assert record.credential_slot == 2
     assert record.error_category == "rate_limit"
     assert record.fallback_triggered is True
+    assert "'credential_slot': 2" in record.getMessage()
 
     for r in caplog.records:
         assert "fake-key-A" not in _all_text(r)
@@ -303,6 +324,7 @@ def test_uma_unica_key_429_esgotamento_sem_fallback_real(
     assert len(exhausted_records) == 1
     record = exhausted_records[0]
     assert record.max_attempts == 1
+    assert record.credential_slot == 1
     assert record.error_category == "rate_limit"
     assert record.fallback_triggered is False
 
@@ -338,6 +360,7 @@ def test_a_429_b_429_esgotamento_preserva_fallback_triggered_true(
     ]
     assert len(exhausted_records) == 1
     assert exhausted_records[0].fallback_triggered is True
+    assert exhausted_records[0].credential_slot == 2
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +393,10 @@ def test_400_na_primeira_key_nao_gera_log_de_fallback(monkeypatch, reset_key_poo
     ]
     assert len(no_fallback_records) == 1
     record = no_fallback_records[0]
+    assert record.credential_slot == 1
     assert record.error_category == "bad_request"
     assert record.status_code == 400
+    assert "'credential_slot': 1" in record.getMessage()
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +457,9 @@ def test_evaluate_interview_a_429_b_sucesso_gera_apenas_um_log_de_fallback(
     ]
     assert len(fallback_records) == 1
     assert fallback_records[0].ai_operation == "evaluate_interview"
+    assert fallback_records[0].structural_attempt == 1
+    assert fallback_records[0].credential_slot == 1
+    assert "'credential_slot': 1" in fallback_records[0].getMessage()
 
     # Nenhum warning "orfao" de uma eventual mensagem antiga sobrevivente.
     other_warnings = [r for r in _warning_records(caplog) if r not in fallback_records]
@@ -470,7 +498,10 @@ def test_evaluate_interview_erro_nao_rate_limit_ainda_loga_evento_seguro(
     ]
     assert len(no_fallback_records) == 1
     assert no_fallback_records[0].ai_operation == "evaluate_interview"
+    assert no_fallback_records[0].structural_attempt == 1
+    assert no_fallback_records[0].credential_slot == 1
     assert no_fallback_records[0].error_category == "bad_request"
+    assert "'credential_slot': 1" in no_fallback_records[0].getMessage()
 
 
 # ---------------------------------------------------------------------------

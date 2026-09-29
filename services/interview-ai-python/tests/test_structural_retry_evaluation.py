@@ -25,10 +25,11 @@ arquivos independentes), e so valores de key obviamente falsos.
 from __future__ import annotations
 
 import pytest
-from groq import RateLimitError
+from groq import BadRequestError, RateLimitError
 
 import groq_service
 from groq_service import (
+    GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED,
     GROQ_ERROR_CATEGORY_RATE_LIMIT,
     GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
     GroqService,
@@ -65,7 +66,21 @@ def valid_answers():
     ]
 
 
-def _make_fake_api_status_error(cls: type, *, message: str = "Erro simulado da Groq.", status_code: int | None = None):
+class _FakeGroqErrorResponse:
+    def __init__(self, error_code: str):
+        self._error_code = error_code
+
+    def json(self):
+        return {"error": {"code": self._error_code}}
+
+
+def _make_fake_api_status_error(
+    cls: type,
+    *,
+    message: str = "Erro simulado da Groq.",
+    status_code: int | None = None,
+    error_code: str | None = None,
+):
     """Constroi uma instancia minima de uma subclasse de `APIStatusError` sem
     chamar seu `__init__` real e sem nenhuma chamada de rede (mesmo padrao de
     `test_rate_limit_fallback.py`)."""
@@ -73,7 +88,7 @@ def _make_fake_api_status_error(cls: type, *, message: str = "Erro simulado da G
     exc.args = (message,)
     exc.message = message
     exc.status_code = status_code if status_code is not None else getattr(cls, "status_code", 500)
-    exc.response = None
+    exc.response = _FakeGroqErrorResponse(error_code) if error_code else None
     exc.body = None
     exc.request = None
     return exc
@@ -157,9 +172,11 @@ class _FakeCompletions:
     def __init__(self, outcomes: list):
         self._outcomes = list(outcomes)
         self.call_count = 0
+        self.calls: list[dict] = []
 
     def create(self, **kwargs):
         self.call_count += 1
+        self.calls.append(kwargs)
         if self.call_count > len(self._outcomes):
             raise AssertionError(
                 f"create() chamado {self.call_count} vezes, mas so havia "
@@ -223,7 +240,7 @@ def test_avaliacao_valida_na_primeira_tentativa_nao_faz_retry(
 # ---------------------------------------------------------------------------
 
 def test_avaliacao_incompleta_depois_valida_repete_exatamente_uma_vez(
-    monkeypatch, reset_key_pool, valid_context, valid_answers
+    monkeypatch, reset_key_pool, valid_context, valid_answers, caplog
 ):
     completions, used_api_keys = _patch_groq(
         monkeypatch,
@@ -231,7 +248,8 @@ def test_avaliacao_incompleta_depois_valida_repete_exatamente_uma_vez(
         outcomes=[INCOMPLETE_EVALUATION_JSON, SUCCESS_EVALUATION_JSON],
     )
 
-    result = GroqService().evaluate_interview(valid_context, valid_answers)
+    with caplog.at_level("INFO"):
+        result = GroqService().evaluate_interview(valid_context, valid_answers)
 
     assert completions.call_count == 2
     # Mesma (unica) credencial usada nas duas tentativas - a estrutural
@@ -239,6 +257,41 @@ def test_avaliacao_incompleta_depois_valida_repete_exatamente_uma_vez(
     # de forma diferente do normal.
     assert used_api_keys == ["fake-key-A", "fake-key-A"]
     assert [item["questionId"] for item in result["questionsEvaluation"]] == [1, 2]
+    attempt_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "tentativa estrutural de avaliacao finalizada" in record.getMessage()
+    ]
+    assert len(attempt_logs) == 2
+    assert "'structural_attempt': 1" in attempt_logs[0]
+    assert "'structural_retry_triggered': True" in attempt_logs[0]
+    assert "'sdk_attempt_count': 1" in attempt_logs[0]
+    assert "'rate_limit_count': 0" in attempt_logs[0]
+    assert "'structural_attempt': 2" in attempt_logs[1]
+    assert "'structural_retry_triggered': False" in attempt_logs[1]
+    assert "'sdk_attempt_count': 1" in attempt_logs[1]
+    sdk_success_records = [
+        record
+        for record in caplog.records
+        if "tentativa SDK concluida com sucesso" in record.getMessage()
+    ]
+    assert len(sdk_success_records) == 2
+    assert [record.structural_attempt for record in sdk_success_records] == [1, 2]
+    assert [record.credential_slot for record in sdk_success_records] == [1, 1]
+    for record in sdk_success_records:
+        assert "credential_slot" in record.getMessage()
+        assert "'credential_slot': 1" in record.getMessage()
+        assert "fake-key-A" not in record.getMessage()
+    first_messages = completions.calls[0]["messages"]
+    retry_messages = completions.calls[1]["messages"]
+    assert len(first_messages) == 2
+    assert len(retry_messages) == 3
+    retry_message = retry_messages[2]["content"]
+    assert '"expectedQuestionIds": [1, 2]' in retry_message
+    assert '"returnedQuestionIds": [1]' in retry_message
+    assert '"missingQuestionIds": [2]' in retry_message
+    assert "Resposta detalhada" not in retry_message
+    assert "Boa comunicacao" not in retry_message
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +315,118 @@ def test_avaliacao_incompleta_duas_vezes_mantem_erro_502_sem_terceira_tentativa(
     assert str(exc_info.value) == "A Groq retornou avaliacao por pergunta incompleta."
     # Exatamente 2 tentativas (1a + 1 retry) - a terceira chamada faria o
     # dublê levantar AssertionError sozinho (ver _FakeCompletions.create).
+    assert completions.call_count == 2
+    assert used_api_keys == ["fake-key-A", "fake-key-A"]
+
+
+def test_json_validate_failed_depois_valida_repete_exatamente_uma_vez(
+    monkeypatch, reset_key_pool, valid_context, valid_answers, caplog
+):
+    exc = _make_fake_api_status_error(
+        BadRequestError,
+        status_code=400,
+        error_code="json_validate_failed",
+    )
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A",
+        outcomes=[exc, SUCCESS_EVALUATION_JSON],
+    )
+
+    with caplog.at_level("INFO"):
+        result = GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert completions.call_count == 2
+    assert used_api_keys == ["fake-key-A", "fake-key-A"]
+    assert [item["questionId"] for item in result["questionsEvaluation"]] == [1, 2]
+    retry_messages = completions.calls[1]["messages"]
+    assert len(retry_messages) == 3
+    retry_message = retry_messages[2]["content"]
+    assert "validacao JSON do provedor" in retry_message
+    assert "Resposta detalhada" not in retry_message
+    assert "Boa comunicacao" not in retry_message
+
+    attempt_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "tentativa estrutural de avaliacao finalizada" in record.getMessage()
+    ]
+    assert len(attempt_logs) == 2
+    assert "'error_category': 'output_validation_failed'" in attempt_logs[0]
+    assert "'structural_retry_triggered': True" in attempt_logs[0]
+    assert "'structural_attempt': 2" in attempt_logs[1]
+
+
+def test_json_validate_failed_duas_vezes_mantem_erro_502_sem_terceira_tentativa(
+    monkeypatch, reset_key_pool, valid_context, valid_answers
+):
+    outcomes = [
+        _make_fake_api_status_error(
+            BadRequestError,
+            status_code=400,
+            error_code="json_validate_failed",
+        ),
+        _make_fake_api_status_error(
+            BadRequestError,
+            status_code=400,
+            error_code="json_validate_failed",
+        ),
+    ]
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A",
+        outcomes=outcomes,
+    )
+
+    with pytest.raises(GroqServiceError) as exc_info:
+        GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.category == GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED
+    assert completions.call_count == 2
+    assert used_api_keys == ["fake-key-A", "fake-key-A"]
+
+
+def test_avaliacao_incompleta_depois_json_validate_failed_nao_faz_terceira_tentativa(
+    monkeypatch, reset_key_pool, valid_context, valid_answers
+):
+    exc = _make_fake_api_status_error(
+        BadRequestError,
+        status_code=400,
+        error_code="json_validate_failed",
+    )
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A",
+        outcomes=[INCOMPLETE_EVALUATION_JSON, exc],
+    )
+
+    with pytest.raises(GroqServiceError) as exc_info:
+        GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert exc_info.value.category == GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED
+    assert completions.call_count == 2
+    assert used_api_keys == ["fake-key-A", "fake-key-A"]
+
+
+def test_json_validate_failed_depois_avaliacao_incompleta_nao_faz_terceira_tentativa(
+    monkeypatch, reset_key_pool, valid_context, valid_answers
+):
+    exc = _make_fake_api_status_error(
+        BadRequestError,
+        status_code=400,
+        error_code="json_validate_failed",
+    )
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A",
+        outcomes=[exc, INCOMPLETE_EVALUATION_JSON],
+    )
+
+    with pytest.raises(GroqServiceError) as exc_info:
+        GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert exc_info.value.category == GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION
     assert completions.call_count == 2
     assert used_api_keys == ["fake-key-A", "fake-key-A"]
 
@@ -308,6 +473,24 @@ def test_429_com_multiplas_keys_usa_fallback_normal_ate_sucesso(
 
     assert completions.call_count == 2
     assert used_api_keys == ["fake-key-A", "fake-key-B"]
+    assert [item["questionId"] for item in result["questionsEvaluation"]] == [1, 2]
+
+
+def test_retry_estrutural_respeita_cooldown_de_key_limitada(
+    monkeypatch, reset_key_pool, valid_context, valid_answers
+):
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: 100.0)
+    exc = _make_fake_api_status_error(RateLimitError)
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B",
+        outcomes=[exc, INCOMPLETE_EVALUATION_JSON, SUCCESS_EVALUATION_JSON],
+    )
+
+    result = GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert completions.call_count == 3
+    assert used_api_keys == ["fake-key-A", "fake-key-B", "fake-key-B"]
     assert [item["questionId"] for item in result["questionsEvaluation"]] == [1, 2]
 
 

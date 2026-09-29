@@ -1,23 +1,42 @@
 import logging
 import os
+import time
 
 from flask import Flask, jsonify, request
 
+from evaluation_limiter import EvaluationCapacityError, get_evaluation_limiter
 from groq_service import GroqService, GroqServiceError, describe_groq_service_error
 from job_context_adapter import JobContextAdapterError, extract_job_context
 
-# QA de observabilidade (branch work/groq-avaliacao-502): logger próprio do
-# módulo app, usado apenas para registrar (sem expor ao cliente) qual
-# validação controlada de GroqServiceError disparou um 502/erro no fluxo
-# /evaluate. Nenhuma configuração de handler/formatter é feita aqui de
-# propósito — sem isso, os campos de `describe_groq_service_error` não
-# apareceriam se passados via `extra=`, por isso são embutidos diretamente
-# na mensagem formatada abaixo, garantindo visibilidade mesmo com a
-# configuração de logging padrão do Python (saída em stderr).
+# QA de observabilidade: logger proprio do modulo app, usado para registrar
+# eventos operacionais seguros do fluxo /evaluate. Campos de diagnostico sao
+# embutidos na mensagem formatada, nao dependem de formatter estruturado, e
+# nunca incluem prompt, payload, respostas do candidato ou segredos.
 logger = logging.getLogger(__name__)
+_LOG_FORMAT = "%(levelname)s:%(name)s:%(message)s"
+_RH_CONNECT_LOG_HANDLER_MARKER = "_rh_connect_python_service_handler"
+
+
+def configure_logging() -> None:
+    """Configure safe process logging once for the local Python service."""
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    if root_logger.handlers:
+        return
+
+    handler = logging.StreamHandler()
+    setattr(handler, _RH_CONNECT_LOG_HANDLER_MARKER, True)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    root_logger.addHandler(handler)
+
+
+def _monotonic() -> float:
+    return time.monotonic()
 
 
 def create_app() -> Flask:
+    configure_logging()
     app = Flask(__name__)
 
     @app.get("/health")
@@ -71,8 +90,32 @@ def create_app() -> Flask:
         if not isinstance(answers, list):
             return jsonify({"error": "Informe as respostas da entrevista."}), 400
 
+        limiter = get_evaluation_limiter()
+        request_started_at = _monotonic()
+
         try:
-            evaluation = GroqService().evaluate_interview(context, answers)
+            with limiter.acquire() as lease:
+                execution_started_at = _monotonic()
+                try:
+                    evaluation = GroqService().evaluate_interview(context, answers)
+                finally:
+                    finished_at = _monotonic()
+                    execution_duration_ms = (finished_at - execution_started_at) * 1000
+                    total_duration_ms = (finished_at - request_started_at) * 1000
+                    snapshot = limiter.snapshot()
+                    logger.info(
+                        "POST /evaluate finalizado: %s",
+                        {
+                            "active_evaluations": snapshot.active_evaluations,
+                            "waiting_evaluations": snapshot.waiting_evaluations,
+                            "max_concurrency": snapshot.max_concurrency,
+                            "queue_wait_ms": round(lease.queue_wait_ms, 1),
+                            "execution_duration_ms": round(execution_duration_ms, 1),
+                            "total_duration_ms": round(total_duration_ms, 1),
+                        },
+                    )
+        except EvaluationCapacityError as exc:
+            return jsonify({"error": str(exc)}), exc.status_code
         except GroqServiceError as exc:
             # QA de observabilidade (branch work/groq-avaliacao-502): antes,
             # nenhum log server-side identificava qual validação controlada

@@ -34,6 +34,17 @@ def test_tres_keys_faz_round_robin_a_b_c_a():
     ]
 
 
+def test_next_key_with_slot_retorna_posicao_logica_sem_alterar_round_robin():
+    pool = GroqKeyPool(["fake-key-A", "fake-key-B", "fake-key-C"])
+
+    assert [pool.next_key_with_slot() for _ in range(4)] == [
+        ("fake-key-A", 1),
+        ("fake-key-B", 2),
+        ("fake-key-C", 3),
+        ("fake-key-A", 1),
+    ]
+
+
 def test_uma_unica_key_sempre_repete_a_mesma():
     pool = GroqKeyPool(["fake-key-single"])
 
@@ -180,3 +191,57 @@ def test_concorrencia_com_multiplas_threads_nao_causa_race_condition_no_indice()
     expected_per_key = total_calls // len(keys)
     for key in keys:
         assert counts[key] == expected_per_key
+
+
+def test_next_unique_key_pula_key_em_cooldown(monkeypatch):
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: 100.0)
+    pool = GroqKeyPool(["fake-key-A", "fake-key-B"])
+
+    pool.mark_rate_limited("fake-key-A", 30)
+
+    assert pool.next_unique_key(set()) == "fake-key-B"
+
+
+def test_next_unique_key_with_slot_retorna_slot_da_key_escolhida(monkeypatch):
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: 100.0)
+    pool = GroqKeyPool(["fake-key-A", "fake-key-B", "fake-key-C"])
+
+    pool.mark_rate_limited("fake-key-A", 30)
+
+    assert pool.next_unique_key_with_slot(set()) == ("fake-key-B", 2)
+
+
+def test_key_em_cooldown_volta_automaticamente_apos_expirar(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: now)
+    pool = GroqKeyPool(["fake-key-A", "fake-key-B"])
+
+    pool.mark_rate_limited("fake-key-A", 10)
+
+    now = 111.0
+    assert pool.next_unique_key(set()) == "fake-key-A"
+
+
+def test_concorrencia_com_multiplas_threads_respeita_cooldown_em_next_unique_key(monkeypatch):
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: 100.0)
+    pool = GroqKeyPool(["fake-key-A", "fake-key-B", "fake-key-C"])
+    pool.mark_rate_limited("fake-key-A", 30)
+
+    num_threads = 8
+    calls_per_thread = 100
+    results: list[str] = []
+    results_lock = threading.Lock()
+
+    def worker() -> None:
+        local_results = [pool.next_unique_key(set()) for _ in range(calls_per_thread)]
+        with results_lock:
+            results.extend(key for key in local_results if key is not None)
+
+    threads = [threading.Thread(target=worker) for _ in range(num_threads)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert "fake-key-A" not in results
+    assert set(results) == {"fake-key-B", "fake-key-C"}

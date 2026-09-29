@@ -40,6 +40,7 @@ from groq_service import (
     GROQ_ERROR_CATEGORY_AUTHENTICATION,
     GROQ_ERROR_CATEGORY_BAD_REQUEST,
     GROQ_ERROR_CATEGORY_CONNECTION_ERROR,
+    GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED,
     GROQ_ERROR_CATEGORY_PERMISSION_DENIED,
     GROQ_ERROR_CATEGORY_RATE_LIMIT,
     GROQ_ERROR_CATEGORY_TIMEOUT,
@@ -81,7 +82,21 @@ def valid_answers():
     ]
 
 
-def _make_fake_api_status_error(cls: type, *, message: str = "Erro simulado da Groq.", status_code: int | None = None):
+class _FakeGroqErrorResponse:
+    def __init__(self, error_code: str):
+        self._error_code = error_code
+
+    def json(self):
+        return {"error": {"code": self._error_code}}
+
+
+def _make_fake_api_status_error(
+    cls: type,
+    *,
+    message: str = "Erro simulado da Groq.",
+    status_code: int | None = None,
+    error_code: str | None = None,
+):
     """Constroi uma instancia minima de uma subclasse de `APIStatusError`
     sem chamar seu `__init__` real (que exige um `httpx.Response`/
     `httpx.Request` de verdade) e sem nenhuma chamada de rede - so o
@@ -92,7 +107,7 @@ def _make_fake_api_status_error(cls: type, *, message: str = "Erro simulado da G
     exc.args = (message,)
     exc.message = message
     exc.status_code = status_code if status_code is not None else getattr(cls, "status_code", 500)
-    exc.response = None
+    exc.response = _FakeGroqErrorResponse(error_code) if error_code else None
     exc.body = None
     exc.request = None
     return exc
@@ -185,12 +200,22 @@ def test_rate_limit_error_vira_categoria_rate_limit():
 
 
 def test_bad_request_error_vira_categoria_bad_request():
-    # Caso real ja observado: json_validate_failed pode chegar como HTTP
-    # 400 - isso NAO deve ser interpretado como problema da key.
-    exc = _make_fake_api_status_error(BadRequestError, message="json_validate_failed")
+    exc = _make_fake_api_status_error(BadRequestError, status_code=400, error_code="invalid_request")
     translated = _translate_groq_error(exc, action="avaliar entrevista")
 
     assert translated.category == GROQ_ERROR_CATEGORY_BAD_REQUEST
+    assert translated.status_code == 502
+
+
+def test_bad_request_json_validate_failed_vira_categoria_recuperavel_de_saida():
+    exc = _make_fake_api_status_error(
+        BadRequestError,
+        status_code=400,
+        error_code="json_validate_failed",
+    )
+    translated = _translate_groq_error(exc, action="avaliar entrevista")
+
+    assert translated.category == GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED
     assert translated.status_code == 502
 
 

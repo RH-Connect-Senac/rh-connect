@@ -6,6 +6,9 @@ import json
 import logging
 import os
 import threading
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from dotenv import load_dotenv
@@ -30,7 +33,13 @@ logger = logging.getLogger(__name__)
 class GroqServiceError(Exception):
     """Controlled error raised by Groq integrations."""
 
-    def __init__(self, message: str, status_code: int = 502, category: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 502,
+        category: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         # Bloco 4: categoria controlada e testavel do erro (ver
@@ -40,6 +49,7 @@ class GroqServiceError(Exception):
         # Groq (ex.: GroqConfigurationError, erros de validacao de
         # payload).
         self.category = category
+        self.metadata = metadata or {}
 
 
 class GroqConfigurationError(GroqServiceError):
@@ -65,6 +75,7 @@ GROQ_ERROR_CATEGORY_UPSTREAM_SERVER_ERROR = "upstream_server_error"
 GROQ_ERROR_CATEGORY_TIMEOUT = "timeout"
 GROQ_ERROR_CATEGORY_CONNECTION_ERROR = "connection_error"
 GROQ_ERROR_CATEGORY_API_STATUS_ERROR = "api_status_error"
+GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED = "output_validation_failed"
 
 # Categoria dedicada (nao vem de `_translate_groq_error`/de uma excecao da
 # SDK Groq): marca especificamente um `GroqServiceError` levantado por
@@ -85,6 +96,7 @@ GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION = "structural_incomplete_ev
 # limit continua sem alteracao, com seu proprio `max_attempts` baseado no
 # numero de credenciais distintas).
 _MAX_STRUCTURAL_EVALUATION_ATTEMPTS = 2
+_DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS = 30.0
 
 
 def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
@@ -124,6 +136,12 @@ def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
             category=GROQ_ERROR_CATEGORY_RATE_LIMIT,
         )
     if isinstance(exc, BadRequestError):
+        if getattr(exc, "status_code", None) == 400 and _extract_groq_error_code(exc) == "json_validate_failed":
+            return GroqServiceError(
+                f"A Groq retornou falha de validacao da saida ao {action}.",
+                502,
+                category=GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED,
+            )
         return GroqServiceError(
             f"A Groq retornou requisicao invalida (400) ao {action}.",
             502,
@@ -355,6 +373,16 @@ class GroqService:
 
         model = self._model()
         prompt = self._build_evaluation_prompt(context, normalized_answers)
+        structural_retry_message: str | None = None
+        evaluation_response_mode = _evaluation_response_mode()
+        evaluation_response_format = _evaluation_response_format(
+            normalized_answers,
+            mode=evaluation_response_mode,
+        )
+        logger.info(
+            "Groq: modo de response_format da avaliacao configurado: %s",
+            {"evaluation_response_mode": evaluation_response_mode},
+        )
 
         def _call_groq(client: Groq):
             # Bloco 6: o log de observabilidade por tentativa que existia
@@ -381,21 +409,25 @@ class GroqService:
             # timeout/erro de conexao (categorias que este bloco antigo,
             # por so capturar `APIStatusError`, nunca cobria), alinhando o
             # comportamento com `generate_questions`.
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Voce e um avaliador educacional de entrevistas profissionais. "
+                        "Avalie com foco em desenvolvimento do candidato. "
+                        "Responda somente com JSON valido, sem markdown."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ]
+            if structural_retry_message:
+                messages.append({"role": "user", "content": structural_retry_message})
+
             return client.chat.completions.create(
                 model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Voce e um avaliador educacional de entrevistas profissionais. "
-                            "Avalie com foco em desenvolvimento do candidato. "
-                            "Responda somente com JSON valido, sem markdown."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
                 temperature=0.2,
-                response_format={"type": "json_object"},
+                response_format=evaluation_response_format,
             )
 
         # Retry estrutural (no maximo 1 vez, so aqui - nao dentro de
@@ -414,29 +446,64 @@ class GroqService:
         # invalido/vazio, scores incompletos, rate limit, bad_request,
         # etc.) sobe imediatamente, sem retry estrutural.
         for structural_attempt in range(1, _MAX_STRUCTURAL_EVALUATION_ATTEMPTS + 1):
-            completion = self._execute_with_rate_limit_fallback(
-                _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
-            )
-            content = completion.choices[0].message.content if completion.choices else ""
-
+            attempt_metrics = _new_evaluation_attempt_metrics()
+            attempt_started_at = time.monotonic()
             try:
-                return self._parse_evaluation_response(content, normalized_answers)
+                completion = self._execute_with_rate_limit_fallback(
+                    _call_groq,
+                    action="avaliar entrevista",
+                    ai_operation="evaluate_interview",
+                    structural_attempt=structural_attempt,
+                    metrics=attempt_metrics,
+                )
+                content = completion.choices[0].message.content if completion.choices else ""
+                evaluation = self._parse_evaluation_response(content, normalized_answers)
             except GroqServiceError as exc:
-                is_structural = exc.category == GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION
-                if not is_structural or structural_attempt >= _MAX_STRUCTURAL_EVALUATION_ATTEMPTS:
+                is_corrective_retry_error = exc.category in {
+                    GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED,
+                }
+                structural_retry_triggered = (
+                    is_corrective_retry_error
+                    and structural_attempt < _MAX_STRUCTURAL_EVALUATION_ATTEMPTS
+                )
+                _log_evaluation_structural_attempt(
+                    structural_attempt=structural_attempt,
+                    max_structural_attempts=_MAX_STRUCTURAL_EVALUATION_ATTEMPTS,
+                    metrics=attempt_metrics,
+                    started_at=attempt_started_at,
+                    structural_retry_triggered=structural_retry_triggered,
+                    error_category=exc.category,
+                )
+                if (
+                    not is_corrective_retry_error
+                    or structural_attempt >= _MAX_STRUCTURAL_EVALUATION_ATTEMPTS
+                ):
                     raise
 
+                structural_retry_message = _build_corrective_retry_message(exc)
                 # Log sanitizado: so contagens/flags tecnicas (mesmo padrao
                 # do Bloco 6) - nunca prompt, resposta do candidato ou
                 # payload bruto da Groq.
                 logger.warning(
-                    "Groq: retry estrutural de avaliacao (questionsEvaluation incompleto/invalido) - repetindo",
+                    "Groq: retry corretivo de avaliacao - repetindo",
                     extra={
                         "ai_operation": "evaluate_interview",
                         "structural_attempt": structural_attempt,
                         "max_structural_attempts": _MAX_STRUCTURAL_EVALUATION_ATTEMPTS,
+                        "correction_reason": exc.category,
                     },
                 )
+            else:
+                _log_evaluation_structural_attempt(
+                    structural_attempt=structural_attempt,
+                    max_structural_attempts=_MAX_STRUCTURAL_EVALUATION_ATTEMPTS,
+                    metrics=attempt_metrics,
+                    started_at=attempt_started_at,
+                    structural_retry_triggered=False,
+                    error_category=None,
+                )
+                return evaluation
 
         # Estruturalmente inalcancavel: o loop acima sempre retorna (na
         # ultima iteracao, `structural_attempt >= _MAX_STRUCTURAL_EVALUATION_ATTEMPTS`
@@ -444,7 +511,15 @@ class GroqService:
         # defensiva, no mesmo estilo do restante do arquivo.
         raise GroqServiceError("Falha inesperada ao avaliar entrevista.", 502)
 
-    def _execute_with_rate_limit_fallback(self, call_groq, *, action: str, ai_operation: str) -> Any:
+    def _execute_with_rate_limit_fallback(
+        self,
+        call_groq,
+        *,
+        action: str,
+        ai_operation: str,
+        structural_attempt: int | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> Any:
         """Executa `call_groq(client)` com fallback controlado, restrito a
         rate limit (429 / `RateLimitError` / categoria `rate_limit`).
 
@@ -550,6 +625,7 @@ class GroqService:
         tried_keys: set[str] = set()
         last_rate_limit_error: GroqServiceError | None = None
         last_rate_limit_cause: Exception | None = None
+        last_rate_limit_slot: int | None = None
         # Flag explicita e direta (nao inferida de `max_attempts`/
         # `attempt_number`): fica `True` assim que esta operacao realmente
         # chega a tentar OUTRA credencial apos um 429 - ou seja, no exato
@@ -563,42 +639,64 @@ class GroqService:
         for loop_index in range(max_attempts):
             attempt_number = loop_index + 1
 
-            api_key = pool.next_unique_key(tried_keys)
-            if api_key is None:
-                # Estruturalmente inalcancavel: `max_attempts` e o numero de
-                # credenciais distintas, entao ha sempre uma credencial nao
-                # tentada disponivel para cada uma das `max_attempts`
-                # iteracoes. Mantido como rede de seguranca defensiva,
-                # consistente com o estilo do restante do codigo - encerra o
-                # loop sem tentar novamente em vez de arriscar qualquer
-                # comportamento inesperado.
-                break
+            selected_key = pool.next_unique_key_with_slot(tried_keys)
+            if selected_key is None:
+                _set_metric(metrics, "fallback_exhausted", True)
+                logger.warning(
+                    "Groq: nenhuma credencial disponivel fora de cooldown por rate limit (429)",
+                    extra={
+                        "ai_operation": ai_operation,
+                        "structural_attempt": structural_attempt,
+                        "attempt_number": attempt_number,
+                        "max_attempts": max_attempts,
+                        "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
+                        "fallback_triggered": fallback_occurred,
+                        "exhausted_credentials": True,
+                    },
+                )
+                raise GroqServiceError(
+                    "Todas as credenciais da Groq estao temporariamente indisponiveis por rate limit.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_RATE_LIMIT,
+                )
 
+            api_key, credential_slot = selected_key
             tried_keys.add(api_key)
             client = self._client(api_key=api_key)
             try:
+                _increment_metric(metrics, "sdk_attempt_count")
                 result = call_groq(client)
             except Exception as exc:
                 translated = _translate_groq_error(exc, action=action)
+                log_extra = {
+                    "ai_operation": ai_operation,
+                    "structural_attempt": structural_attempt,
+                    "attempt_number": attempt_number,
+                    "max_attempts": max_attempts,
+                    "credential_slot": credential_slot,
+                    "error_category": translated.category,
+                    **_safe_groq_log_fields(exc),
+                }
                 if translated.category != GROQ_ERROR_CATEGORY_RATE_LIMIT:
                     # Evento: erro nao-rate-limit encerra a operacao
                     # imediatamente, sem tentar outra credencial - nenhum
                     # fallback ocorreu.
+                    no_fallback_log = {
+                        "fallback_triggered": False,
+                        **log_extra,
+                    }
                     logger.warning(
-                        "Groq: operacao encerrada sem fallback (categoria nao elegivel para nova tentativa)",
-                        extra={
-                            "ai_operation": ai_operation,
-                            "attempt_number": attempt_number,
-                            "max_attempts": max_attempts,
-                            "error_category": translated.category,
-                            "fallback_triggered": False,
-                            **_safe_groq_log_fields(exc),
-                        },
+                        "Groq: operacao encerrada sem fallback (categoria nao elegivel para nova tentativa): %s",
+                        no_fallback_log,
+                        extra=no_fallback_log,
                     )
                     raise translated from exc
 
                 last_rate_limit_error = translated
                 last_rate_limit_cause = exc
+                last_rate_limit_slot = credential_slot
+                _increment_metric(metrics, "rate_limit_count")
+                pool.mark_rate_limited(api_key, _rate_limit_cooldown_seconds(exc))
 
                 if attempt_number < max_attempts:
                     # Evento: fallback para a proxima credencial ainda nao
@@ -609,16 +707,14 @@ class GroqService:
                     # credencial), entao e aqui, e so aqui, que
                     # `fallback_occurred` passa a `True`.
                     fallback_occurred = True
+                    fallback_log = {
+                        "fallback_triggered": True,
+                        **log_extra,
+                    }
                     logger.warning(
-                        "Groq: fallback para proxima credencial por rate limit (429)",
-                        extra={
-                            "ai_operation": ai_operation,
-                            "attempt_number": attempt_number,
-                            "max_attempts": max_attempts,
-                            "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
-                            "fallback_triggered": True,
-                            **_safe_groq_log_fields(exc),
-                        },
+                        "Groq: fallback para proxima credencial por rate limit (429): %s",
+                        fallback_log,
+                        extra=fallback_log,
                     )
                 # Quando `attempt_number == max_attempts`, esta era a
                 # ultima credencial distinta disponivel - nao ha "proxima
@@ -629,20 +725,37 @@ class GroqService:
                 # nenhuma).
                 continue
             else:
+                sdk_success_log = {
+                    "ai_operation": ai_operation,
+                    "structural_attempt": structural_attempt,
+                    "attempt_number": attempt_number,
+                    "max_attempts": max_attempts,
+                    "credential_slot": credential_slot,
+                    "error_category": None,
+                }
+                logger.info(
+                    "Groq: tentativa SDK concluida com sucesso: %s",
+                    sdk_success_log,
+                    extra=sdk_success_log,
+                )
                 if attempt_number > 1:
                     # Evento (opcional, so quando houve fallback): a
                     # operacao teve sucesso depois de ao menos uma troca de
                     # credencial por rate limit. Nao loga sucesso de
                     # primeira tentativa (Caso 1) para nao gerar ruido em
                     # volume alto de chamadas bem-sucedidas comuns.
+                    fallback_success_log = {
+                        "ai_operation": ai_operation,
+                        "structural_attempt": structural_attempt,
+                        "attempt_number": attempt_number,
+                        "max_attempts": max_attempts,
+                        "credential_slot": credential_slot,
+                        "fallback_triggered": True,
+                    }
                     logger.info(
-                        "Groq: operacao teve sucesso apos fallback por rate limit",
-                        extra={
-                            "ai_operation": ai_operation,
-                            "attempt_number": attempt_number,
-                            "max_attempts": max_attempts,
-                            "fallback_triggered": True,
-                        },
+                        "Groq: operacao teve sucesso apos fallback por rate limit: %s",
+                        fallback_success_log,
+                        extra=fallback_success_log,
                     )
                 return result
 
@@ -659,17 +772,22 @@ class GroqService:
         # permanece `False` e o esgotamento e corretamente reportado sem
         # fallback: so a mesma (unica) credencial foi tentada, uma vez.
         assert last_rate_limit_error is not None  # max_attempts >= 1 (pool nunca vazio)
+        _set_metric(metrics, "fallback_exhausted", True)
+        exhausted_log = {
+            "ai_operation": ai_operation,
+            "structural_attempt": structural_attempt,
+            "attempt_number": max_attempts,
+            "max_attempts": max_attempts,
+            "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
+            "credential_slot": last_rate_limit_slot,
+            "fallback_triggered": fallback_occurred,
+            "exhausted_credentials": True,
+            **_safe_groq_log_fields(last_rate_limit_cause),
+        }
         logger.warning(
-            "Groq: todas as credenciais distintas disponiveis foram esgotadas por rate limit (429)",
-            extra={
-                "ai_operation": ai_operation,
-                "attempt_number": max_attempts,
-                "max_attempts": max_attempts,
-                "error_category": GROQ_ERROR_CATEGORY_RATE_LIMIT,
-                "fallback_triggered": fallback_occurred,
-                "exhausted_credentials": True,
-                **_safe_groq_log_fields(last_rate_limit_cause),
-            },
+            "Groq: todas as credenciais distintas disponiveis foram esgotadas por rate limit (429): %s",
+            exhausted_log,
+            extra=exhausted_log,
         )
         raise last_rate_limit_error from last_rate_limit_cause
 
@@ -852,6 +970,9 @@ class GroqService:
         return normalized_answers
 
     def _build_evaluation_prompt(self, context: dict[str, Any], answers: list[dict[str, Any]]) -> str:
+        expected_question_ids = [answer["questionId"] for answer in answers]
+        expected_question_count = len(expected_question_ids)
+        questions_evaluation_skeleton = _questions_evaluation_skeleton(expected_question_ids)
         prompt_context = {
             "title": _clean_text(context.get("title")),
             "company": _clean_text(context.get("company")),
@@ -900,9 +1021,12 @@ class GroqService:
             "- Inclua summary como string.\n"
             "- Inclua questionsEvaluation com uma avaliacao para cada resposta recebida.\n"
             "- Cada item de questionsEvaluation deve conter questionId, score, reason, positives, improvements e suggestion.\n"
-            "- questionsEvaluation deve conter EXATAMENTE uma avaliacao para cada pergunta/resposta recebida - nem a mais, nem a menos.\n"
-            "- A quantidade de itens em questionsEvaluation deve ser IGUAL a quantidade de perguntas/respostas recebidas.\n"
+            f"- questionsEvaluation deve conter EXATAMENTE {expected_question_count} itens - nem a mais, nem a menos.\n"
+            f"- A quantidade de itens em questionsEvaluation deve ser IGUAL a {expected_question_count}.\n"
             "- Cada item deve preservar o questionId original exatamente como recebido na respectiva pergunta/resposta.\n"
+            f"- Os expectedQuestionIds sao: {json.dumps(expected_question_ids, ensure_ascii=False)}.\n"
+            "- Retorne exatamente um item para CADA expectedQuestionId.\n"
+            "- Nao retorne nenhum questionId fora de expectedQuestionIds.\n"
             "- Nao omita o questionId de nenhum item.\n"
             "- Nao renumere nem troque os questionId originais por uma nova sequencia.\n"
             "- Nao duplique questionId: cada questionId deve aparecer em no maximo um item de questionsEvaluation.\n"
@@ -936,11 +1060,12 @@ class GroqService:
             '"improvements": ["..."],'
             '"recommendations": ["..."],'
             '"summary": "...",'
-            '"questionsEvaluation": ['
-            '{"questionId": 1, "score": 0, "reason": "...", "positives": ["..."], '
-            '"improvements": ["..."], "suggestion": "..."}'
-            "]"
+            f'"questionsEvaluation": {json.dumps(questions_evaluation_skeleton, ensure_ascii=False)}'
             "}\n\n"
+            f"expectedQuestionIds:\n{json.dumps(expected_question_ids, ensure_ascii=False)}\n\n"
+            "Skeleton obrigatorio de questionsEvaluation, usando os IDs reais recebidos. "
+            "Preserve estes questionId e substitua os placeholders por avaliacao real:\n"
+            f"{json.dumps(questions_evaluation_skeleton, ensure_ascii=False)}\n\n"
             f"Contexto da vaga em JSON:\n{json.dumps(prompt_context, ensure_ascii=False)}\n\n"
             f"Perguntas e respostas em JSON:\n{json.dumps(answers, ensure_ascii=False)}"
         )
@@ -1034,6 +1159,8 @@ class GroqService:
                 category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
             )
 
+        expected_question_ids = [answer["questionId"] for answer in answers]
+        expected_question_ids_set = set(expected_question_ids)
         by_question_id: dict[int, dict[str, Any]] = {}
         returned_question_ids: list[int] = []
 
@@ -1043,26 +1170,73 @@ class GroqService:
                     "A Groq retornou item de avaliacao invalido.",
                     502,
                     category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    metadata=_questions_evaluation_retry_metadata(
+                        expected_question_ids,
+                        returned_question_ids,
+                    ),
                 )
 
-            fallback_question_id = answers[index]["questionId"] if index < len(answers) else None
             try:
-                question_id = int(
-                    item.get("questionId")
-                    or item.get("question_id")
-                    or item.get("id")
-                    or fallback_question_id
-                )
+                question_id = int(item["questionId"])
             except (TypeError, ValueError) as exc:
                 raise GroqServiceError(
                     "A Groq retornou questionId invalido na avaliacao.",
                     502,
                     category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    metadata=_questions_evaluation_retry_metadata(
+                        expected_question_ids,
+                        returned_question_ids,
+                    ),
                 ) from exc
+            except KeyError as exc:
+                raise GroqServiceError(
+                    "A Groq retornou avaliacao sem questionId.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    metadata=_questions_evaluation_retry_metadata(
+                        expected_question_ids,
+                        returned_question_ids,
+                    ),
+                ) from exc
+            if question_id not in expected_question_ids_set:
+                logger.warning(
+                    "Avaliacao por pergunta com questionId inesperado: %s",
+                    {
+                        "unexpected_question_id": question_id,
+                        "expected_question_ids": expected_question_ids,
+                        "returned_question_ids": returned_question_ids + [question_id],
+                        "returned_count": len(raw_questions_evaluation),
+                    },
+                )
+                raise GroqServiceError(
+                    "A Groq retornou questionId inesperado na avaliacao.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    metadata=_questions_evaluation_retry_metadata(
+                        expected_question_ids,
+                        returned_question_ids + [question_id],
+                    ),
+                )
+            if question_id in by_question_id:
+                logger.warning(
+                    "Avaliacao por pergunta com questionId duplicado: %s",
+                    {
+                        "duplicated_question_id": question_id,
+                        "returned_question_ids": returned_question_ids + [question_id],
+                        "returned_count": len(raw_questions_evaluation),
+                    },
+                )
+                raise GroqServiceError(
+                    "A Groq retornou questionId duplicado na avaliacao.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    metadata=_questions_evaluation_retry_metadata(
+                        expected_question_ids,
+                        returned_question_ids + [question_id],
+                    ),
+                )
             returned_question_ids.append(question_id)
             by_question_id[question_id] = item
-
-        expected_question_ids = [answer["questionId"] for answer in answers]
 
         normalized: list[dict[str, Any]] = []
         for answer in answers:
@@ -1088,6 +1262,10 @@ class GroqService:
                     "A Groq retornou avaliacao por pergunta incompleta.",
                     502,
                     category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                    metadata=_questions_evaluation_retry_metadata(
+                        expected_question_ids,
+                        returned_question_ids,
+                    ),
                 )
 
             max_score = _answer_score_cap(answer["answer"])
@@ -1110,6 +1288,196 @@ def _clean_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _questions_evaluation_skeleton(question_ids: list[int]) -> list[dict[str, Any]]:
+    return [
+        {
+            "questionId": question_id,
+            "score": 0,
+            "reason": "...",
+            "positives": ["..."],
+            "improvements": ["..."],
+            "suggestion": "...",
+        }
+        for question_id in question_ids
+    ]
+
+
+def _questions_evaluation_retry_metadata(
+    expected_question_ids: list[int],
+    returned_question_ids: list[int],
+) -> dict[str, Any]:
+    missing_question_ids = [
+        expected_id
+        for expected_id in expected_question_ids
+        if expected_id not in returned_question_ids
+    ]
+    return {
+        "expectedQuestionIds": expected_question_ids,
+        "returnedQuestionIds": returned_question_ids,
+        "missingQuestionIds": missing_question_ids,
+    }
+
+
+def _build_structural_retry_message(metadata: dict[str, Any]) -> str:
+    expected_question_ids = metadata.get("expectedQuestionIds")
+    returned_question_ids = metadata.get("returnedQuestionIds")
+    missing_question_ids = metadata.get("missingQuestionIds")
+    retry_payload = {
+        "expectedQuestionIds": expected_question_ids if isinstance(expected_question_ids, list) else [],
+        "returnedQuestionIds": returned_question_ids if isinstance(returned_question_ids, list) else [],
+        "missingQuestionIds": missing_question_ids if isinstance(missing_question_ids, list) else [],
+    }
+    return (
+        "A tentativa anterior retornou questionsEvaluation incompleto ou invalido.\n"
+        "Use somente estes metadados estruturais para corrigir a nova resposta:\n"
+        f"{json.dumps(retry_payload, ensure_ascii=False)}\n"
+        "Retorne uma nova avaliacao completa com exatamente um item em questionsEvaluation "
+        "para cada expectedQuestionId, sem IDs adicionais e sem IDs duplicados."
+    )
+
+
+def _build_output_validation_retry_message() -> str:
+    return (
+        "A tentativa anterior falhou na validacao JSON do provedor antes de retornar uma resposta utilizavel.\n"
+        "Retorne uma nova avaliacao completa em JSON valido, obedecendo exatamente o formato solicitado no prompt original.\n"
+        "Nao inclua texto fora do JSON, markdown, comentarios ou campos extras."
+    )
+
+
+def _build_corrective_retry_message(exc: GroqServiceError) -> str:
+    if exc.category == GROQ_ERROR_CATEGORY_OUTPUT_VALIDATION_FAILED:
+        return _build_output_validation_retry_message()
+    return _build_structural_retry_message(exc.metadata)
+
+
+def _new_evaluation_attempt_metrics() -> dict[str, Any]:
+    return {
+        "sdk_attempt_count": 0,
+        "rate_limit_count": 0,
+        "fallback_exhausted": False,
+    }
+
+
+def _evaluation_response_mode() -> str:
+    raw_mode = os.getenv("GROQ_EVALUATION_RESPONSE_MODE", "strict").strip().lower()
+    if raw_mode in {"strict", "schema", "json_object"}:
+        return raw_mode
+    return "strict"
+
+
+def _evaluation_response_format(answers: list[dict[str, Any]], *, mode: str | None = None) -> dict[str, Any]:
+    selected_mode = mode or _evaluation_response_mode()
+    if selected_mode == "json_object":
+        return {"type": "json_object"}
+
+    expected_question_ids = [answer["questionId"] for answer in answers]
+    expected_question_count = len(expected_question_ids)
+    string_array_schema = {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    question_evaluation_item_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "questionId",
+            "score",
+            "reason",
+            "positives",
+            "improvements",
+            "suggestion",
+        ],
+        "properties": {
+            "questionId": {"type": "integer", "enum": expected_question_ids},
+            "score": {"type": "number", "minimum": 0, "maximum": 10},
+            "reason": {"type": "string"},
+            "positives": string_array_schema,
+            "improvements": string_array_schema,
+            "suggestion": {"type": "string"},
+        },
+    }
+    scores_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(EVALUATION_CRITERIA),
+        "properties": {
+            criterion: {"type": "number", "minimum": 0, "maximum": 10}
+            for criterion in EVALUATION_CRITERIA
+        },
+    }
+    evaluation_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "scores",
+            "strengths",
+            "improvements",
+            "recommendations",
+            "summary",
+            "questionsEvaluation",
+        ],
+        "properties": {
+            "scores": scores_schema,
+            "strengths": string_array_schema,
+            "improvements": string_array_schema,
+            "recommendations": string_array_schema,
+            "summary": {"type": "string"},
+            "questionsEvaluation": {
+                "type": "array",
+                "minItems": expected_question_count,
+                "maxItems": expected_question_count,
+                "items": question_evaluation_item_schema,
+            },
+        },
+    }
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "interview_evaluation",
+            "strict": selected_mode == "strict",
+            "schema": evaluation_schema,
+        },
+    }
+
+
+def _increment_metric(metrics: dict[str, Any] | None, key: str) -> None:
+    if metrics is None:
+        return
+    metrics[key] = int(metrics.get(key, 0)) + 1
+
+
+def _set_metric(metrics: dict[str, Any] | None, key: str, value: Any) -> None:
+    if metrics is None:
+        return
+    metrics[key] = value
+
+
+def _log_evaluation_structural_attempt(
+    *,
+    structural_attempt: int,
+    max_structural_attempts: int,
+    metrics: dict[str, Any],
+    started_at: float,
+    structural_retry_triggered: bool,
+    error_category: str | None,
+) -> None:
+    logger.info(
+        "Groq: tentativa estrutural de avaliacao finalizada: %s",
+        {
+            "ai_operation": "evaluate_interview",
+            "structural_attempt": structural_attempt,
+            "max_structural_attempts": max_structural_attempts,
+            "sdk_attempt_count": int(metrics.get("sdk_attempt_count", 0)),
+            "rate_limit_count": int(metrics.get("rate_limit_count", 0)),
+            "structural_retry_triggered": structural_retry_triggered,
+            "fallback_exhausted": bool(metrics.get("fallback_exhausted", False)),
+            "duration_ms": round((time.monotonic() - started_at) * 1000, 1),
+            "error_category": error_category,
+        },
+    )
 
 
 def _clean_list(value: Any) -> list[str]:
@@ -1176,6 +1544,64 @@ def _safe_groq_log_fields(exc: Exception) -> dict[str, Any]:
     if groq_request_id is not None:
         fields["groq_request_id"] = groq_request_id
     return fields
+
+
+def _rate_limit_cooldown_seconds(exc: Exception) -> float:
+    retry_after_seconds = _extract_retry_after_seconds(exc)
+    if retry_after_seconds is not None and retry_after_seconds > 0:
+        return retry_after_seconds
+
+    raw_value = os.getenv("GROQ_RATE_LIMIT_COOLDOWN_SECONDS", "").strip()
+    if raw_value:
+        try:
+            configured = float(raw_value)
+        except ValueError:
+            configured = _DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS
+        if configured > 0:
+            return configured
+
+    return _DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS
+
+
+def _extract_retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+
+    retry_after = None
+    for header_name in ("retry-after", "Retry-After"):
+        try:
+            retry_after = headers.get(header_name)
+        except AttributeError:
+            retry_after = None
+        if retry_after:
+            break
+
+    if retry_after is None:
+        return None
+
+    retry_after_text = _clean_text(retry_after)
+    try:
+        seconds = float(retry_after_text)
+    except ValueError:
+        seconds = _parse_retry_after_http_date(retry_after_text)
+
+    if seconds is None or seconds <= 0:
+        return None
+    return seconds
+
+
+def _parse_retry_after_http_date(value: str) -> float | None:
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return (parsed - datetime.now(timezone.utc)).total_seconds()
 
 
 def _normalize_string_array(value: Any) -> list[str]:

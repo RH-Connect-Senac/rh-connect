@@ -21,6 +21,8 @@ Escopo explicito deste bloco (branch work/groq-roteamento-chaves):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from groq import (
     APIConnectionError,
@@ -73,7 +75,13 @@ def valid_answers():
     ]
 
 
-def _make_fake_api_status_error(cls: type, *, message: str = "Erro simulado da Groq.", status_code: int | None = None):
+def _make_fake_api_status_error(
+    cls: type,
+    *,
+    message: str = "Erro simulado da Groq.",
+    status_code: int | None = None,
+    headers: dict[str, str] | None = None,
+):
     """Constroi uma instancia minima de uma subclasse de `APIStatusError`
     sem chamar seu `__init__` real (evita exigir um `httpx.Response`/
     `httpx.Request` de verdade) e sem nenhuma chamada de rede."""
@@ -81,7 +89,7 @@ def _make_fake_api_status_error(cls: type, *, message: str = "Erro simulado da G
     exc.args = (message,)
     exc.message = message
     exc.status_code = status_code if status_code is not None else getattr(cls, "status_code", 500)
-    exc.response = None
+    exc.response = SimpleNamespace(json=lambda: {}, headers=headers or {}) if headers is not None else None
     exc.body = None
     exc.request = None
     return exc
@@ -426,6 +434,69 @@ def test_evaluate_interview_usa_fallback_429_corretamente(
     assert used_api_keys == ["fake-key-A", "fake-key-B"]
 
 
+def test_evaluate_interview_loga_contadores_de_fallback_429(
+    monkeypatch, reset_key_pool, valid_context, valid_answers, caplog
+):
+    exc_a = _make_fake_api_status_error(RateLimitError)
+    exc_b = _make_fake_api_status_error(RateLimitError)
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B,fake-key-C",
+        outcomes=[exc_a, exc_b, SUCCESS_EVALUATION_JSON],
+    )
+
+    with caplog.at_level("INFO"):
+        evaluation = GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert evaluation["summary"] == "Resposta solida."
+    assert completions.call_count == 3
+    assert used_api_keys == ["fake-key-A", "fake-key-B", "fake-key-C"]
+
+    attempt_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "tentativa estrutural de avaliacao finalizada" in record.getMessage()
+    ]
+    assert len(attempt_logs) == 1
+    assert "'structural_attempt': 1" in attempt_logs[0]
+    assert "'sdk_attempt_count': 3" in attempt_logs[0]
+    assert "'rate_limit_count': 2" in attempt_logs[0]
+    assert "'fallback_exhausted': False" in attempt_logs[0]
+    assert "fake-key" not in attempt_logs[0]
+
+
+def test_evaluate_interview_loga_fallback_exhausted_quando_todas_429(
+    monkeypatch, reset_key_pool, valid_context, valid_answers, caplog
+):
+    fake_keys = ["fake-key-A", "fake-key-B"]
+    outcomes = [_make_fake_api_status_error(RateLimitError) for _ in fake_keys]
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys=",".join(fake_keys),
+        outcomes=outcomes,
+    )
+
+    with caplog.at_level("INFO"):
+        with pytest.raises(GroqServiceError) as exc_info:
+            GroqService().evaluate_interview(valid_context, valid_answers)
+
+    assert exc_info.value.category == GROQ_ERROR_CATEGORY_RATE_LIMIT
+    assert completions.call_count == 2
+    assert used_api_keys == fake_keys
+
+    attempt_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "tentativa estrutural de avaliacao finalizada" in record.getMessage()
+    ]
+    assert len(attempt_logs) == 1
+    assert "'sdk_attempt_count': 2" in attempt_logs[0]
+    assert "'rate_limit_count': 2" in attempt_logs[0]
+    assert "'fallback_exhausted': True" in attempt_logs[0]
+    assert "'error_category': 'rate_limit'" in attempt_logs[0]
+    assert "fake-key" not in attempt_logs[0]
+
+
 # ---------------------------------------------------------------------------
 # Caso 17: sucesso preserva o mesmo formato de saida
 # ---------------------------------------------------------------------------
@@ -557,3 +628,110 @@ def test_limite_tres_keys_todas_429_nunca_faz_quarta_tentativa(monkeypatch, rese
 
     assert completions.call_count == 3
     assert len(used_api_keys) == 3
+
+
+def test_todas_as_keys_em_cooldown_nao_chama_groq(
+    monkeypatch, reset_key_pool, valid_context
+):
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B",
+        outcomes=[SUCCESS_QUESTIONS_JSON],
+    )
+    pool = groq_service._get_key_pool()
+    pool.mark_rate_limited("fake-key-A", 30)
+    pool.mark_rate_limited("fake-key-B", 30)
+
+    with pytest.raises(GroqServiceError) as exc_info:
+        GroqService().generate_questions(valid_context)
+
+    assert exc_info.value.category == GROQ_ERROR_CATEGORY_RATE_LIMIT
+    assert "fake-key" not in str(exc_info.value)
+    assert completions.call_count == 0
+    assert used_api_keys == []
+
+
+def test_operacao_subsequente_nao_reutiliza_key_recem_limitada(
+    monkeypatch, reset_key_pool, valid_context
+):
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: 100.0)
+    exc_a = _make_fake_api_status_error(RateLimitError)
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B",
+        outcomes=[exc_a, SUCCESS_QUESTIONS_JSON, SUCCESS_QUESTIONS_JSON],
+    )
+
+    GroqService().generate_questions(valid_context)
+    GroqService().generate_questions(valid_context)
+
+    assert completions.call_count == 3
+    assert used_api_keys == ["fake-key-A", "fake-key-B", "fake-key-B"]
+
+
+def test_retry_after_valido_define_cooldown_da_key(
+    monkeypatch, reset_key_pool, valid_context
+):
+    now = 100.0
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: now)
+    exc_a = _make_fake_api_status_error(
+        RateLimitError,
+        headers={"retry-after": "45"},
+    )
+    completions, used_api_keys = _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B",
+        outcomes=[exc_a, SUCCESS_QUESTIONS_JSON],
+    )
+
+    GroqService().generate_questions(valid_context)
+    pool = groq_service._get_key_pool()
+
+    now = 144.0
+    assert pool.next_unique_key(set()) == "fake-key-B"
+
+    now = 146.0
+    assert pool.next_unique_key(set()) == "fake-key-A"
+    assert completions.call_count == 2
+    assert used_api_keys == ["fake-key-A", "fake-key-B"]
+
+
+def test_retry_after_ausente_ou_invalido_usa_cooldown_configurado(
+    monkeypatch, reset_key_pool, valid_context
+):
+    now = 100.0
+    monkeypatch.setattr("key_pool.time.monotonic", lambda: now)
+    monkeypatch.setenv("GROQ_RATE_LIMIT_COOLDOWN_SECONDS", "12")
+    exc_a = _make_fake_api_status_error(
+        RateLimitError,
+        headers={"retry-after": "valor-invalido"},
+    )
+    _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B",
+        outcomes=[exc_a, SUCCESS_QUESTIONS_JSON],
+    )
+
+    GroqService().generate_questions(valid_context)
+    pool = groq_service._get_key_pool()
+
+    now = 111.0
+    assert pool.next_unique_key(set()) == "fake-key-B"
+
+    now = 113.0
+    assert pool.next_unique_key(set()) == "fake-key-A"
+
+
+def test_erro_nao_429_nao_cria_cooldown(monkeypatch, reset_key_pool, valid_context):
+    exc = _make_fake_api_status_error(BadRequestError, status_code=400)
+    _patch_groq(
+        monkeypatch,
+        keys="fake-key-A,fake-key-B",
+        outcomes=[exc],
+    )
+
+    with pytest.raises(GroqServiceError):
+        GroqService().generate_questions(valid_context)
+
+    pool = groq_service._get_key_pool()
+    assert pool.next_unique_key({"fake-key-B"}) == "fake-key-A"

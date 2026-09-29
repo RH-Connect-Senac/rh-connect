@@ -99,6 +99,7 @@ def test_client_com_multiplas_keys_faz_round_robin_a_b_c_a(monkeypatch, reset_ke
 
 
 def test_fallback_sem_groq_api_keys_usa_groq_api_key(monkeypatch, reset_key_pool):
+    monkeypatch.setattr(groq_service, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("GROQ_API_KEYS", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "fake-key-single")
 

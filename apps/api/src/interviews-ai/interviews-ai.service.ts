@@ -11,7 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 const DEFAULT_INTERVIEW_AI_SERVICE_URL = 'http://127.0.0.1:5001';
-const DEFAULT_TIMEOUT_MS = 20000;
+const DEFAULT_TIMEOUT_MS = 60000;
 
 @Injectable()
 export class InterviewsAiService {
