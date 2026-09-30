@@ -5,7 +5,7 @@ export type AppScreen =
   | "auth" | "register" | "email-verify" | "forgot-password" | "reset-password"
   | "candidate-onboarding" | "eval-activate" | "eval-onboarding" | "admin-onboarding"
   | "dashboard" | "profile" | "settings" | "materials" | "notifications"
-  | "interview-history" | "development" | "disc-test"
+  | "interview-history" | "agenda" | "development" | "disc-test"
   | "interview-setup" | "consent" | "evaluation-mode" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
   | "pending" | "report"
   | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
@@ -46,6 +46,7 @@ export const APP_ROUTES = [
   { screen: "materials", path: "/candidate/materials", label: "Materiais", group: "candidate", priority: "P3", status: "mockado", backDependency: "talvez" },
   { screen: "notifications", path: "/candidate/notifications", label: "Notificacoes", group: "candidate", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "interview-history", path: "/candidate/interviews", label: "Historico de entrevistas", group: "candidate", priority: "P2", status: "mockado", backDependency: "sim" },
+  { screen: "agenda", path: "/candidate/agenda", label: "Agenda de entrevistas", group: "candidate", priority: "P2", status: "simulado", backDependency: "sim", notes: "Entrevistas reais/externas do candidato. Persistencia local temporaria, sem backend." },
   { screen: "development", path: "/candidate/development", label: "Desenvolvimento", group: "candidate", priority: "P1", status: "mockado", backDependency: "sim" },
   { screen: "disc-test", path: "/candidate/disc", label: "Teste DISC", group: "candidate", priority: "P2", status: "simulado", backDependency: "nao imediata", notes: "Funcionalidade independente com persistencia local temporaria." },
   { screen: "interview-setup", path: "/candidate/interviews/new", label: "Nova entrevista", group: "candidate", priority: "P0", status: "simulado", backDependency: "sim", notes: "Recebe a URL da vaga, analisa contexto mockado e prepara as perguntas." },

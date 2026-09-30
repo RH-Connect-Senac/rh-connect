@@ -325,6 +325,40 @@ PasswordInput será uma composição nomeada baseada em Input + trailing IconBut
 
 ---
 
+## 7.7 DateField e TimeField
+
+**Implementação atual:** `Input` com `type="date"` e `type="time"` (controles nativos), dentro de um FormField com `label` associado por `htmlFor`.
+
+**Regras:**
+
+- usar o controle nativo do navegador: em mobile ele abre o seletor do próprio dispositivo;
+- o valor do campo é sempre `YYYY-MM-DD` (data) e `HH:mm` (horário), no horário LOCAL do navegador;
+- para montar um instante, combinar data + horário com componentes locais (`new Date(ano, mês - 1, dia, hora, minuto)`); não usar `new Date("YYYY-MM-DD")`, que é interpretado em UTC e pode deslocar o dia;
+- data e horário lado a lado em `sm+` (`grid-cols-1 sm:grid-cols-2`) e em uma coluna no mobile;
+- erros de validação aparecem abaixo do campo, com `aria-invalid` e `role="alert"`.
+
+**Uso atual:** formulário da Agenda de Entrevistas do candidato.
+
+---
+
+## 7.8 Calendar
+
+**Implementação atual:** `Calendar` (`ui/calendar.tsx`), wrapper genérico de `react-day-picker` v8, sem conhecimento de domínio.
+
+**Regras:**
+
+- o locale padrão é `pt-BR` (nomes de mês e dias da semana em português; o mês é exibido capitalizado);
+- os botões de navegação de mês têm `36px` no mobile (`size-9`) e `28px` em `sm+`;
+- indicações de dias (por exemplo, dias com compromisso) são responsabilidade de quem usa o componente, via `modifiers` e `modifiersClassNames`; o `Calendar` não deve conhecer o domínio;
+- o dia de hoje usa `bg-accent`; o dia selecionado usa `bg-primary`;
+- a densidade padrão é compacta (células de `32px`); telas que precisam de alvos de toque maiores podem passar `classNames` para um layout fluido, com células de altura mínima de `40px`.
+
+**Padrão de indicação de dia (Agenda):** ponto `6px` na parte inferior da célula (`bg-primary`, branco quando o dia está selecionado). Dia apenas com item cancelado usa ponto neutro (`bg-muted-foreground/40`).
+
+**Uso atual:** Agenda de Entrevistas do candidato.
+
+---
+
 # 8. Selection Controls
 
 ## 8.1 Checkbox
