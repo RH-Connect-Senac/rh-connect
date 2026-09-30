@@ -66,6 +66,26 @@ GROQ_ERROR_CATEGORY_TIMEOUT = "timeout"
 GROQ_ERROR_CATEGORY_CONNECTION_ERROR = "connection_error"
 GROQ_ERROR_CATEGORY_API_STATUS_ERROR = "api_status_error"
 
+# Categoria dedicada (nao vem de `_translate_groq_error`/de uma excecao da
+# SDK Groq): marca especificamente um `GroqServiceError` levantado por
+# `_normalize_questions_evaluation` quando a Groq respondeu HTTP 200, mas
+# `questionsEvaluation` veio estruturalmente incompleto/invalido (item fora
+# do formato, questionId invalido, ou item faltando para alguma pergunta
+# enviada). E o UNICO gatilho do retry estrutural (no maximo 1 vez) em
+# `evaluate_interview` - nao se aplica a `scores` incompletos, JSON
+# invalido/vazio, nem a nenhuma categoria de `_translate_groq_error`
+# (rate_limit, bad_request, etc.), que continuam com seu comportamento
+# existente (fallback de credencial ou erro imediato, respectivamente).
+GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION = "structural_incomplete_evaluation"
+
+# Numero maximo de tentativas de `evaluate_interview` quando (e somente
+# quando) o erro for `GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION`:
+# 2 = 1a tentativa + no maximo 1 retry estrutural. Nao e reaproveitado por
+# `generate_questions` nem por `_execute_with_rate_limit_fallback` (rate
+# limit continua sem alteracao, com seu proprio `max_attempts` baseado no
+# numero de credenciais distintas).
+_MAX_STRUCTURAL_EVALUATION_ATTEMPTS = 2
+
 
 def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
     """Traduz uma excecao levantada pela chamada a Groq (ou qualquer outra
@@ -378,12 +398,51 @@ class GroqService:
                 response_format={"type": "json_object"},
             )
 
-        completion = self._execute_with_rate_limit_fallback(
-            _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
-        )
+        # Retry estrutural (no maximo 1 vez, so aqui - nao dentro de
+        # `_execute_with_rate_limit_fallback`, que continua tratando
+        # exclusivamente rate limit/troca de credencial e permanece
+        # intocado): a Groq pode responder HTTP 200 com
+        # `questionsEvaluation` estruturalmente incompleto/invalido (ver
+        # `GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION`). Cada
+        # iteracao chama `_execute_with_rate_limit_fallback` de novo do
+        # zero - com seu proprio `tried_keys` local - entao a credencial
+        # usada na tentativa estrutural anterior NUNCA e marcada como
+        # falha por isso; a rotacao normal de credenciais (429) continua
+        # valendo, sem nenhuma alteracao, dentro de cada tentativa.
+        # `_MAX_STRUCTURAL_EVALUATION_ATTEMPTS = 2` => 1a tentativa + no
+        # maximo 1 repeticao. Qualquer outra categoria de erro (JSON
+        # invalido/vazio, scores incompletos, rate limit, bad_request,
+        # etc.) sobe imediatamente, sem retry estrutural.
+        for structural_attempt in range(1, _MAX_STRUCTURAL_EVALUATION_ATTEMPTS + 1):
+            completion = self._execute_with_rate_limit_fallback(
+                _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
+            )
+            content = completion.choices[0].message.content if completion.choices else ""
 
-        content = completion.choices[0].message.content if completion.choices else ""
-        return self._parse_evaluation_response(content, normalized_answers)
+            try:
+                return self._parse_evaluation_response(content, normalized_answers)
+            except GroqServiceError as exc:
+                is_structural = exc.category == GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION
+                if not is_structural or structural_attempt >= _MAX_STRUCTURAL_EVALUATION_ATTEMPTS:
+                    raise
+
+                # Log sanitizado: so contagens/flags tecnicas (mesmo padrao
+                # do Bloco 6) - nunca prompt, resposta do candidato ou
+                # payload bruto da Groq.
+                logger.warning(
+                    "Groq: retry estrutural de avaliacao (questionsEvaluation incompleto/invalido) - repetindo",
+                    extra={
+                        "ai_operation": "evaluate_interview",
+                        "structural_attempt": structural_attempt,
+                        "max_structural_attempts": _MAX_STRUCTURAL_EVALUATION_ATTEMPTS,
+                    },
+                )
+
+        # Estruturalmente inalcancavel: o loop acima sempre retorna (na
+        # ultima iteracao, `structural_attempt >= _MAX_STRUCTURAL_EVALUATION_ATTEMPTS`
+        # forca o `raise`) - mantido apenas como rede de seguranca
+        # defensiva, no mesmo estilo do restante do arquivo.
+        raise GroqServiceError("Falha inesperada ao avaliar entrevista.", 502)
 
     def _execute_with_rate_limit_fallback(self, call_groq, *, action: str, ai_operation: str) -> Any:
         """Executa `call_groq(client)` com fallback controlado, restrito a
@@ -840,7 +899,14 @@ class GroqService:
             "- Inclua strengths, improvements e recommendations como arrays de strings.\n"
             "- Inclua summary como string.\n"
             "- Inclua questionsEvaluation com uma avaliacao para cada resposta recebida.\n"
-            "- Cada item de questionsEvaluation deve conter questionId, score, reason, positives, improvements e suggestion.\n\n"
+            "- Cada item de questionsEvaluation deve conter questionId, score, reason, positives, improvements e suggestion.\n"
+            "- questionsEvaluation deve conter EXATAMENTE uma avaliacao para cada pergunta/resposta recebida - nem a mais, nem a menos.\n"
+            "- A quantidade de itens em questionsEvaluation deve ser IGUAL a quantidade de perguntas/respostas recebidas.\n"
+            "- Cada item deve preservar o questionId original exatamente como recebido na respectiva pergunta/resposta.\n"
+            "- Nao omita o questionId de nenhum item.\n"
+            "- Nao renumere nem troque os questionId originais por uma nova sequencia.\n"
+            "- Nao duplique questionId: cada questionId deve aparecer em no maximo um item de questionsEvaluation.\n"
+            "- Nao invente nem preencha avaliacoes para perguntas que nao foram recebidas.\n\n"
             "Regras de fidelidade ao contexto:\n"
             "- Baseie a avaliacao principalmente no contexto real da vaga, atividades, "
             "requisitos, pergunta feita e resposta do candidato.\n"
@@ -962,14 +1028,22 @@ class GroqService:
         answers: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         if not isinstance(raw_questions_evaluation, list):
-            raise GroqServiceError("A Groq retornou avaliacao por pergunta invalida.", 502)
+            raise GroqServiceError(
+                "A Groq retornou avaliacao por pergunta invalida.",
+                502,
+                category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+            )
 
         by_question_id: dict[int, dict[str, Any]] = {}
         returned_question_ids: list[int] = []
 
         for index, item in enumerate(raw_questions_evaluation):
             if not isinstance(item, dict):
-                raise GroqServiceError("A Groq retornou item de avaliacao invalido.", 502)
+                raise GroqServiceError(
+                    "A Groq retornou item de avaliacao invalido.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                )
 
             fallback_question_id = answers[index]["questionId"] if index < len(answers) else None
             try:
@@ -980,7 +1054,11 @@ class GroqService:
                     or fallback_question_id
                 )
             except (TypeError, ValueError) as exc:
-                raise GroqServiceError("A Groq retornou questionId invalido na avaliacao.", 502) from exc
+                raise GroqServiceError(
+                    "A Groq retornou questionId invalido na avaliacao.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                ) from exc
             returned_question_ids.append(question_id)
             by_question_id[question_id] = item
 
@@ -1006,7 +1084,11 @@ class GroqService:
                         "unique_returned_count": len(by_question_id),
                     },
                 )
-                raise GroqServiceError("A Groq retornou avaliacao por pergunta incompleta.", 502)
+                raise GroqServiceError(
+                    "A Groq retornou avaliacao por pergunta incompleta.",
+                    502,
+                    category=GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION,
+                )
 
             max_score = _answer_score_cap(answer["answer"])
             score = round(min(_coerce_score(item.get("score")), max_score), 1)
