@@ -1,7 +1,7 @@
 /** RH Connect — Header Popovers: Account Menu & Notification Dropdown */
 
 import { useState, useRef, useEffect } from "react";
-import { Bell, User, Settings, LogOut, CheckCheck } from "lucide-react";
+import { Bell, User, Settings, LogOut, CheckCheck, Sparkles } from "lucide-react";
 
 type NavFn = (s: string) => void;
 
@@ -21,7 +21,7 @@ export type NotifItem = {
   id: string;
   title: string;
   desc: string;
-  time: string;
+  time?: string;
   unread: boolean;
   screen?: string;
 };
@@ -63,26 +63,21 @@ export const ADMIN_ACCOUNT: AccountConfig = {
   settingsScreen: "admin-settings",
 };
 
-export const CANDIDATE_NOTIFS: NotifItem[] = [
-  { id: "n1", title: "Avaliação concluída",     desc: "Sua entrevista para Desenvolvedor Full Stack foi avaliada.", time: "Agora",   unread: true,  screen: "report" },
-  { id: "n2", title: "Feedback disponível",      desc: "Confira o relatório detalhado do seu desempenho.",       time: "2h",     unread: true,  screen: "report" },
-  { id: "n3", title: "Entrevista atualizada",    desc: "Status da entrevista para Desenvolvedor Full Stack foi alterado.", time: "Ontem",  unread: false, screen: "pending" },
-  { id: "n4", title: "Aviso da plataforma",      desc: "Novas vagas disponíveis nas áreas oficiais da V1.",      time: "2 dias", unread: false },
+// V1: não há sistema real de notificações. Todos os perfis (Candidato,
+// Avaliador e Admin) exibem apenas a mesma comunicação genérica de boas-vindas,
+// sem simular evento novo/não lido (unread: false) e sem navegação associada.
+const WELCOME_NOTIFS: NotifItem[] = [
+  {
+    id: "welcome",
+    title: "Bem-vindo ao RH Connect!",
+    desc: "Explore os recursos da plataforma e continue sua jornada de preparação.",
+    unread: false,
+  },
 ];
 
-export const EVAL_NOTIFS: NotifItem[] = [
-  { id: "n1", title: "Nova avaliação atribuída", desc: "Fernanda Oliveira — Desenvolvedor Full Stack.",         time: "Agora",   unread: true,  screen: "eval-queue" },
-  { id: "n2", title: "Prazo se aproximando",     desc: "Avaliação #E-0040 vence em 24 horas.",                 time: "3h",     unread: true,  screen: "eval-queue" },
-  { id: "n3", title: "Critérios atualizados",    desc: "Os critérios de Comunicação foram revisados.",         time: "Ontem",  unread: false, screen: "eval-criteria" },
-  { id: "n4", title: "Aviso administrativo",     desc: "Manutenção programada nesta sexta às 22h.",            time: "2 dias", unread: false },
-];
-
-export const ADMIN_NOTIFS: NotifItem[] = [
-  { id: "n1", title: "Convite aceito",               desc: "Beatriz Lima ativou sua conta de avaliadora.",     time: "Agora",   unread: true,  screen: "admin-evaluators" },
-  { id: "n2", title: "Entrevista sem atribuição",    desc: "#E-0041 aguarda um avaliador há 6 horas.",         time: "6h",     unread: true,  screen: "admin-assign" },
-  { id: "n3", title: "Novo candidato registrado",   desc: "Lucas Ferreira concluiu o cadastro.",              time: "Ontem",  unread: false, screen: "admin-candidates" },
-  { id: "n4", title: "Aviso do sistema",             desc: "Backup automático realizado com sucesso.",         time: "2 dias", unread: false, screen: "admin-audit" },
-];
+export const CANDIDATE_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
+export const EVAL_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
+export const ADMIN_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
 
 // ─── Identidade real (Prompt 08) ───────────────────────────────────────────────
 
@@ -203,11 +198,6 @@ export function NotificationDropdown({ notifs, viewAllScreen, onNavigate }: {
 
   const markAllRead = () => setItems(prev => prev.map(n => ({ ...n, unread: false })));
 
-  const handleItem = (item: NotifItem) => {
-    setItems(prev => prev.map(n => n.id === item.id ? { ...n, unread: false } : n));
-    if (item.screen) { setOpen(false); onNavigate(item.screen); }
-  };
-
   return (
     <div ref={ref} className="relative">
       <button
@@ -247,18 +237,19 @@ export function NotificationDropdown({ notifs, viewAllScreen, onNavigate }: {
                 <p className="text-sm text-muted-foreground">Você não possui novas notificações.</p>
               </div>
             ) : (
-              <div className="divide-y divide-border">
+              <div className="p-3 space-y-2">
+                {/* Welcome state (V1): bloco informativo estático — sem lida/não lida, sem horário, sem clique */}
                 {items.map(item => (
-                  <button key={item.id} onClick={() => handleItem(item)}
-                    className={`w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex items-start gap-3 ${item.unread ? "bg-blue-50/60" : ""}`}>
-                    <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 transition-colors"
-                      style={{ backgroundColor: item.unread ? "rgb(59 130 246)" : "transparent", border: item.unread ? "none" : "1.5px solid #cbd5e1" }} />
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xs font-semibold truncate ${item.unread ? "text-foreground" : "text-muted-foreground"}`}>{item.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{item.desc}</p>
-                      <p className="text-[10px] text-muted-foreground/60 mt-1">{item.time}</p>
+                  <div key={item.id}
+                    className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3.5">
+                    <div className="w-8 h-8 rounded-lg bg-accent text-accent-foreground flex items-center justify-center shrink-0">
+                      <Sparkles className="w-4 h-4" />
                     </div>
-                  </button>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-foreground">{item.title}</p>
+                      <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.desc}</p>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
