@@ -1735,6 +1735,61 @@ O **Centro de Desenvolvimento foi removido do escopo do produto** e não deve or
 
 ---
 
+## 41.2 Agenda de Entrevistas do Candidato
+
+**Objetivo:** permitir que o candidato registre e acompanhe entrevistas REAIS/EXTERNAS de processos seletivos. Não representa as entrevistas simuladas do RH Connect (Histórico, Entrevistas recentes).
+
+**Rota:** `/candidate/agenda` (item "Agenda" na sidebar do candidato, logo após "Histórico").
+
+**Persistência atual:** local e temporária (localStorage, chave `rhconnect:interview-agenda:v1`), isolada em um service. Não é integração real; será substituída por API sem alteração nos componentes.
+
+**Composição da tela (desktop):**
+
+- ação primária "Adicionar entrevista" no topo;
+- duas colunas em `lg+` (`lg:grid-cols-[minmax(320px,380px)_1fr]`): Calendar à esquerda e lista à direita;
+- FilterChip `Próximas`, `Anteriores` e `Todas`;
+- selecionar um dia no Calendar mostra as entrevistas daquele dia (com ação "Limpar seleção"); escolher um filtro limpa a seleção;
+- cada entrevista é um Card com cargo, StatusBadge de fase, empresa, modalidade, data e horário; clicar abre o detalhe (Dialog); as ações de editar/reagendar e cancelar aparecem somente na fase `Agendada` (futura). Em `Aguardando feedback` só há "Contar como foi"; `Concluída` e `Cancelada` não têm ações de alteração.
+
+**Composição da tela (mobile):**
+
+- uma coluna; botão "Adicionar entrevista" em largura total;
+- o Calendar fica em um painel recolhível (botão "Calendário", `aria-expanded`), recolhido por padrão, dando protagonismo à lista;
+- alvos de toque com mínimo de `44px` (`min-h-11`) em botões e filtros;
+- formulário em uma coluna dentro de Dialog com rolagem (`max-h-[90dvh] overflow-y-auto`).
+
+**Fases (StatusBadge):** `Agendada` (info), `Aguardando feedback` (warning), `Concluída` (success), `Cancelada` (neutral).
+
+- Status persistidos: `SCHEDULED`, `COMPLETED`, `CANCELLED`.
+- "Aguardando feedback" é DERIVADO: `SCHEDULED` + data e horário já passaram.
+- Cadastro e reagendamento exigem data e horário estritamente futuros (comparação por data + horário locais). O service também recusa editar ou cancelar uma entrevista cujo horário já passou.
+- Cancelar não apaga o registro; usa AlertDialog para confirmação e o item permanece na lista, identificado como cancelado.
+
+**Formulário:** Empresa*, Vaga/cargo*, Data*, Horário*, Modalidade* (Online/Presencial), Local ou link e Observações. Sem duração ou horário de término.
+
+**Pós-entrevista:** Dialog "E aí, como foi sua entrevista?" com seleção única (radiogroup) entre `Difícil`, `Razoável`, `Boa` e `Muito boa`, comentário opcional, confirmação "Obrigado por compartilhar!" e ações "Praticar novamente" (navega para a criação de entrevista simulada) e "Voltar para a agenda".
+
+### NextInterviewCard (Dashboard)
+
+**Objetivo:** integrar a Agenda ao Dashboard do candidato sem reutilizar "Entrevistas recentes".
+
+**Posição:** faixa em largura total entre os StatCards e o grid principal.
+
+**Base visual:** Card `p-4 sm:p-5` + ícone em container `size-10 rounded-xl bg-blue-100` + StatusBadge + Button `secondary sm`.
+
+**Estados:**
+
+- A — nunca cadastrou: "Tem uma entrevista marcada?" com CTA "Adicionar à agenda", que abre o cadastro diretamente (`/candidate/agenda?new=1`);
+- B — possui entrevista futura: "Sua próxima entrevista" (rótulo em caixa alta) com cargo, empresa, modalidade, data, horário, proximidade ("Hoje", "Amanhã" ou "Faltam N dias") e CTA "Ver agenda"; mostra somente a mais próxima;
+- C — já usou a Agenda, sem entrevista futura: "Nenhuma entrevista agendada" com CTA "Adicionar entrevista".
+
+**Regras:**
+
+- o card não aparece enquanto a leitura local não termina (evita piscar o estado A);
+- em mobile o CTA ocupa a largura total.
+
+---
+
 # Parte VIII — Componentes adiados ou fora do recorte
 
 ---

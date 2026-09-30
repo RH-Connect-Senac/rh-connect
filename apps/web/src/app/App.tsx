@@ -11,11 +11,13 @@ import {
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
   Target, Send, Upload, Menu,
   Heart, Bookmark, FileText, Trash2, Lock, Database, Bot,
-  ToggleLeft, ToggleRight, ChevronUp, Filter
+  ToggleLeft, ToggleRight, ChevronUp, Filter, CalendarDays
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
 import { DevelopmentContent } from "./components/development-screen";
 import { DiscTestScreen } from "./components/disc-test-screen";
+import { InterviewAgendaContent } from "./components/interview-agenda-screen";
+import { NextInterviewCard } from "./components/next-interview-card";
 import {
   CANDIDATE_ACCOUNT, CANDIDATE_NOTIFS,
   type AccountConfig,
@@ -132,7 +134,7 @@ import type {
 
 const AUTH_SCREENS: Screen[] = [
   "dashboard","profile","settings","materials","notifications",
-  "interview-history","development","disc-test",
+  "interview-history","agenda","development","disc-test",
   "interview-setup","consent","evaluation-mode","prep","interview","review","interview-confirm","interview-done",
   "pending","report",
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
@@ -617,6 +619,7 @@ const NAV_ITEMS: ProfileShellNavItem[] = [
   { icon: Home,      label: "Dashboard",    screen: "dashboard" as Screen },
   { icon: User,      label: "Meu Perfil",   screen: "profile" as Screen },
   { icon: History,   label: "Histórico",       screen: "interview-history" as Screen },
+  { icon: CalendarDays, label: "Agenda",       screen: "agenda" as Screen },
   { icon: TrendingUp,label: "Desenvolvimento", screen: "development" as Screen },
   { icon: FileText,  label: "Teste DISC",      screen: "disc-test" as Screen },
   { icon: BookOpen,  label: "Materiais",       screen: "materials" as Screen },
@@ -1039,6 +1042,13 @@ function DashboardScreen({
         <StatCard value={availableReports.length} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
         <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
+
+      {/* Agenda (entrevistas reais/externas) — não confundir com "Entrevistas recentes" (simuladas) */}
+      <NextInterviewCard
+        candidateId={candidateId}
+        onViewAgenda={() => onNavigate("agenda")}
+        onAddInterview={() => routerNavigate(`${getPathForScreen("agenda")}?new=1`)}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
         {/* CTA principal */}
@@ -5645,6 +5655,19 @@ function DevelopmentScreen({ onNavigate, session }: { onNavigate: (s: Screen) =>
   );
 }
 
+// ─── Screen: Agenda de Entrevistas (entrevistas reais/externas) ───────────────
+
+function InterviewAgendaScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+  const candidateIdentity = getCandidateIdentity(session);
+  return (
+    <AuthLayout current="agenda" onNavigate={onNavigate}
+      title="Agenda"
+      subtitle="Organize suas entrevistas de processos seletivos">
+      <InterviewAgendaContent candidateId={candidateIdentity.id} onNavigate={(screen) => onNavigate(screen as Screen)} />
+    </AuthLayout>
+  );
+}
+
 function CandidateDiscTestScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
   const candidateIdentity = getCandidateIdentity(session);
   return (
@@ -5978,6 +6001,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
           <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/agenda" element={protect("CANDIDATE", <InterviewAgendaScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onDiscardSavedDraft={discardSavedDraft} onCancelInterview={() => setConfirmCancelInterview(true)} onCancelPreparation={cancelInterviewPreparation} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
