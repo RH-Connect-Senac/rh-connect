@@ -645,7 +645,6 @@ function AuthLayout({
       profileLabel="Candidato"
       account={resolvedAccount}
       notifications={CANDIDATE_NOTIFS}
-      notificationViewAllScreen="notifications"
       title={title}
       subtitle={subtitle}
       actions={actions}
@@ -5538,84 +5537,19 @@ function MaterialDetailScreen({ onNavigate, session }: { onNavigate: (s: Screen)
 // ─── CAN-011 Notificações ─────────────────────────────────────────────────────
 
 function NotificationsScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
-  const NOTIFS = [
-    { id: 1, tipo: "resultado",   titulo: "Resultado disponível",       desc: "Seu relatório da entrevista para Desenvolvedor Full Stack Júnior já está disponível.",       data: "Há 5 min",   lida: false, screen: "report" as Screen },
-    { id: 2, tipo: "sistema",     titulo: "Bem-vindo ao RH Connect!",   desc: "Sua conta foi criada com sucesso. Complete seu perfil para começar a praticar.",            data: "Há 2 dias",  lida: false, screen: "profile" as Screen },
-    { id: 3, tipo: "material",    titulo: "Material recomendado",       desc: "Novo conteúdo disponível: \"O método STAR explicado\" — ideal para sua preparação.",        data: "Há 3 dias",  lida: true,  screen: "materials" as Screen },
-    { id: 4, tipo: "entrevista",  titulo: "Entrevista enviada com sucesso",desc: "Suas respostas foram recebidas e encaminhadas para avaliação.",                          data: "Há 6 dias",  lida: true,  screen: "pending" as Screen },
-    { id: 5, tipo: "lembrete",    titulo: "Continue praticando!",       desc: "Faz uma semana desde sua última prática. Que tal simular uma nova entrevista hoje?",        data: "Há 7 dias",  lida: true,  screen: "interview-setup" as Screen },
-  ];
-
-  const TIPO_META: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
-    resultado:  { color: "text-green-600",  bg: "bg-green-50",  icon: CheckCircle },
-    sistema:    { color: "text-blue-600",   bg: "bg-blue-50",   icon: Bell },
-    material:   { color: "text-amber-600",  bg: "bg-amber-50",  icon: BookOpen },
-    entrevista: { color: "text-purple-600", bg: "bg-purple-50", icon: MessageSquare },
-    lembrete:   { color: "text-slate-500",  bg: "bg-slate-50",  icon: Clock },
-  };
-
-  const [notifs, setNotifs] = useState(NOTIFS);
-  const naoLidas = notifs.filter(n => !n.lida).length;
-
-  const markAllRead = () => setNotifs(n => n.map(item => ({ ...item, lida: true })));
-  const markRead = (id: number) => setNotifs(n => n.map(item => item.id === id ? { ...item, lida: true } : item));
-
+  // V1: não há sistema real de notificações — a tela exibe apenas estado vazio.
   return (
     <AuthLayout
       current="notifications"
       onNavigate={onNavigate}
       title="Notificações"
-      subtitle={naoLidas > 0 ? `${naoLidas} não lida${naoLidas > 1 ? "s" : ""}` : "Tudo em dia"}
-      actions={
-        naoLidas > 0 ? (
-          <Btn variant="outline" size="sm" onClick={markAllRead}>
-            <Check className="w-3.5 h-3.5" /> Marcar todas como lidas
-          </Btn>
-        ) : undefined
-      }
     >
       <div className="w-full max-w-2xl space-y-3">
-        {notifs.length === 0 ? (
-          <EmptyState
-            icon={Bell}
-            title="Nenhuma notificação"
-            description="Você está em dia. As notificações aparecerão aqui."
-          />
-        ) : (
-          notifs.map(n => {
-            const meta = TIPO_META[n.tipo] ?? TIPO_META.sistema;
-            const Icon = meta.icon;
-            return (
-              <div
-                key={n.id}
-                className={`flex items-start gap-4 p-4 sm:p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${n.lida ? "bg-card border-border" : "bg-blue-50/50 border-blue-100"}`}
-                onClick={() => { markRead(n.id); onNavigate(n.screen); }}
-              >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${meta.bg}`}>
-                  <Icon className={`w-5 h-5 ${meta.color}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className={`text-sm font-bold ${n.lida ? "text-foreground" : "text-foreground"}`}>{n.titulo}</p>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {!n.lida && <div className="w-2 h-2 bg-blue-500 rounded-full" />}
-                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">{n.data}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.desc}</p>
-                  {!n.lida && (
-                    <button
-                      onClick={e => { e.stopPropagation(); markRead(n.id); }}
-                      className="mt-2 text-xs text-primary font-semibold hover:underline"
-                    >
-                      Marcar como lida
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
+        <EmptyState
+          icon={Bell}
+          title="Você ainda não possui notificações."
+          description="Novidades importantes sobre a sua jornada no RH Connect aparecerão aqui."
+        />
 
         {/* Configurar notificações */}
         <Card className="p-4 sm:p-5 flex items-center justify-between gap-4">

@@ -769,6 +769,20 @@ Popover deve usar `radius-overlay`.
 
 **Justificativa:** mantém consistência com outras camadas flutuantes como Dialog e Dropdown.
 
+### 12.4.1 Popover de notificações — estado de boas-vindas (V1)
+
+Enquanto não existir sistema real de notificações, o popover do sino exibe uma única comunicação genérica, igual para Candidato, Avaliador e Admin.
+
+**Bloco de boas-vindas (informativo, estático):**
+
+- container interno com `rounded-xl`, borda `border-blue-100` e fundo `bg-blue-50/60`, com padding confortável (`p-3.5`) dentro de um respiro `p-3` do popover;
+- ícone discreto (Sparkles) em container `w-8 h-8 rounded-lg` com `bg-accent` / `text-accent-foreground`;
+- título em `text-sm font-bold text-foreground` e descrição em `text-xs text-muted-foreground`, sem truncamento;
+- sem marcador de lida/não lida, sem horário, sem botão e sem hover que sugira clique;
+- sem badge no sino e sem ações "Marcar como lidas" / "Ver todas as notificações".
+
+**Regra:** o padrão de item de notificação clicável (marcador, horário, navegação) só deve voltar quando houver notificações reais.
+
 ---
 
 ## 12.5 DropdownMenu
