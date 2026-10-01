@@ -42,6 +42,7 @@ import {
 import { CandidateOnboardingScreen } from "./components/onboarding-screens";
 import { Input } from "./components/ui/input";
 import { SearchInput } from "./components/ui/search-input";
+import { MaterialsPageHeader } from "./components/materials/materials-page-header";
 import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
 import { Textarea } from "./components/ui/textarea";
@@ -5357,6 +5358,13 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
       subtitle="Conteúdo para você se preparar para entrevistas"
     >
       <div className="w-full space-y-6">
+        <MaterialsPageHeader
+          search={busca}
+          onSearchChange={setBusca}
+          onSearchClear={() => setBusca("")}
+          onFiltersClick={() => document.getElementById("materials-filters")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        />
+
         {/* Destaques: Recomendados */}
         {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
           <section>
@@ -5516,7 +5524,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
         )}
 
         {/* Barra de busca + filtros */}
-        <section>
+        <section id="materials-filters" className="scroll-mt-20">
           <h2 className="font-bold text-foreground mb-3">
             {abaFiltro === "todos" ? "Todos os materiais" : abaFiltro === "favoritos" ? "Favoritos" : abaFiltro === "recentes" ? "Acessados recentemente" : "Recomendados"}
           </h2>
@@ -5536,16 +5544,8 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
             ))}
           </div>
 
-          {/* Busca + categoria */}
+          {/* Categoria (a busca de materiais agora fica no topo da página) */}
           <div className="flex flex-col sm:flex-row gap-3 mb-5">
-            <SearchInput
-              containerClassName="flex-1"
-              value={busca}
-              onChange={e => setBusca(e.target.value)}
-              onClear={() => setBusca("")}
-              placeholder="Pesquisar materiais..."
-              className="bg-white"
-            />
             <div className="relative sm:w-56">
               <button
                 onClick={() => setShowCats(!showCats)}
