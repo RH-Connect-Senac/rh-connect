@@ -5159,7 +5159,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const candidateIdentity = getCandidateIdentity(session);
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
-  const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
+  const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "historico" | "recomendados">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
   const [selectedExternalSource, setSelectedExternalSource] = useState<ExternalResourceSource>("CACHOLA");
   const [externalResources, setExternalResources] = useState<ExternalLearningResource[]>([]);
@@ -5336,13 +5336,12 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const filtrado = materiais.filter(m => {
     const matchBusca = busca === "" || m.title.toLowerCase().includes(busca.toLowerCase()) || m.description.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoria === "Todas as categorias" || m.category === categoria;
-    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "recentes" ? Boolean(m.lastAccessedAt) : m.recommended;
+    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "historico" ? Boolean(m.lastAccessedAt) : m.recommended;
     return matchBusca && matchCat && matchAba;
   });
-  const filtradoOrdenado = abaFiltro === "recentes" ? sortMaterialsByLastAccess(filtrado) : filtrado;
+  const filtradoOrdenado = abaFiltro === "historico" ? sortMaterialsByLastAccess(filtrado) : filtrado;
 
   const recomendados = materiais.filter(m => m.recommended).slice(0, 2);
-  const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
   const emAndamento = sortMaterialsByLastAccess(materiais).filter(m => m.status === "IN_PROGRESS");
   const cacholaAreas = externalResources.reduce<string[]>((areas, resource) => {
     const area = resource.area?.trim();
@@ -5404,26 +5403,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
             onOpen={handleOpenMaterial}
             onFavorite={(m) => toggleFavorito(m.id)}
           />
-        )}
-
-        {/* Destaques: Recentes */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
-          <section>
-            <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-blue-500" /> Acessados recentemente
-            </h2>
-            {recentes.length === 0 ? (
-              <Card className="p-4 text-sm text-muted-foreground">
-                Seus materiais acessados aparecerão aqui.
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {recentes.map(m => (
-                  <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
-                ))}
-              </div>
-            )}
-          </section>
         )}
 
         {/* Fonte complementar: conteúdos externos (Cachola / Orango) */}
@@ -5540,12 +5519,12 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
         {/* Barra de busca + filtros */}
         <section id="materials-filters" className="scroll-mt-20">
           <h2 className="font-bold text-foreground mb-3">
-            {abaFiltro === "todos" ? "Todos os materiais" : abaFiltro === "favoritos" ? "Favoritos" : abaFiltro === "recentes" ? "Acessados recentemente" : "Recomendados"}
+            {abaFiltro === "todos" ? "Todos os materiais" : abaFiltro === "favoritos" ? "Favoritos" : abaFiltro === "historico" ? "Histórico" : "Recomendados"}
           </h2>
 
           {/* Filtros de aba */}
           <div className="flex flex-wrap gap-2 mb-4">
-            {([["todos","Todos"],["recomendados","Recomendados"],["recentes","Recentes"],["favoritos","Favoritos"]] as const).map(([id, label]) => (
+            {([["todos","Todos"],["recomendados","Recomendados"],["historico","Histórico"],["favoritos","Favoritos"]] as const).map(([id, label]) => (
               <FilterChip
                 key={id}
                 onClick={() => setAbaFiltro(id)}
