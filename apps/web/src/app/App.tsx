@@ -10,7 +10,7 @@ import {
   Award, TrendingUp, X, Shield, GraduationCap, Zap, BookOpen,
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
   Target, Send, Upload, Menu,
-  Heart, Bookmark, FileText, Trash2, Lock, Database, Bot,
+  Heart, FileText, Trash2, Lock, Database, Bot,
   ToggleLeft, ToggleRight, ChevronUp, Filter, CalendarDays
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
@@ -42,8 +42,13 @@ import {
 import { CandidateOnboardingScreen } from "./components/onboarding-screens";
 import { Input } from "./components/ui/input";
 import { MaterialsPageHeader } from "./components/materials/materials-page-header";
-import { EditorialMaterialCard, rhConnectMaterialToEditorialCard } from "./components/materials/editorial-material-card";
+import {
+  EditorialMaterialCard,
+  externalResourceToEditorialCard,
+  rhConnectMaterialToEditorialCard,
+} from "./components/materials/editorial-material-card";
 import { ContinueLearningSection } from "./components/materials/continue-learning-section";
+import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
 import { Textarea } from "./components/ui/textarea";
@@ -5043,115 +5048,19 @@ const EXTERNAL_SOURCE_SELECTOR_LABEL: Record<ExternalResourceSource, string> = {
   ORANGO: "Orango",
 };
 
-function MaterialCard({
-  material, onFavorite, onOpen,
-}: {
-  material: MaterialCardView;
-  onFavorite: () => void;
-  onOpen: () => void;
-}) {
-  return (
-    <Card className="h-full min-h-[214px] p-6 flex flex-col gap-5 hover:shadow-md transition-all">
-      <div className="flex flex-1 items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">{materialTypeLabel(material.type)}</UIBadge>
-            {material.status !== "NOT_STARTED" && (
-              <span className="text-[11px] text-muted-foreground">• {materialStatusLabel(material.status)}</span>
-            )}
-          </div>
-          <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.title}</p>
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{material.description}</p>
-        </div>
-        <button
-          onClick={onFavorite}
-          aria-label={material.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
-          className={`p-1.5 rounded-lg transition-colors shrink-0 ${material.isFavorite ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-400"}`}
-        >
-          <Bookmark className={`w-4 h-4 ${material.isFavorite ? "fill-current" : ""}`} />
-        </button>
-      </div>
-      <div className="mt-auto flex items-center justify-between gap-3 pt-3 border-t border-border">
-        <UIBadge variant="primary">{material.category}</UIBadge>
-        <Btn variant="primary" size="sm" onClick={onOpen}>Abrir material</Btn>
-      </div>
-    </Card>
-  );
-}
-
-const EXTERNAL_RESOURCE_PLATFORM_LABEL: Record<ExternalResourceSource, string> = {
-  CACHOLA: "Cachola Senac",
-  ORANGO: "Orango",
-};
-
-const EXTERNAL_RESOURCE_CTA_LABEL: Record<ExternalResourceSource, string> = {
-  CACHOLA: "Acessar na Cachola",
-  ORANGO: "Acessar no Orango",
-};
-
 const EXTERNAL_RESOURCE_NO_URL_MESSAGE: Record<ExternalResourceSource, string> = {
   CACHOLA: "Este recurso abre pela plataforma Cachola.",
   ORANGO: "Este recurso abre pela plataforma Orango.",
 };
 
-function ExternalResourceCard({ resource }: { resource: ExternalLearningResource }) {
-  const platformLabel = EXTERNAL_RESOURCE_PLATFORM_LABEL[resource.source];
-  const ctaLabel = EXTERNAL_RESOURCE_CTA_LABEL[resource.source];
+// Abertura de conteúdo externo (inalterada): nova aba, ou aviso se não houver URL.
+function openExternalResource(resource: ExternalLearningResource) {
+  if (!resource.url) {
+    toast.info(EXTERNAL_RESOURCE_NO_URL_MESSAGE[resource.source]);
+    return;
+  }
 
-  const handleOpen = () => {
-    if (!resource.url) {
-      toast.info(EXTERNAL_RESOURCE_NO_URL_MESSAGE[resource.source]);
-      return;
-    }
-
-    window.open(resource.url, "_blank", "noopener,noreferrer");
-  };
-
-  return (
-    <Card className="h-full min-h-[214px] p-6 flex flex-col gap-5 hover:shadow-md transition-all">
-      <div className="flex flex-1 items-start justify-between gap-3">
-        <div className="flex flex-1 min-w-0 gap-4">
-          <div className="flex h-[72px] w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-blue-50 text-blue-600">
-            {resource.coverUrl ? (
-              <img
-                src={resource.coverUrl}
-                alt=""
-                aria-hidden="true"
-                className="h-full w-full object-cover"
-                loading="lazy"
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-            ) : (
-              <BookOpen className="w-4 h-4" />
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-              <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">
-                {resource.resourceType}
-              </UIBadge>
-              <span className="text-[11px] text-muted-foreground">{platformLabel}</span>
-            </div>
-            <p className="font-bold text-foreground text-sm leading-snug mb-1">{resource.title}</p>
-            {resource.section && resource.section !== "Sem seção" && (
-              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                {resource.section}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="p-1.5 rounded-lg text-muted-foreground shrink-0">
-          <BookOpen className="w-4 h-4" />
-        </div>
-      </div>
-      <div className={`mt-auto flex items-center gap-3 pt-3 border-t border-border ${resource.area ? "justify-between" : "justify-end"}`}>
-        {resource.area && <UIBadge variant="primary">{resource.area}</UIBadge>}
-        <Btn variant="primary" size="sm" onClick={handleOpen}>{ctaLabel}</Btn>
-      </div>
-    </Card>
-  );
+  window.open(resource.url, "_blank", "noopener,noreferrer");
 }
 
 function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
@@ -5159,7 +5068,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const candidateIdentity = getCandidateIdentity(session);
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
-  const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "historico" | "recomendados">("todos");
+  const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "historico">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
   const [selectedExternalSource, setSelectedExternalSource] = useState<ExternalResourceSource>("CACHOLA");
   const [externalResources, setExternalResources] = useState<ExternalLearningResource[]>([]);
@@ -5175,6 +5084,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const [orangoCategories, setOrangoCategories] = useState<ExternalResourceCategory[]>([]);
   const [loadingOrangoCategories, setLoadingOrangoCategories] = useState(false);
   const [showOrangoCategories, setShowOrangoCategories] = useState(false);
+  const [showCacholaAreas, setShowCacholaAreas] = useState(false);
   const [showCats, setShowCats] = useState(false);
   // Identificador da requisição de recursos externos "em vigor". Incrementado
   // tanto pelo efeito de primeira página (troca de fonte/categoria) quanto
@@ -5276,6 +5186,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     setSelectedCacholaArea("Todos");
     setSelectedOrangoCategory("");
     setShowOrangoCategories(false);
+    setShowCacholaAreas(false);
   };
 
   // "Ver mais": busca a PRÓXIMA página real na API (offset = onde a última
@@ -5336,7 +5247,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const filtrado = materiais.filter(m => {
     const matchBusca = busca === "" || m.title.toLowerCase().includes(busca.toLowerCase()) || m.description.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoria === "Todas as categorias" || m.category === categoria;
-    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "historico" ? Boolean(m.lastAccessedAt) : m.recommended;
+    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : Boolean(m.lastAccessedAt);
     return matchBusca && matchCat && matchAba;
   });
   const filtradoOrdenado = abaFiltro === "historico" ? sortMaterialsByLastAccess(filtrado) : filtrado;
@@ -5357,6 +5268,13 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   // a refletir exclusivamente `pagination.hasMore` do backend.
   const visibleExternalResources = filteredExternalResources;
   const hasMoreExternalResources = externalResourcesPagination?.hasMore === true;
+  // Conteúdos parceiros entram no catálogo só na aba "Todos" (Histórico e
+  // Favoritos existem apenas para RH Connect). A categoria RH Connect não
+  // afeta os externos. Mantém o critério anterior: aparecem enquanto carregam,
+  // quando há itens ou quando há busca ativa (para mostrar "sem resultados").
+  const showExternalCatalog = abaFiltro === "todos" && (loadingExternalResources || externalResources.length > 0 || debouncedBusca !== "");
+  const exploreLoading = showExternalCatalog && loadingExternalResources;
+  const showExternalCards = showExternalCatalog && !loadingExternalResources && visibleExternalResources.length > 0;
   const selectedOrangoCategoryLabel = selectedOrangoCategory
     ? orangoCategories.find((category) => category.slug === selectedOrangoCategory)?.name ?? "Todas as categorias"
     : "Todas as categorias";
@@ -5405,188 +5323,212 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
           />
         )}
 
-        {/* Fonte complementar: conteúdos externos (Cachola / Orango) */}
-        {abaFiltro === "todos" && categoria === "Todas as categorias" && (loadingExternalResources || externalResources.length > 0 || debouncedBusca !== "") && (
-          <section>
-            <div className="mb-4">
-              <h2 className="font-bold text-foreground mb-1 flex items-center gap-2">
-                <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Explore conteúdos de plataformas parceiras para complementar sua preparação.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {(["CACHOLA", "ORANGO"] as ExternalResourceSource[]).map((source) => (
-                <FilterChip
-                  key={source}
-                  selected={selectedExternalSource === source}
-                  onClick={() => handleSelectExternalSource(source)}
-                >
-                  {EXTERNAL_SOURCE_SELECTOR_LABEL[source]}
-                </FilterChip>
-              ))}
-            </div>
-            {loadingExternalResources ? (
+        {/* Explore os materiais: grupos separados (RH Connect / parceiros), cada um com seus filtros */}
+        <ExploreCatalogSection
+          id="materials-filters"
+          tabs={[
+            { id: "todos", label: "Todos" },
+            { id: "historico", label: "Histórico" },
+            { id: "favoritos", label: `Favoritos (${materiais.filter(m => m.isFavorite).length})` },
+          ]}
+          activeTab={abaFiltro}
+          onTabChange={(tab) => setAbaFiltro(tab as typeof abaFiltro)}
+        >
+          {/* Grupo 1: materiais RH Connect (única origem em Histórico e Favoritos) */}
+          <ExploreCatalogGroup
+            title={abaFiltro === "historico" ? "Histórico de materiais" : abaFiltro === "favoritos" ? "Seus favoritos" : "Materiais RH Connect"}
+            filters={
+              abaFiltro === "todos" ? (
+                <div className="relative sm:w-56">
+                  <button
+                    onClick={() => setShowCats(!showCats)}
+                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
+                  >
+                    <span className="truncate">{categoria === "Todas as categorias" ? "Todas as categorias" : categoria}</span>
+                    <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                  </button>
+                  {showCats && (
+                    <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden">
+                      {SUPPORT_MATERIAL_CATEGORIES.map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => { setCategoria(cat); setShowCats(false); }}
+                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${categoria === cat ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : undefined
+            }
+          >
+            {filtradoOrdenado.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {filtradoOrdenado.map(m => (
+                  <EditorialMaterialCard
+                    key={m.id}
+                    variant="vertical"
+                    data={rhConnectMaterialToEditorialCard(m, {
+                      onOpen: () => handleOpenMaterial(m),
+                      onFavorite: () => toggleFavorito(m.id),
+                    })}
+                  />
+                ))}
+              </div>
+            ) : abaFiltro === "todos" && showExternalCatalog ? (
               <Card className="p-4 text-sm text-muted-foreground">
-                Buscando recomendações complementares...
+                Nenhum material RH Connect encontrado com esses filtros.
               </Card>
             ) : (
-              <div className="space-y-4">
-                {selectedExternalSource === "CACHOLA" && (
+              <EmptyState
+                icon={BookOpen}
+                title="Nenhum material encontrado"
+                description={
+                  abaFiltro === "favoritos"
+                    ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer material."
+                    : abaFiltro === "historico"
+                      ? "Os materiais que você abrir aparecerão aqui."
+                      : "Tente ajustar os filtros ou a busca."
+                }
+                action={
+                  <Btn variant="outline" onClick={() => { setBusca(""); setCategoria("Todas as categorias"); setAbaFiltro("todos"); }}>
+                    Limpar filtros
+                  </Btn>
+                }
+              />
+            )}
+          </ExploreCatalogGroup>
+
+          {/* Grupo 2: conteúdos de parceiros (só na aba Todos) */}
+          {showExternalCatalog && (
+            <ExploreCatalogGroup
+              title="Conteúdos de parceiros"
+              description="Conteúdos selecionados de plataformas parceiras."
+              filters={
+                <>
                   <div className="flex flex-wrap gap-2">
-                    {["Todos", ...cacholaAreas].map((area) => (
+                    {(["CACHOLA", "ORANGO"] as ExternalResourceSource[]).map((source) => (
                       <FilterChip
-                        key={area}
-                        selected={selectedCacholaArea === area}
-                        onClick={() => {
-                          setSelectedCacholaArea(area);
-                        }}
+                        key={source}
+                        selected={selectedExternalSource === source}
+                        onClick={() => handleSelectExternalSource(source)}
                       >
-                        {area}
+                        {EXTERNAL_SOURCE_SELECTOR_LABEL[source]}
                       </FilterChip>
                     ))}
                   </div>
-                )}
-                {selectedExternalSource === "ORANGO" && (
-                  <div className="relative sm:w-56">
-                    <button
-                      onClick={() => setShowOrangoCategories(!showOrangoCategories)}
-                      disabled={loadingOrangoCategories}
-                      className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <span className="truncate">{selectedOrangoCategoryLabel}</span>
-                      <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-                    </button>
-                    {showOrangoCategories && (
-                      <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                  {!loadingExternalResources && selectedExternalSource === "CACHOLA" && (
+                    <div className="space-y-1.5">
+                      <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
+                      <div className="relative w-full sm:w-56">
                         <button
-                          onClick={() => {
-                            setSelectedOrangoCategory("");
-                            setShowOrangoCategories(false);
-                          }}
-                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                          onClick={() => setShowCacholaAreas(!showCacholaAreas)}
+                          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
                         >
-                          Todas as categorias
+                          <span className="truncate">{selectedCacholaArea === "Todos" ? "Todas as categorias" : selectedCacholaArea}</span>
+                          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
                         </button>
-                        {orangoCategories.map((category) => (
-                          <button
-                            key={category.slug}
-                            onClick={() => {
-                              setSelectedOrangoCategory(category.slug);
-                              setShowOrangoCategories(false);
-                            }}
-                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
-                          >
-                            {category.name}
-                          </button>
-                        ))}
+                        {showCacholaAreas && (
+                          <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                            {["Todos", ...cacholaAreas].map((area) => (
+                              <button
+                                key={area}
+                                onClick={() => {
+                                  setSelectedCacholaArea(area);
+                                  setShowCacholaAreas(false);
+                                }}
+                                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedCacholaArea === area ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                              >
+                                {area === "Todos" ? "Todas as categorias" : area}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )}
-                {filteredExternalResources.length === 0 ? (
-                  <Card className="p-4 text-sm text-muted-foreground">
-                    Nenhum conteúdo encontrado para os filtros selecionados.
-                  </Card>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                      {visibleExternalResources.map(resource => (
-                        <ExternalResourceCard key={resource.id} resource={resource} />
-                      ))}
                     </div>
-                    {hasMoreExternalResources && (
-                      <div className="flex justify-center pt-1">
-                        <Btn
-                          variant="primary"
-                          onClick={handleLoadMoreExternalResources}
-                          disabled={loadingMoreExternalResources}
-                          className="px-5 py-2.5 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                  )}
+                  {!loadingExternalResources && selectedExternalSource === "ORANGO" && (
+                    <div className="space-y-1.5">
+                      <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
+                      <div className="relative w-full sm:w-56">
+                        <button
+                          onClick={() => setShowOrangoCategories(!showOrangoCategories)}
+                          disabled={loadingOrangoCategories}
+                          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {loadingMoreExternalResources ? "Carregando..." : "Ver mais conteúdos"}
-                          <ChevronDown className="ml-1.5 h-4 w-4" />
-                        </Btn>
+                          <span className="truncate">{selectedOrangoCategoryLabel}</span>
+                          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                        </button>
+                        {showOrangoCategories && (
+                          <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                            <button
+                              onClick={() => {
+                                setSelectedOrangoCategory("");
+                                setShowOrangoCategories(false);
+                              }}
+                              className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                            >
+                              Todas as categorias
+                            </button>
+                            {orangoCategories.map((category) => (
+                              <button
+                                key={category.slug}
+                                onClick={() => {
+                                  setSelectedOrangoCategory(category.slug);
+                                  setShowOrangoCategories(false);
+                                }}
+                                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                              >
+                                {category.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* Barra de busca + filtros */}
-        <section id="materials-filters" className="scroll-mt-20">
-          <h2 className="font-bold text-foreground mb-3">
-            {abaFiltro === "todos" ? "Todos os materiais" : abaFiltro === "favoritos" ? "Favoritos" : abaFiltro === "historico" ? "Histórico" : "Recomendados"}
-          </h2>
-
-          {/* Filtros de aba */}
-          <div className="flex flex-wrap gap-2 mb-4">
-            {([["todos","Todos"],["recomendados","Recomendados"],["historico","Histórico"],["favoritos","Favoritos"]] as const).map(([id, label]) => (
-              <FilterChip
-                key={id}
-                onClick={() => setAbaFiltro(id)}
-                selected={abaFiltro === id}
-                className="px-3.5"
-              >
-                {label}
-                {id === "favoritos" && ` (${materiais.filter(m => m.isFavorite).length})`}
-              </FilterChip>
-            ))}
-          </div>
-
-          {/* Categoria (a busca de materiais agora fica no topo da página) */}
-          <div className="flex flex-col sm:flex-row gap-3 mb-5">
-            <div className="relative sm:w-56">
-              <button
-                onClick={() => setShowCats(!showCats)}
-                className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
-              >
-                <span className="truncate">{categoria === "Todas as categorias" ? "Todas as categorias" : categoria}</span>
-                <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-              </button>
-              {showCats && (
-                <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden">
-                  {SUPPORT_MATERIAL_CATEGORIES.map(cat => (
-                    <button
-                      key={cat}
-                      onClick={() => { setCategoria(cat); setShowCats(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${categoria === cat ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
-                    >
-                      {cat}
-                    </button>
+                    </div>
+                  )}
+                </>
+              }
+              footer={
+                hasMoreExternalResources && !loadingExternalResources ? (
+                  <Btn
+                    variant="primary"
+                    onClick={handleLoadMoreExternalResources}
+                    disabled={loadingMoreExternalResources}
+                    className="px-5 py-2.5 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {loadingMoreExternalResources ? "Carregando..." : "Carregar mais"}
+                    <ChevronDown className="ml-1.5 h-4 w-4" />
+                  </Btn>
+                ) : undefined
+              }
+            >
+              {exploreLoading && (
+                <Card className="p-4 text-sm text-muted-foreground">
+                  Buscando recomendações complementares...
+                </Card>
+              )}
+              {showExternalCards && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {visibleExternalResources.map(resource => (
+                    <EditorialMaterialCard
+                      key={resource.id}
+                      variant="vertical"
+                      data={externalResourceToEditorialCard(resource, { onOpen: () => openExternalResource(resource) })}
+                    />
                   ))}
                 </div>
               )}
-            </div>
-          </div>
-
-          {/* Lista de resultados */}
-          {filtradoOrdenado.length === 0 ? (
-            <EmptyState
-              icon={BookOpen}
-              title="Nenhum material encontrado"
-              description={
-                abaFiltro === "favoritos"
-                  ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer material."
-                  : "Tente ajustar os filtros ou a busca."
-              }
-              action={
-                <Btn variant="outline" onClick={() => { setBusca(""); setCategoria("Todas as categorias"); setAbaFiltro("todos"); }}>
-                  Limpar filtros
-                </Btn>
-              }
-            />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {filtradoOrdenado.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
-              ))}
-            </div>
+              {!exploreLoading && !showExternalCards && (
+                <Card className="p-4 text-sm text-muted-foreground">
+                  Nenhum conteúdo de parceiro encontrado com esses filtros.
+                </Card>
+              )}
+            </ExploreCatalogGroup>
           )}
-        </section>
+        </ExploreCatalogSection>
       </div>
     </AuthLayout>
   );
