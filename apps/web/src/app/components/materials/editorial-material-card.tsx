@@ -25,6 +25,8 @@ export type EditorialCardData = {
   detail?: string;
   // Conteúdo de plataforma parceira (abre fora do RH Connect).
   external?: boolean;
+  // Capa em retrato (Cachola): mostra a capa inteira sobre fundo desfocado.
+  coverBackdrop?: boolean;
   // Presente só quando a fonte realmente tem estado de favorito.
   favorite?: { active: boolean; onToggle: () => void };
   action: { label: string; onClick: () => void };
@@ -80,6 +82,7 @@ export function externalResourceToEditorialCard(
     description: section,
     external: true,
     coverUrl: resource.coverUrl ?? undefined,
+    coverBackdrop: resource.source === "CACHOLA" || undefined,
     categoryLabel: resource.area ?? resource.categories[0]?.name ?? undefined,
     action: { label: EXTERNAL_CTA_LABEL[resource.source], onClick: handlers.onOpen },
   };
@@ -89,10 +92,12 @@ export function externalResourceToEditorialCard(
 
 function CardCover({
   coverUrl,
+  backdrop,
   compact,
   vertical,
 }: {
   coverUrl?: string;
+  backdrop?: boolean;
   compact?: boolean;
   vertical?: boolean;
 }) {
@@ -116,12 +121,26 @@ function CardCover({
       >
         <BookOpen className={compact ? "size-4" : "size-5"} />
       </span>
+      {coverUrl && backdrop ? (
+        <img
+          src={coverUrl}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-md"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      ) : null}
       {coverUrl ? (
         <img
           src={coverUrl}
           alt=""
           loading="lazy"
-          className="absolute inset-0 h-full w-full object-cover"
+          className={cn(
+            "absolute inset-0 h-full w-full",
+            backdrop ? "object-contain p-2" : "object-cover",
+          )}
           onError={(event) => {
             event.currentTarget.style.display = "none";
           }}
@@ -156,7 +175,7 @@ export function EditorialMaterialCard({
         className,
       )}
     >
-      <CardCover coverUrl={data.coverUrl} compact={compact} vertical={vertical} />
+      <CardCover coverUrl={data.coverUrl} backdrop={data.coverBackdrop} compact={compact} vertical={vertical} />
 
       <div className={cn("flex min-w-0 flex-1 flex-col", compact ? "gap-2 p-3.5" : "gap-3 p-4 sm:p-5")}>
         <div className="flex items-start justify-between gap-2">

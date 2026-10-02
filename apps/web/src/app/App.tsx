@@ -5472,7 +5472,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
               : abaFiltro === "favoritos" ? "Seus favoritos"
               : "Todos os conteúdos"
             }
-            description={abaFiltro === "cachola" || abaFiltro === "orango" ? "Conteúdos selecionados de plataformas parceiras." : undefined}
             filters={
               abaFiltro === "rh" ? (
                 <div className="relative sm:w-56">
@@ -5499,7 +5498,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                 </div>
               ) : abaFiltro === "cachola" && !loadingExternalResources && selectedExternalSource === "CACHOLA" ? (
                 <div className="space-y-1.5">
-                  <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
                   <div className="relative w-full sm:w-56">
                     <button
                       onClick={() => setShowCacholaAreas(!showCacholaAreas)}
@@ -5528,7 +5526,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                 </div>
               ) : abaFiltro === "orango" && !loadingExternalResources && selectedExternalSource === "ORANGO" ? (
                 <div className="space-y-1.5">
-                  <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
                   <div className="relative w-full sm:w-56">
                     <button
                       onClick={() => setShowOrangoCategories(!showOrangoCategories)}
