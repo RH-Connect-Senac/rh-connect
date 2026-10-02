@@ -47,6 +47,7 @@ import {
   externalResourceToEditorialCard,
   rhConnectMaterialToEditorialCard,
 } from "./components/materials/editorial-material-card";
+import { BackToTop } from "./components/ui/back-to-top";
 import { ContinueLearningSection } from "./components/materials/continue-learning-section";
 import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
@@ -89,6 +90,12 @@ import {
   openMaterial,
   toggleMaterialFavorite,
 } from "./services/materials-service";
+import {
+  getExternalResourceUserStates,
+  recordExternalResourceAccess,
+  type ExternalResourceUserState,
+  toggleExternalResourceFavorite,
+} from "./services/external-resource-user-state";
 import {
   listExternalResourceCategories,
   listExternalResources,
@@ -5043,17 +5050,19 @@ function sortMaterialsByLastAccess(items: MaterialCardView[]) {
 // real da paginação do backend.
 const EXTERNAL_PAGE_SIZE = 25;
 
-const EXTERNAL_SOURCE_SELECTOR_LABEL: Record<ExternalResourceSource, string> = {
-  CACHOLA: "Cachola",
-  ORANGO: "Orango",
+// Itens + paginação de UMA fonte parceira na aba Todos.
+type TodosExternalSourceState = {
+  items: ExternalLearningResource[];
+  pagination: ExternalResourcesPagination | null;
 };
+const EMPTY_TODOS_SOURCE_STATE: TodosExternalSourceState = { items: [], pagination: null };
 
 const EXTERNAL_RESOURCE_NO_URL_MESSAGE: Record<ExternalResourceSource, string> = {
   CACHOLA: "Este recurso abre pela plataforma Cachola.",
   ORANGO: "Este recurso abre pela plataforma Orango.",
 };
 
-// Abertura de conteúdo externo (inalterada): nova aba, ou aviso se não houver URL.
+// Abertura de conteúdo externo: nova aba, ou aviso se não houver URL.
 function openExternalResource(resource: ExternalLearningResource) {
   if (!resource.url) {
     toast.info(EXTERNAL_RESOURCE_NO_URL_MESSAGE[resource.source]);
@@ -5068,7 +5077,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const candidateIdentity = getCandidateIdentity(session);
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
-  const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "historico">("todos");
+  const [abaFiltro, setAbaFiltro] = useState<"todos" | "recomendados" | "rh" | "cachola" | "orango" | "historico" | "favoritos">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
   const [selectedExternalSource, setSelectedExternalSource] = useState<ExternalResourceSource>("CACHOLA");
   const [externalResources, setExternalResources] = useState<ExternalLearningResource[]>([]);
@@ -5094,6 +5103,17 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   // enquanto uma página carrega, e um "Ver mais" cuja resposta chega depois
   // de uma troca de fonte/categoria já ter iniciado uma nova busca.
   const externalResourcesRequestIdRef = useRef(0);
+  // Aba "Todos": primeira página das duas fontes, com controle de requisição próprio
+  // (não interfere no externalResourcesRequestIdRef das abas Cachola / Orango).
+  const todosExternalRequestIdRef = useRef(0);
+  // Cada fonte mantém a PRÓPRIA paginação (itens + limit/offset/hasMore); a aba
+  // Todos apenas coordena as duas.
+  const [todosCachola, setTodosCachola] = useState<TodosExternalSourceState>(EMPTY_TODOS_SOURCE_STATE);
+  const [todosOrango, setTodosOrango] = useState<TodosExternalSourceState>(EMPTY_TODOS_SOURCE_STATE);
+  const [loadingTodosExternal, setLoadingTodosExternal] = useState(false);
+  const [loadingMoreTodosExternal, setLoadingMoreTodosExternal] = useState(false);
+  // Histórico de acesso e favoritos locais dos conteúdos de parceiros.
+  const [externalUserStates, setExternalUserStates] = useState<ExternalResourceUserState[]>(() => getExternalResourceUserStates(candidateIdentity.id));
 
   const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
 
@@ -5181,6 +5201,95 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
     };
   }, [selectedExternalSource]);
 
+  // Aba "Todos": busca a primeira página de cada fonte parceira (mesmo serviço,
+  // sem alterar a API) para exibir as três origens no mesmo catálogo. Ao mudar
+  // a busca ou a aba, recomeça da primeira página e substitui os resultados.
+  // O cleanup invalida qualquer resposta ainda em voo (primeira página ou
+  // "Carregar mais") quando a aba/busca muda.
+  useEffect(() => {
+    if (abaFiltro !== "todos") return;
+
+    const requestId = ++todosExternalRequestIdRef.current;
+    setLoadingTodosExternal(true);
+    setLoadingMoreTodosExternal(false);
+    Promise.all(
+      (["CACHOLA", "ORANGO"] as ExternalResourceSource[]).map((source) =>
+        listExternalResources({
+          source,
+          limit: EXTERNAL_PAGE_SIZE,
+          search: debouncedBusca || undefined,
+        })
+          .then(({ resources, pagination }): TodosExternalSourceState => ({ items: resources, pagination: pagination ?? null }))
+          .catch((): TodosExternalSourceState => EMPTY_TODOS_SOURCE_STATE),
+      ),
+    )
+      .then(([cachola, orango]) => {
+        if (todosExternalRequestIdRef.current !== requestId) return;
+        setTodosCachola(cachola);
+        setTodosOrango(orango);
+      })
+      .finally(() => {
+        if (todosExternalRequestIdRef.current === requestId) {
+          setLoadingTodosExternal(false);
+        }
+      });
+
+    return () => {
+      todosExternalRequestIdRef.current++;
+      setLoadingMoreTodosExternal(false);
+    };
+  }, [abaFiltro, debouncedBusca]);
+
+  // "Carregar mais" da aba Todos: busca a PRÓXIMA página só das fontes que ainda
+  // têm `hasMore` e ACUMULA os resultados (sem duplicar). Ignora cliques
+  // repetidos enquanto algo está carregando.
+  const handleLoadMoreTodos = () => {
+    if (loadingTodosExternal || loadingMoreTodosExternal) return;
+
+    const pending = (
+      [
+        ["CACHOLA", todosCachola, setTodosCachola],
+        ["ORANGO", todosOrango, setTodosOrango],
+      ] as const
+    ).filter(([, state]) => state.pagination?.hasMore === true);
+    if (pending.length === 0) return;
+
+    const requestId = ++todosExternalRequestIdRef.current;
+    setLoadingMoreTodosExternal(true);
+    Promise.all(
+      pending.map(([source, state, setState]) => {
+        const pagination = state.pagination as ExternalResourcesPagination;
+        return listExternalResources({
+          source,
+          limit: EXTERNAL_PAGE_SIZE,
+          offset: pagination.offset + pagination.limit,
+          search: debouncedBusca || undefined,
+        })
+          .then(({ resources, pagination: nextPagination }) => ({ setState, resources, nextPagination }))
+          // Falha: mantém o que já foi carregado dessa fonte, sem avançar a página.
+          .catch(() => null);
+      }),
+    )
+      .then((results) => {
+        if (todosExternalRequestIdRef.current !== requestId) return;
+        for (const result of results) {
+          if (!result) continue;
+          result.setState((current) => {
+            const existingIds = new Set(current.items.map((resource) => resource.id));
+            return {
+              items: [...current.items, ...result.resources.filter((resource) => !existingIds.has(resource.id))],
+              pagination: result.nextPagination ?? current.pagination,
+            };
+          });
+        }
+      })
+      .finally(() => {
+        if (todosExternalRequestIdRef.current === requestId) {
+          setLoadingMoreTodosExternal(false);
+        }
+      });
+  };
+
   const handleSelectExternalSource = (source: ExternalResourceSource) => {
     setSelectedExternalSource(source);
     setSelectedCacholaArea("Todos");
@@ -5232,6 +5341,35 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   };
 
   const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates(candidateIdentity.id));
+  const refreshExternalUserStates = () => setExternalUserStates(getExternalResourceUserStates(candidateIdentity.id));
+
+  // Troca de aba do Explore. Cachola / Orango escolhem a fonte carregada pelo
+  // fluxo existente; sair da aba RH Connect limpa a categoria RH para que um
+  // filtro "escondido" não afete as outras abas.
+  const handleChangeAba = (tab: typeof abaFiltro) => {
+    setAbaFiltro(tab);
+    setShowCats(false);
+    setShowOrangoCategories(false);
+    setShowCacholaAreas(false);
+    if (tab !== "rh") setCategoria("Todas as categorias");
+    if (tab === "cachola" && selectedExternalSource !== "CACHOLA") handleSelectExternalSource("CACHOLA");
+    if (tab === "orango" && selectedExternalSource !== "ORANGO") handleSelectExternalSource("ORANGO");
+  };
+
+  const getExternalUserState = (resource: ExternalLearningResource) =>
+    externalUserStates.find((item) => item.source === resource.source && item.resourceId === resource.id);
+
+  // Registra o acesso local e abre a plataforma externa exatamente como antes.
+  const handleOpenExternalResource = (resource: ExternalLearningResource) => {
+    recordExternalResourceAccess(candidateIdentity.id, resource);
+    refreshExternalUserStates();
+    openExternalResource(resource);
+  };
+
+  const handleToggleExternalFavorite = (resource: ExternalLearningResource) => {
+    toggleExternalResourceFavorite(candidateIdentity.id, resource);
+    refreshExternalUserStates();
+  };
 
   const toggleFavorito = (id: string) => {
     toggleMaterialFavorite(candidateIdentity.id, id);
@@ -5247,7 +5385,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const filtrado = materiais.filter(m => {
     const matchBusca = busca === "" || m.title.toLowerCase().includes(busca.toLowerCase()) || m.description.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoria === "Todas as categorias" || m.category === categoria;
-    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : Boolean(m.lastAccessedAt);
+    const matchAba = abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "historico" ? Boolean(m.lastAccessedAt) : true;
     return matchBusca && matchCat && matchAba;
   });
   const filtradoOrdenado = abaFiltro === "historico" ? sortMaterialsByLastAccess(filtrado) : filtrado;
@@ -5268,13 +5406,18 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   // a refletir exclusivamente `pagination.hasMore` do backend.
   const visibleExternalResources = filteredExternalResources;
   const hasMoreExternalResources = externalResourcesPagination?.hasMore === true;
-  // Conteúdos parceiros entram no catálogo só na aba "Todos" (Histórico e
-  // Favoritos existem apenas para RH Connect). A categoria RH Connect não
-  // afeta os externos. Mantém o critério anterior: aparecem enquanto carregam,
-  // quando há itens ou quando há busca ativa (para mostrar "sem resultados").
-  const showExternalCatalog = abaFiltro === "todos" && (loadingExternalResources || externalResources.length > 0 || debouncedBusca !== "");
-  const exploreLoading = showExternalCatalog && loadingExternalResources;
-  const showExternalCards = showExternalCatalog && !loadingExternalResources && visibleExternalResources.length > 0;
+  // Cards externos exibidos nas abas Cachola / Orango (só a fonte em vista).
+  const sourceExternalResources = visibleExternalResources.filter((resource) => resource.source === selectedExternalSource);
+  const buscaNormalizada = busca.trim().toLowerCase();
+  const matchesBusca = (title: string) => buscaNormalizada === "" || title.toLowerCase().includes(buscaNormalizada);
+  // Histórico / Favoritos de parceiros vêm do estado local (snapshot do recurso).
+  const externalHistory = externalUserStates
+    .filter((item) => item.lastAccessedAt && matchesBusca(item.resource.title))
+    .sort((a, b) => new Date(b.lastAccessedAt as string).getTime() - new Date(a.lastAccessedAt as string).getTime());
+  const externalFavorites = externalUserStates.filter((item) => item.isFavorite && matchesBusca(item.resource.title));
+  // Aba Todos: o botão aparece se QUALQUER fonte ainda tem mais páginas.
+  const todosHasMore = todosCachola.pagination?.hasMore === true || todosOrango.pagination?.hasMore === true;
+  const favoritosCount = materiais.filter(m => m.isFavorite).length + externalUserStates.filter((item) => item.isFavorite).length;
   const selectedOrangoCategoryLabel = selectedOrangoCategory
     ? orangoCategories.find((category) => category.slug === selectedOrangoCategory)?.name ?? "Todas as categorias"
     : "Todas as categorias";
@@ -5291,54 +5434,47 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
           search={busca}
           onSearchChange={setBusca}
           onSearchClear={() => setBusca("")}
-          onFiltersClick={() => document.getElementById("materials-filters")?.scrollIntoView({ behavior: "smooth", block: "start" })}
         />
 
-        {/* Destaques: Recomendados */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
-          <section className="@container">
-            <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
-              <Star className="w-4 h-4 text-amber-500" /> Recomendados para você
-            </h2>
-            <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">
-              {recomendados.map(m => (
-                <EditorialMaterialCard
-                  key={m.id}
-                  data={rhConnectMaterialToEditorialCard(m, {
-                    onOpen: () => handleOpenMaterial(m),
-                    onFavorite: () => toggleFavorito(m.id),
-                  })}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Continue aprendendo: só renderiza se houver material IN_PROGRESS */}
+        {/* Continue aprendendo: RH IN_PROGRESS + parceiros acessados (máx. 3); sem itens, não renderiza */}
         {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
           <ContinueLearningSection
             materials={emAndamento}
             onOpen={handleOpenMaterial}
             onFavorite={(m) => toggleFavorito(m.id)}
+            externalItems={externalUserStates.filter((item) => Boolean(item.lastAccessedAt))}
+            onOpenExternal={handleOpenExternalResource}
           />
         )}
 
-        {/* Explore os materiais: grupos separados (RH Connect / parceiros), cada um com seus filtros */}
+        {/* Explore os materiais: um único catálogo, controlado pelas abas */}
         <ExploreCatalogSection
           id="materials-filters"
           tabs={[
             { id: "todos", label: "Todos" },
+            { id: "recomendados", label: "Recomendados" },
+            { id: "rh", label: "RH Connect" },
+            { id: "cachola", label: "Cachola" },
+            { id: "orango", label: "Orango" },
             { id: "historico", label: "Histórico" },
-            { id: "favoritos", label: `Favoritos (${materiais.filter(m => m.isFavorite).length})` },
+            { id: "favoritos", label: `Favoritos (${favoritosCount})` },
           ]}
           activeTab={abaFiltro}
-          onTabChange={(tab) => setAbaFiltro(tab as typeof abaFiltro)}
+          onTabChange={(tab) => handleChangeAba(tab as typeof abaFiltro)}
         >
-          {/* Grupo 1: materiais RH Connect (única origem em Histórico e Favoritos) */}
           <ExploreCatalogGroup
-            title={abaFiltro === "historico" ? "Histórico de materiais" : abaFiltro === "favoritos" ? "Seus favoritos" : "Materiais RH Connect"}
+            title={
+              abaFiltro === "recomendados" ? "Recomendados para você"
+              : abaFiltro === "rh" ? "Materiais RH Connect"
+              : abaFiltro === "cachola" ? "Conteúdos da Cachola"
+              : abaFiltro === "orango" ? "Conteúdos do Orango"
+              : abaFiltro === "historico" ? "Histórico"
+              : abaFiltro === "favoritos" ? "Seus favoritos"
+              : "Todos os conteúdos"
+            }
+            description={abaFiltro === "cachola" || abaFiltro === "orango" ? "Conteúdos selecionados de plataformas parceiras." : undefined}
             filters={
-              abaFiltro === "todos" ? (
+              abaFiltro === "rh" ? (
                 <div className="relative sm:w-56">
                   <button
                     onClick={() => setShowCats(!showCats)}
@@ -5361,175 +5497,188 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                     </div>
                   )}
                 </div>
+              ) : abaFiltro === "cachola" && !loadingExternalResources && selectedExternalSource === "CACHOLA" ? (
+                <div className="space-y-1.5">
+                  <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
+                  <div className="relative w-full sm:w-56">
+                    <button
+                      onClick={() => setShowCacholaAreas(!showCacholaAreas)}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
+                    >
+                      <span className="truncate">{selectedCacholaArea === "Todos" ? "Todas as categorias" : selectedCacholaArea}</span>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                    {showCacholaAreas && (
+                      <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                        {["Todos", ...cacholaAreas].map((area) => (
+                          <button
+                            key={area}
+                            onClick={() => {
+                              setSelectedCacholaArea(area);
+                              setShowCacholaAreas(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedCacholaArea === area ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                          >
+                            {area === "Todos" ? "Todas as categorias" : area}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : abaFiltro === "orango" && !loadingExternalResources && selectedExternalSource === "ORANGO" ? (
+                <div className="space-y-1.5">
+                  <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
+                  <div className="relative w-full sm:w-56">
+                    <button
+                      onClick={() => setShowOrangoCategories(!showOrangoCategories)}
+                      disabled={loadingOrangoCategories}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <span className="truncate">{selectedOrangoCategoryLabel}</span>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                    {showOrangoCategories && (
+                      <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                        <button
+                          onClick={() => {
+                            setSelectedOrangoCategory("");
+                            setShowOrangoCategories(false);
+                          }}
+                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                        >
+                          Todas as categorias
+                        </button>
+                        {orangoCategories.map((category) => (
+                          <button
+                            key={category.slug}
+                            onClick={() => {
+                              setSelectedOrangoCategory(category.slug);
+                              setShowOrangoCategories(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                          >
+                            {category.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : undefined
+            }
+            footer={
+              (abaFiltro === "todos" && todosHasMore && !loadingTodosExternal) ||
+              ((abaFiltro === "cachola" || abaFiltro === "orango") && hasMoreExternalResources && !loadingExternalResources) ? (
+                <Btn
+                  variant="primary"
+                  onClick={abaFiltro === "todos" ? handleLoadMoreTodos : handleLoadMoreExternalResources}
+                  disabled={abaFiltro === "todos" ? loadingMoreTodosExternal : loadingMoreExternalResources}
+                  className="px-5 py-2.5 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {(abaFiltro === "todos" ? loadingMoreTodosExternal : loadingMoreExternalResources) ? "Carregando..." : "Carregar mais"}
+                  <ChevronDown className="ml-1.5 h-4 w-4" />
+                </Btn>
               ) : undefined
             }
           >
-            {filtradoOrdenado.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {filtradoOrdenado.map(m => (
-                  <EditorialMaterialCard
-                    key={m.id}
-                    variant="vertical"
-                    data={rhConnectMaterialToEditorialCard(m, {
-                      onOpen: () => handleOpenMaterial(m),
-                      onFavorite: () => toggleFavorito(m.id),
-                    })}
-                  />
-                ))}
-              </div>
-            ) : abaFiltro === "todos" && showExternalCatalog ? (
-              <Card className="p-4 text-sm text-muted-foreground">
-                Nenhum material RH Connect encontrado com esses filtros.
-              </Card>
-            ) : (
-              <EmptyState
-                icon={BookOpen}
-                title="Nenhum material encontrado"
-                description={
-                  abaFiltro === "favoritos"
-                    ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer material."
-                    : abaFiltro === "historico"
-                      ? "Os materiais que você abrir aparecerão aqui."
-                      : "Tente ajustar os filtros ou a busca."
-                }
-                action={
-                  <Btn variant="outline" onClick={() => { setBusca(""); setCategoria("Todas as categorias"); setAbaFiltro("todos"); }}>
-                    Limpar filtros
-                  </Btn>
-                }
-              />
-            )}
-          </ExploreCatalogGroup>
+            {(() => {
+              const rhCard = (m: MaterialCardView) => (
+                <EditorialMaterialCard
+                  key={`rh-${m.id}`}
+                  variant="vertical"
+                  data={rhConnectMaterialToEditorialCard(m, {
+                    onOpen: () => handleOpenMaterial(m),
+                    onFavorite: () => toggleFavorito(m.id),
+                  })}
+                />
+              );
+              const externalCard = (resource: ExternalLearningResource) => (
+                <EditorialMaterialCard
+                  key={`${resource.source}-${resource.id}`}
+                  variant="vertical"
+                  data={{
+                    ...externalResourceToEditorialCard(resource, { onOpen: () => handleOpenExternalResource(resource) }),
+                    favorite: {
+                      active: getExternalUserState(resource)?.isFavorite === true,
+                      onToggle: () => handleToggleExternalFavorite(resource),
+                    },
+                  }}
+                />
+              );
 
-          {/* Grupo 2: conteúdos de parceiros (só na aba Todos) */}
-          {showExternalCatalog && (
-            <ExploreCatalogGroup
-              title="Conteúdos de parceiros"
-              description="Conteúdos selecionados de plataformas parceiras."
-              filters={
-                <>
-                  <div className="flex flex-wrap gap-2">
-                    {(["CACHOLA", "ORANGO"] as ExternalResourceSource[]).map((source) => (
-                      <FilterChip
-                        key={source}
-                        selected={selectedExternalSource === source}
-                        onClick={() => handleSelectExternalSource(source)}
-                      >
-                        {EXTERNAL_SOURCE_SELECTOR_LABEL[source]}
-                      </FilterChip>
-                    ))}
-                  </div>
-                  {!loadingExternalResources && selectedExternalSource === "CACHOLA" && (
-                    <div className="space-y-1.5">
-                      <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
-                      <div className="relative w-full sm:w-56">
-                        <button
-                          onClick={() => setShowCacholaAreas(!showCacholaAreas)}
-                          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
-                        >
-                          <span className="truncate">{selectedCacholaArea === "Todos" ? "Todas as categorias" : selectedCacholaArea}</span>
-                          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-                        </button>
-                        {showCacholaAreas && (
-                          <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
-                            {["Todos", ...cacholaAreas].map((area) => (
-                              <button
-                                key={area}
-                                onClick={() => {
-                                  setSelectedCacholaArea(area);
-                                  setShowCacholaAreas(false);
-                                }}
-                                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedCacholaArea === area ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
-                              >
-                                {area === "Todos" ? "Todas as categorias" : area}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {!loadingExternalResources && selectedExternalSource === "ORANGO" && (
-                    <div className="space-y-1.5">
-                      <span className="block text-xs font-medium text-muted-foreground">Categoria</span>
-                      <div className="relative w-full sm:w-56">
-                        <button
-                          onClick={() => setShowOrangoCategories(!showOrangoCategories)}
-                          disabled={loadingOrangoCategories}
-                          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <span className="truncate">{selectedOrangoCategoryLabel}</span>
-                          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-                        </button>
-                        {showOrangoCategories && (
-                          <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
-                            <button
-                              onClick={() => {
-                                setSelectedOrangoCategory("");
-                                setShowOrangoCategories(false);
-                              }}
-                              className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
-                            >
-                              Todas as categorias
-                            </button>
-                            {orangoCategories.map((category) => (
-                              <button
-                                key={category.slug}
-                                onClick={() => {
-                                  setSelectedOrangoCategory(category.slug);
-                                  setShowOrangoCategories(false);
-                                }}
-                                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
-                              >
-                                {category.name}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </>
+              let cards: ReactNode[] = [];
+              let loading = false;
+              if (abaFiltro === "todos") {
+                // Ordem fixa: RH Connect → Cachola → Orango.
+                cards = [...filtradoOrdenado.map(rhCard), ...todosCachola.items.map(externalCard), ...todosOrango.items.map(externalCard)];
+                loading = loadingTodosExternal && todosCachola.items.length === 0 && todosOrango.items.length === 0;
+              } else if (abaFiltro === "recomendados") {
+                // Mesmos materiais (`recommended`, no máximo 2) que antes ficavam na seção
+                // independente, agora no mesmo card editorial vertical do restante do Explore.
+                cards = recomendados
+                  .filter((m) => filtrado.some((item) => item.id === m.id))
+                  .map(rhCard);
+              } else if (abaFiltro === "rh") {
+                cards = filtradoOrdenado.map(rhCard);
+              } else if (abaFiltro === "cachola" || abaFiltro === "orango") {
+                cards = sourceExternalResources.map(externalCard);
+                // Enquanto a fonte nova ainda não carregou, evita piscar "vazio".
+                loading = loadingExternalResources || externalResources.some((resource) => resource.source !== selectedExternalSource);
+              } else {
+                // Histórico (mais recente primeiro) e Favoritos: as três origens.
+                const rhEntries = filtradoOrdenado.map((m) => ({
+                  time: m.lastAccessedAt ? new Date(m.lastAccessedAt).getTime() : 0,
+                  node: rhCard(m),
+                }));
+                const externalEntries = (abaFiltro === "historico" ? externalHistory : externalFavorites).map((item) => ({
+                  time: item.lastAccessedAt ? new Date(item.lastAccessedAt).getTime() : 0,
+                  node: externalCard(item.resource),
+                }));
+                cards = abaFiltro === "historico"
+                  ? [...rhEntries, ...externalEntries].sort((a, b) => b.time - a.time).map((entry) => entry.node)
+                  : [...rhEntries, ...externalEntries].map((entry) => entry.node);
               }
-              footer={
-                hasMoreExternalResources && !loadingExternalResources ? (
-                  <Btn
-                    variant="primary"
-                    onClick={handleLoadMoreExternalResources}
-                    disabled={loadingMoreExternalResources}
-                    className="px-5 py-2.5 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {loadingMoreExternalResources ? "Carregando..." : "Carregar mais"}
-                    <ChevronDown className="ml-1.5 h-4 w-4" />
-                  </Btn>
-                ) : undefined
+
+              if (loading) {
+                return (
+                  <Card className="p-4 text-sm text-muted-foreground">
+                    Buscando recomendações complementares...
+                  </Card>
+                );
               }
-            >
-              {exploreLoading && (
-                <Card className="p-4 text-sm text-muted-foreground">
-                  Buscando recomendações complementares...
-                </Card>
-              )}
-              {showExternalCards && (
+
+              if (cards.length === 0) {
+                return (
+                  <EmptyState
+                    icon={BookOpen}
+                    title="Nenhum conteúdo encontrado"
+                    description={
+                      abaFiltro === "favoritos"
+                        ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer conteúdo."
+                        : abaFiltro === "historico"
+                          ? "Os conteúdos que você abrir aparecerão aqui."
+                          : "Tente ajustar os filtros ou a busca."
+                    }
+                    action={
+                      <Btn variant="outline" onClick={() => { setBusca(""); handleChangeAba("todos"); }}>
+                        Limpar filtros
+                      </Btn>
+                    }
+                  />
+                );
+              }
+
+              return (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {visibleExternalResources.map(resource => (
-                    <EditorialMaterialCard
-                      key={resource.id}
-                      variant="vertical"
-                      data={externalResourceToEditorialCard(resource, { onOpen: () => openExternalResource(resource) })}
-                    />
-                  ))}
+                  {cards}
                 </div>
-              )}
-              {!exploreLoading && !showExternalCards && (
-                <Card className="p-4 text-sm text-muted-foreground">
-                  Nenhum conteúdo de parceiro encontrado com esses filtros.
-                </Card>
-              )}
-            </ExploreCatalogGroup>
-          )}
+              );
+            })()}
+          </ExploreCatalogGroup>
         </ExploreCatalogSection>
       </div>
+      <BackToTop />
     </AuthLayout>
   );
 }

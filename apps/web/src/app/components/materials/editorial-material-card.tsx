@@ -1,5 +1,4 @@
 import { ArrowRight, Bookmark, BookOpen, ExternalLink } from "lucide-react";
-import { useState } from "react";
 
 import type { MaterialStatus, MaterialUserState, SupportMaterial } from "../../domain/materials";
 import type { ExternalLearningResource, ExternalResourceSource } from "../../services/external-resources-service";
@@ -97,45 +96,37 @@ function CardCover({
   compact?: boolean;
   vertical?: boolean;
 }) {
-  // Capas externas têm proporções muito diferentes (livros/podcasts verticais,
-  // banners horizontais). Por isso a imagem NÃO preenche a área com
-  // `object-cover` (cortava e ampliava): ela é exibida inteira, centralizada,
-  // com `object-contain` e sem nunca passar do tamanho natural (sem upscale),
-  // sobre o fundo neutro `secondary`. Sem coverUrl, ou se a imagem falhar,
-  // aparece o fallback com ícone (tokens do Design System).
-  const [imageFailed, setImageFailed] = useState(false);
-  const showImage = Boolean(coverUrl) && !imageFailed;
-
+  // Com coverUrl: imagem. Sem: fallback só com tokens do Design System
+  // (gradiente `secondary` → `card`, ícone `primary`), sem imagem mockada.
+  // A imagem fica sobre o fallback: se falhar ao carregar, o fallback aparece.
   return (
     <div
       aria-hidden="true"
       className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-hidden",
-        showImage ? "bg-secondary" : "bg-gradient-to-br from-secondary to-card",
+        "relative flex shrink-0 items-center justify-center overflow-hidden bg-gradient-to-br from-secondary to-card",
         vertical ? "aspect-[16/9] w-full border-b border-border" : "self-stretch",
         !vertical && (compact ? "w-20 sm:w-24" : "w-28 sm:w-36"),
       )}
     >
-      {showImage ? (
-        <div className="absolute inset-0 flex items-center justify-center p-2.5">
-          <img
-            src={coverUrl}
-            alt=""
-            loading="lazy"
-            className="max-h-full max-w-full rounded-md object-contain object-center shadow-sm"
-            onError={() => setImageFailed(true)}
-          />
-        </div>
-      ) : (
-        <span
-          className={cn(
-            "flex items-center justify-center rounded-xl bg-card text-primary shadow-sm",
-            compact ? "size-10" : "size-12",
-          )}
-        >
-          <BookOpen className={compact ? "size-4" : "size-5"} />
-        </span>
-      )}
+      <span
+        className={cn(
+          "flex items-center justify-center rounded-xl bg-card text-primary shadow-sm",
+          compact ? "size-10" : "size-12",
+        )}
+      >
+        <BookOpen className={compact ? "size-4" : "size-5"} />
+      </span>
+      {coverUrl ? (
+        <img
+          src={coverUrl}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      ) : null}
     </div>
   );
 }
