@@ -30,8 +30,9 @@ const DEFAULT_SLIDES: MaterialsHeroSlide[] = [
   { id: "orango", src: bannerOrango, alt: "Orango: conteúdos de parceiros no RH Connect" },
 ];
 
-// Todos os banners têm 2172×724 (3:1). O container herda essa proporção
-// pela própria imagem, então nada é esticado nem cortado.
+// Todos os banners têm 2172×724 (3:1). O container herda essa proporção pela
+// própria imagem; em larguras grandes a altura é limitada a 280px
+// (`max-h-[280px]` + `object-cover`), cortando só um pouco do topo e da base.
 const BANNER_WIDTH = 2172;
 const BANNER_HEIGHT = 724;
 const AUTOPLAY_INTERVAL_MS = 6000;
@@ -127,7 +128,7 @@ export function MaterialsHeroSlider({ slides = DEFAULT_SLIDES, className }: Mate
               height={BANNER_HEIGHT}
               loading={index === 0 ? "eager" : "lazy"}
               draggable={false}
-              className="block h-auto w-full select-none object-cover"
+              className="block h-auto max-h-[280px] w-full select-none object-cover object-center"
               style={{ aspectRatio: `${BANNER_WIDTH} / ${BANNER_HEIGHT}` }}
             />
           </CarouselItem>

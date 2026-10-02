@@ -1,31 +1,28 @@
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 
-import { Button } from "../ui/button";
 import { cn } from "../ui/utils";
 
 type MaterialsSearchBarProps = {
   value: string;
   onChange: (value: string) => void;
   onClear: () => void;
-  onFiltersClick?: () => void;
   placeholder?: string;
   className?: string;
 };
 
-// Busca integrada com o botão "Filtros" dentro da própria barra (sem botão
-// "Buscar" separado). Componente controlado: não guarda estado nem filtra nada.
+// Barra de busca em largura total (sem botão "Buscar" nem "Filtros").
+// Componente controlado: não guarda estado nem filtra nada.
 export function MaterialsSearchBar({
   value,
   onChange,
   onClear,
-  onFiltersClick,
   placeholder = "Buscar materiais, temas ou palavras-chave...",
   className,
 }: MaterialsSearchBarProps) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-xl border border-border bg-card py-1.5 pl-3.5 pr-1.5 transition-[border-color,box-shadow] duration-150",
+        "flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2 transition-[border-color,box-shadow] duration-150",
         "focus-within:border-[#2563EB] focus-within:shadow-[0_0_0_1px_rgba(37,99,235,0.12)]",
         className,
       )}
@@ -50,10 +47,6 @@ export function MaterialsSearchBar({
           <X className="size-4" aria-hidden="true" />
         </button>
       )}
-      <Button type="button" variant="outline" size="sm" onClick={onFiltersClick} className="shrink-0">
-        <SlidersHorizontal aria-hidden="true" />
-        Filtros
-      </Button>
     </div>
   );
 }
