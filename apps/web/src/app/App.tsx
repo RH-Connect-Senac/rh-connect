@@ -41,8 +41,9 @@ import {
 } from "./components/admin-screens";
 import { CandidateOnboardingScreen } from "./components/onboarding-screens";
 import { Input } from "./components/ui/input";
-import { SearchInput } from "./components/ui/search-input";
 import { MaterialsPageHeader } from "./components/materials/materials-page-header";
+import { EditorialMaterialCard, rhConnectMaterialToEditorialCard } from "./components/materials/editorial-material-card";
+import { ContinueLearningSection } from "./components/materials/continue-learning-section";
 import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
 import { Textarea } from "./components/ui/textarea";
@@ -5165,7 +5166,10 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const [externalResourcesPagination, setExternalResourcesPagination] = useState<ExternalResourcesPagination | null>(null);
   const [loadingExternalResources, setLoadingExternalResources] = useState(false);
   const [loadingMoreExternalResources, setLoadingMoreExternalResources] = useState(false);
-  const [externalSearch, setExternalSearch] = useState("");
+  // Termo enviado ao backend: acompanha `busca` com debounce de 300ms (e é
+  // limpo na hora quando `busca` fica vazia). O filtro de RH Connect continua
+  // usando `busca` direto, sem atraso.
+  const [debouncedBusca, setDebouncedBusca] = useState("");
   const [selectedCacholaArea, setSelectedCacholaArea] = useState("Todos");
   const [selectedOrangoCategory, setSelectedOrangoCategory] = useState("");
   const [orangoCategories, setOrangoCategories] = useState<ExternalResourceCategory[]>([]);
@@ -5183,7 +5187,18 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
   const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
 
-  // Primeira página: dispara sempre que a fonte ou a categoria Orango mudam.
+  useEffect(() => {
+    const term = busca.trim();
+    if (term === "") {
+      setDebouncedBusca("");
+      return;
+    }
+    const timer = window.setTimeout(() => setDebouncedBusca(term), 300);
+    return () => window.clearTimeout(timer);
+  }, [busca]);
+
+  // Primeira página: dispara sempre que a fonte, a categoria Orango ou o termo
+  // de busca (já com debounce) mudam.
   // Sempre busca com offset 0 e SUBSTITUI (nunca acumula) os recursos atuais.
   useEffect(() => {
     const requestId = ++externalResourcesRequestIdRef.current;
@@ -5203,6 +5218,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
       // sentido para ORANGO; "Todas as categorias" (string vazia) omite o
       // parâmetro e preserva o comportamento multi-fonte já existente.
       category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
+      search: debouncedBusca || undefined,
     })
       .then(({ resources, pagination }) => {
         if (externalResourcesRequestIdRef.current !== requestId) return;
@@ -5219,7 +5235,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
           setLoadingExternalResources(false);
         }
       });
-  }, [selectedExternalSource, selectedOrangoCategory]);
+  }, [selectedExternalSource, selectedOrangoCategory, debouncedBusca]);
 
   // Lista completa de categorias Orango, carregada do endpoint dedicado
   // (`/external-resources/categories`) — nunca derivada de `externalResources`,
@@ -5257,7 +5273,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
   const handleSelectExternalSource = (source: ExternalResourceSource) => {
     setSelectedExternalSource(source);
-    setExternalSearch("");
     setSelectedCacholaArea("Todos");
     setSelectedOrangoCategory("");
     setShowOrangoCategories(false);
@@ -5280,6 +5295,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
       limit: EXTERNAL_PAGE_SIZE,
       offset,
       category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
+      search: debouncedBusca || undefined,
     })
       .then(({ resources, pagination }) => {
         if (externalResourcesRequestIdRef.current !== requestId) return;
@@ -5325,23 +5341,19 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   });
   const filtradoOrdenado = abaFiltro === "recentes" ? sortMaterialsByLastAccess(filtrado) : filtrado;
 
-  const recomendados = materiais.filter(m => m.recommended).slice(0, 3);
+  const recomendados = materiais.filter(m => m.recommended).slice(0, 2);
   const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
+  const emAndamento = sortMaterialsByLastAccess(materiais).filter(m => m.status === "IN_PROGRESS");
   const cacholaAreas = externalResources.reduce<string[]>((areas, resource) => {
     const area = resource.area?.trim();
     return area && !areas.includes(area) ? [...areas, area] : areas;
   }, []);
-  const normalizedExternalSearch = externalSearch.trim().toLowerCase();
+  // A busca textual agora é feita no backend (parâmetro `search`); aqui resta
+  // apenas o filtro de área da Cachola, que continua no cliente.
   const filteredExternalResources = externalResources
-    .filter((resource) => {
-      if (!normalizedExternalSearch) return true;
-
-      return [resource.title, resource.area, resource.resourceType]
-        .some((value) => value?.toLowerCase().includes(normalizedExternalSearch));
-    })
     .filter((resource) => selectedCacholaArea === "Todos" || resource.area === selectedCacholaArea);
   // A paginação agora é real (server-side): o que foi carregado até aqui é
-  // exibido por inteiro (filtrado só por busca/área, ambas client-side); não
+  // exibido por inteiro (filtrado só por área, no cliente); não
   // há mais um recorte local adicional por "visibleCount". "Tem mais" passa
   // a refletir exclusivamente `pagination.hasMore` do backend.
   const visibleExternalResources = filteredExternalResources;
@@ -5367,16 +5379,31 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
         {/* Destaques: Recomendados */}
         {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
-          <section>
+          <section className="@container">
             <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
               <Star className="w-4 h-4 text-amber-500" /> Recomendados para você
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">
               {recomendados.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
+                <EditorialMaterialCard
+                  key={m.id}
+                  data={rhConnectMaterialToEditorialCard(m, {
+                    onOpen: () => handleOpenMaterial(m),
+                    onFavorite: () => toggleFavorito(m.id),
+                  })}
+                />
               ))}
             </div>
           </section>
+        )}
+
+        {/* Continue aprendendo: só renderiza se houver material IN_PROGRESS */}
+        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
+          <ContinueLearningSection
+            materials={emAndamento}
+            onOpen={handleOpenMaterial}
+            onFavorite={(m) => toggleFavorito(m.id)}
+          />
         )}
 
         {/* Destaques: Recentes */}
@@ -5400,7 +5427,7 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
         )}
 
         {/* Fonte complementar: conteúdos externos (Cachola / Orango) */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingExternalResources || externalResources.length > 0) && (
+        {abaFiltro === "todos" && categoria === "Todas as categorias" && (loadingExternalResources || externalResources.length > 0 || debouncedBusca !== "") && (
           <section>
             <div className="mb-4">
               <h2 className="font-bold text-foreground mb-1 flex items-center gap-2">
@@ -5427,19 +5454,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
               </Card>
             ) : (
               <div className="space-y-4">
-                <SearchInput
-                  value={externalSearch}
-                  onChange={(event) => {
-                    // Busca textual permanece 100% client-side sobre o que já
-                    // foi carregado — não dispara nenhuma chamada ao backend.
-                    setExternalSearch(event.target.value);
-                  }}
-                  onClear={() => {
-                    setExternalSearch("");
-                  }}
-                  placeholder={`Buscar conteúdos da ${EXTERNAL_SOURCE_SELECTOR_LABEL[selectedExternalSource]}...`}
-                  aria-label={`Buscar conteúdos da ${EXTERNAL_SOURCE_SELECTOR_LABEL[selectedExternalSource]}`}
-                />
                 {selectedExternalSource === "CACHOLA" && (
                   <div className="flex flex-wrap gap-2">
                     {["Todos", ...cacholaAreas].map((area) => (

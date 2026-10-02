@@ -42,6 +42,7 @@ type ListExternalResourcesParams = {
   area?: string;
   type?: string;
   category?: string;
+  search?: string;
 };
 
 type ListExternalResourceCategoriesParams = {
@@ -86,6 +87,12 @@ function buildExternalResourcesUrl(params: ListExternalResourcesParams) {
 
   if (params.category) {
     url.searchParams.set("category", params.category);
+  }
+
+  // Busca textual no backend (título, área e tipo). Vazio/só espaços não é enviado.
+  const search = params.search?.trim();
+  if (search) {
+    url.searchParams.set("search", search);
   }
 
   // `offset` é enviado sempre que definido numericamente — inclusive 0 — já

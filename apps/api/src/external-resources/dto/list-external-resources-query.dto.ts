@@ -35,6 +35,16 @@ export class ListExternalResourcesQueryDto {
   @MaxLength(150)
   category?: string;
 
+  /**
+   * Busca textual opcional (case-insensitive, sem normalização de acentos)
+   * em título, área e tipo do recurso. Opcional; ausente ou só com espaços
+   * não aplica filtro. Limite curto para evitar consultas abusivas.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

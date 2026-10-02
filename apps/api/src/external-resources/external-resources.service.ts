@@ -35,6 +35,19 @@ export class ExternalResourcesService {
       where.resource_type = query.type;
     }
 
+    // Busca textual: case-insensitive em título, área e tipo. Entra no mesmo
+    // `where` usado pelo `findMany` e pelo `count`, então `total` e `hasMore`
+    // continuam coerentes com o filtro. Combina (AND) com source/area/type/
+    // category, pois `OR` aqui só agrupa as colunas pesquisadas.
+    const search = query.search?.trim();
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { area: { contains: search, mode: 'insensitive' } },
+        { resource_type: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
     // Filtro por categoria (slug): o recurso entra no resultado se possuir
     // ao menos um vínculo cuja categoria tenha esse slug. A categoria é
     // restrita à mesma `source` quando ela é conhecida (informada em
