@@ -181,6 +181,8 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 // Conjunto oficial de avaliadores mock do Admin: Carlos, Eduardo e Camila
 // (ativos) — Patricia aparece em "Convites pendentes". As métricas são
 // zeradas: no futuro serão derivadas das atribuições e avaliações reais.
+// Média só é exibida quando há avaliação concluída (done > 0); caso contrário
+// aparece "—", para não parecer uma nota real igual a zero.
 const EVALUATORS = [
   { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
   { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
@@ -870,7 +872,7 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
                   <p className="text-[10px] text-muted-foreground">Concluídas</p>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.avg}</p>
+                  <p className="text-sm font-bold text-foreground">{ev.done > 0 ? ev.avg : "—"}</p>
                   <p className="text-[10px] text-muted-foreground">Média</p>
                 </div>
               </div>
@@ -1068,7 +1070,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
                         <p className="font-semibold text-foreground">{ev.name}</p>
                         <p className="text-xs text-muted-foreground">{ev.area} · {ev.pending} pendentes</p>
                       </div>
-                      <Badge variant="info">Média {ev.avg}</Badge>
+                      <Badge variant="info">Média {ev.done > 0 ? ev.avg : "—"}</Badge>
                     </div>
                   </button>
                 ))}
