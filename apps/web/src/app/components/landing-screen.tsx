@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import heroEntrevista from "../../assets/landing/hero-entrevista-3.webp";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import { LandingFooter } from "./landing-footer";
+import { BackToTop } from "./ui/back-to-top";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
@@ -509,57 +511,8 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Footer ── */}
-      <footer id="contato" className="px-4 sm:px-8 py-10 sm:py-12 bg-[#021025]">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8">
-            <div>
-              <button
-                type="button"
-                onClick={reloadHome}
-                className="mb-2 cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#021025]"
-                aria-label="Ir para a página inicial"
-              >
-                <RHConnectLogo variant="inverse" className="h-7 w-auto" />
-              </button>
-              <p className="max-w-xs text-[13px] font-normal leading-relaxed text-slate-500">
-                Plataforma de preparação para entrevistas.
-                <br />
-                Desenvolvida por alunos do SENAC Sobradinho.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-x-6 gap-y-2 sm:gap-y-3">
-              {[
-                { label: "Como funciona", href: "#como-funciona" },
-                { label: "Benefícios", href: "#beneficios" },
-                { label: "Sobre o projeto", href: "#sobre" },
-                { label: "Termos de uso", screen: "terms" },
-                { label: "Privacidade", screen: "privacy" },
-                { label: "Contato", href: "#contato" },
-              ].map(link => (
-                "screen" in link ? (
-                  <button
-                    key={link.label}
-                    type="button"
-                    onClick={() => onNavigate(link.screen)}
-                    className="text-left text-sm font-normal leading-5 text-slate-400 transition-colors duration-150 hover:text-white"
-                  >
-                    {link.label}
-                  </button>
-                ) : (
-                  <a key={link.label} href={link.href} className="text-sm font-normal leading-5 text-slate-400 transition-colors duration-150 hover:text-white">
-                    {link.label}
-                  </a>
-                )
-              ))}
-            </div>
-          </div>
-          <div className="border-t border-slate-800 mt-8 pt-6">
-            <p className="text-center text-xs font-normal leading-5 text-slate-600">
-              © 2026 RH Connect · Iniciativa Educacional SENAC Sobradinho · Todos os direitos reservados
-            </p>
-          </div>
-        </div>
-      </footer>
+      <LandingFooter onNavigate={onNavigate} />
+      <BackToTop />
     </div>
   );
 }
