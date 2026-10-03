@@ -3,12 +3,14 @@
 import { useState, useEffect, useContext } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
-import { DEFAULT_CANDIDATE } from "../mocks/interviews";
+import type { MockAccountStatus } from "../services/auth-service";
+import type { CandidateProfile } from "../domain/candidate-profile";
 import {
-  getMockCandidateAccounts,
-  type MockAccountStatus,
-} from "../services/auth-service";
-import { getCandidateProfile } from "../services/candidate-profile-service";
+  getAdminCandidate,
+  listAdminCandidates,
+  type AdminCandidate,
+  type AdminCandidatesList,
+} from "../services/admin-candidates-service";
 import {
   assignInterview,
   getAdminVisibleInterviews,
@@ -43,6 +45,8 @@ import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
 import { Alert } from "./ui/alert";
 import { FilterChip } from "./ui/filter-chip";
+import { EmptyState } from "./ui/empty-state";
+import { Spinner } from "./ui/spinner";
 import {
   PROFESSIONAL_AREAS,
   PROFESSIONAL_AREA_OPTIONS,
@@ -174,37 +178,26 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 
 // ─── Shared mock data ─────────────────────────────────────────────────────────
 
-const CANDIDATES = [
-  { id: "#C-001", name: "Fernanda Oliveira", email: "fernanda.o@gmail.com", job: "Desenvolvedor Front-end", date: "11/08/2026", status: "Aguardando" as const, score: null },
-  { id: "#C-002", name: "Rafael Mendes",     email: "rafael.m@gmail.com",   job: "Desenvolvedor Full Stack",       date: "11/08/2026", status: "Em avaliação" as const, score: null },
-  { id: "#C-003", name: "Isabela Costa",     email: "isabela.c@gmail.com",  job: "Analista de Recrutamento e Seleção", date: "10/08/2026", status: "Concluído" as const, score: 8.4 },
-  { id: "#C-004", name: "Paulo Carvalho",    email: "paulo.c@gmail.com",    job: "Designer UX/UI",       date: "10/08/2026", status: "Concluído" as const, score: 7.1 },
-  { id: "#C-005", name: "Mariana Souza",     email: "mariana.s@gmail.com",  job: "Analista de RH",       date: "09/08/2026", status: "Concluído" as const, score: 9.0 },
-  { id: "#C-006", name: "Lucas Ferreira",    email: "lucas.f@gmail.com",    job: "Analista de TI",       date: "09/08/2026", status: "Concluído" as const, score: 6.8 },
-];
-
+// Conjunto oficial de avaliadores mock do Admin: Carlos, Eduardo e Camila
+// (ativos) — Patricia aparece em "Convites pendentes". As métricas são
+// zeradas: no futuro serão derivadas das atribuições e avaliações reais.
 const EVALUATORS = [
-  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 8, done: 47, avg: 7.8, status: "Ativo" as const },
-  { id: "evaluator-beatriz-lima", name: "Beatriz Lima",   email: "beatriz.lima@gmail.com",    area: "Tecnologia da Informação · Desenvolvimento Full Stack", pending: 3, done: 31, avg: 8.1, status: "Ativo" as const },
-  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 22, avg: 7.5, status: "Férias" as const },
-  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 5, done: 15, avg: 8.4, status: "Ativo" as const },
-];
-
-const INTERVIEWS = [
-  { id: "#E-0041", candidate: "Fernanda Oliveira", job: "Desenvolvedor Front-end", submittedAt: "2026-08-11T09:18:00-03:00", status: "Aguardando" as const, evaluator: "—",              score: null },
-  { id: "#E-0040", candidate: "Rafael Mendes",     job: "Desenvolvedor Full Stack",        submittedAt: "2026-08-11T14:05:00-03:00", status: "Em avaliação" as const, evaluator: "Carlos A.",     score: null },
-  { id: "#E-0039", candidate: "Isabela Costa",     job: "Analista de Recrutamento e Seleção", submittedAt: "2026-08-10T10:40:00-03:00", status: "Concluído" as const, evaluator: "Beatriz L.",     score: 8.4 },
-  { id: "#E-0038", candidate: "Paulo Carvalho",    job: "Designer UX/UI",        submittedAt: "2026-08-10T15:25:00-03:00", status: "Concluído" as const, evaluator: "Carlos A.",     score: 7.1 },
-  { id: "#E-0037", candidate: "Mariana Souza",     job: "Analista de RH",       submittedAt: "2026-08-09T11:10:00-03:00", status: "Concluído" as const, evaluator: "Camila D.",     score: 9.0 },
+  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
+  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
+  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
 ];
 
 type AdminCandidateRow = {
   id: string;
+  displayId: string;
   name: string;
   email: string;
   accountStatus: MockAccountStatus;
   onboardingLabel: string;
   createdAt?: string;
+  onboardingCompletedAt?: string;
+  professionalTitle?: string;
+  location?: string;
 };
 
 type AdminInterviewRow = {
@@ -218,7 +211,6 @@ type AdminInterviewRow = {
   evaluator: string;
   score: number | null;
   realId?: string;
-  legacyInterviewId?: string;
 };
 
 function formatAdminInterviewDateTime(timestamp?: string) {
@@ -237,32 +229,109 @@ function createAdminInterviewDisplayId(index: number) {
   return `#E-${String(42 + safeIndex).padStart(4, "0")}`;
 }
 
-function createAdminCandidateRows(): AdminCandidateRow[] {
-  const candidatesByKey = new Map<string, AdminCandidateRow>();
+// Candidatos do Admin vêm exclusivamente da API (contas reais com role
+// CANDIDATE em `app_user`). Não há fallback fictício: sem dados, as telas
+// mostram carregando, erro ou o estado vazio real.
+function toAdminCandidateRow(candidate: AdminCandidate): AdminCandidateRow {
+  const city = candidate.profile?.city?.trim();
+  const state = candidate.profile?.state?.trim();
 
-  CANDIDATES.forEach((candidate) => {
-    candidatesByKey.set(candidate.id, {
-      id: candidate.id,
-      name: candidate.name,
-      email: candidate.email,
-      accountStatus: "ACTIVE",
-      onboardingLabel: "—",
+  return {
+    id: candidate.id,
+    displayId: `#C-${candidate.id.padStart(3, "0")}`,
+    name: candidate.name,
+    email: candidate.email,
+    accountStatus: candidate.accountStatus,
+    onboardingLabel: candidate.onboardingCompleted ? "Concluído" : "Pendente",
+    createdAt: candidate.createdAt,
+    onboardingCompletedAt: candidate.onboardingCompletedAt ?? undefined,
+    professionalTitle: candidate.profile?.professionalTitle?.trim() || undefined,
+    location: [city, state].filter(Boolean).join(" / ") || undefined,
+  };
+}
+
+type AdminRemoteState<T> =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "not_found" }
+  | { status: "success"; data: T };
+
+function useAdminCandidatesList() {
+  const [state, setState] = useState<AdminRemoteState<AdminCandidatesList>>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+
+    listAdminCandidates().then((result) => {
+      if (cancelled) return;
+      setState(
+        result.ok
+          ? { status: "success", data: result.data }
+          : { status: "error", message: result.message },
+      );
     });
-  });
 
-  getMockCandidateAccounts().forEach((candidate) => {
-    const candidateId = candidate.id === "candidate-demo" ? DEFAULT_CANDIDATE.id : candidate.id;
-    candidatesByKey.set(candidateId, {
-      id: candidateId,
-      name: candidate.name,
-      email: candidate.email,
-      accountStatus: candidate.accountStatus,
-      onboardingLabel: candidate.onboardingCompleted ? "Concluído" : "Pendente",
-      createdAt: candidate.createdAt,
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  return { state, reload: () => setAttempt((value) => value + 1) };
+}
+
+function useAdminCandidateDetail(candidateId: string | undefined) {
+  const [state, setState] = useState<AdminRemoteState<AdminCandidate>>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!candidateId) {
+      setState({ status: "not_found" });
+      return;
+    }
+
+    setState({ status: "loading" });
+
+    getAdminCandidate(candidateId).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setState({ status: "success", data: result.data });
+      } else if (result.reason === "not_found") {
+        setState({ status: "not_found" });
+      } else {
+        setState({ status: "error", message: result.message });
+      }
     });
-  });
 
-  return Array.from(candidatesByKey.values());
+    return () => {
+      cancelled = true;
+    };
+  }, [candidateId, attempt]);
+
+  return { state, reload: () => setAttempt((value) => value + 1) };
+}
+
+// O perfil profissional completo (área, subárea, formações, cursos,
+// experiências e habilidades) ainda não existe no backend — hoje fica só no
+// localStorage do próprio candidato. O Admin NÃO deve ler o localStorage do
+// seu navegador como se fosse o perfil do candidato; por isso retorna `null`
+// até a migração desse módulo.
+function getAdminCandidateProfile(): CandidateProfile | null {
+  return null;
+}
+
+function AdminLoadingCard({ label }: { label: string }) {
+  return (
+    <Card className="p-10 flex items-center justify-center gap-3 text-sm text-muted-foreground">
+      <span role="status" aria-live="polite" className="flex items-center gap-3">
+        <Spinner size="md" />
+        {label}
+      </span>
+    </Card>
+  );
 }
 
 function statusVariantFromAdminStatus(status: string): "default" | "success" | "warning" | "error" | "info" | "purple" {
@@ -290,17 +359,7 @@ function createAdminInterviewRows(): AdminInterviewRow[] {
     };
   });
 
-  return [
-    ...realRows,
-    ...INTERVIEWS.map((interview) => ({
-      ...interview,
-      date: formatAdminInterviewDateTime(interview.submittedAt),
-      candidateId: CANDIDATES.find((candidate) => candidate.name === interview.candidate)?.id,
-      statusCode: undefined,
-      realId: undefined,
-      legacyInterviewId: interview.id,
-    })),
-  ];
+  return realRows;
 }
 
 const QUESTIONS_DATA = [
@@ -460,7 +519,8 @@ export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
     { m: "Jun", v: 38 }, { m: "Jul", v: 51 }, { m: "Ago", v: 34 },
   ];
   const maxV = Math.max(...monthData.map(d => d.v));
-  const candidateRows = createAdminCandidateRows();
+  const candidatesList = useAdminCandidatesList();
+  const candidateCount = candidatesList.state.status === "success" ? candidatesList.state.data.total : null;
   const interviewRows = createAdminInterviewRows();
   const pendingInterviews = getPendingAdminInterviews();
   const averageScores = interviewRows.map((item) => item.score).filter((score): score is number => score !== null);
@@ -474,20 +534,13 @@ export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
     action: interview.status === "PENDING_EVALUATION" ? "Nova entrevista recebida" : statusLabelFromInterview(interview.status),
     detail: `${createAdminInterviewDisplayId(index)} · ${interview.candidateName} · ${interview.context.title}`,
   }));
-  const activity = recentRealActivity.length > 0
-    ? recentRealActivity
-    : [
-        { time: "11:42", user: "Carlos A.", action: "Avaliação enviada", detail: "#E-0040 · Score 8.2" },
-        { time: "10:15", user: "Sistema",   action: "Nova entrevista recebida", detail: "#E-0041 · Fernanda Oliveira" },
-        { time: "09:30", user: "Ana M.",    action: "Avaliador adicionado",  detail: "Beatriz Lima ativada" },
-        { time: "08:55", user: "Beatriz L.",action: "Avaliação enviada",   detail: "#E-0039 · Score 8.4" },
-      ];
+  const activity = recentRealActivity;
 
   return (
     <AdminLayout current="admin-dashboard" onNavigate={onNavigate} title="Dashboard Administrativo" subtitle="Visão geral do sistema RH Connect · SENAC-DF">
       <div className="w-full space-y-5">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard value={candidateRows.length}  label="Candidatos cadastrados" icon={Users}     color="bg-blue-50 text-blue-600" />
+          <StatCard value={candidateCount ?? "—"}  label="Candidatos cadastrados" icon={Users}     color="bg-blue-50 text-blue-600" />
           <StatCard value="12"   label="Avaliadores ativos"     icon={UserCheck} color="bg-teal-50 text-teal-600" />
           <StatCard value={pendingInterviews.length}   label="Avaliações pendentes"   icon={Clock}     color="bg-amber-50 text-amber-600" />
           <StatCard value={averageScore !== null ? formatScore(averageScore) : "—"}  label="Score médio geral"      icon={Star}      color="bg-green-50 text-green-600" />
@@ -503,7 +556,7 @@ export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
             <div className="space-y-2">
               {[
                 { label: "Atribuir avaliações pendentes", screen: "admin-assign", count: pendingInterviews.length },
-                { label: "Gerenciar candidatos",          screen: "admin-candidates", count: candidateRows.length },
+                { label: "Gerenciar candidatos",          screen: "admin-candidates", count: candidateCount },
                 { label: "Adicionar pergunta",            screen: "admin-question-form", count: null },
                 { label: "Ver logs de auditoria",         screen: "admin-audit", count: null },
               ].map(a => (
@@ -524,6 +577,9 @@ export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-4 flex items-center gap-2"><History className="w-4 h-4" /> Atividade Recente</h3>
           <div className="space-y-3">
+            {activity.length === 0 && (
+              <p className="text-sm text-muted-foreground">Nenhuma atividade recente.</p>
+            )}
             {activity.map((a, i) => (
               <div key={i} className="flex items-start gap-3">
                 <span className="text-xs text-muted-foreground w-12 shrink-0 pt-0.5">{a.time}</span>
@@ -547,7 +603,8 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const candidateRows = createAdminCandidateRows();
+  const { state: candidatesState, reload: reloadCandidates } = useAdminCandidatesList();
+  const candidateRows = candidatesState.status === "success" ? candidatesState.data.candidates.map(toAdminCandidateRow) : [];
   const filtered = candidateRows.filter(c =>
     (status === "all" || c.accountStatus === status) &&
     (c.name.toLowerCase().includes(search.toLowerCase()) || c.email.toLowerCase().includes(search.toLowerCase()))
@@ -555,12 +612,14 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
 
   const statusVariant = {
     ACTIVE: "success",
+    PENDING_VERIFICATION: "info",
     INVITED: "warning",
     BLOCKED: "error",
     INACTIVE: "default",
   } satisfies Record<MockAccountStatus, "default" | "success" | "warning" | "error" | "info" | "purple">;
   const statusLabel = {
     ACTIVE: "Ativa",
+    PENDING_VERIFICATION: "Aguardando verificação",
     INVITED: "Convidada",
     BLOCKED: "Bloqueada",
     INACTIVE: "Inativa",
@@ -569,7 +628,11 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
       title="Gestão de Candidatos"
-      subtitle={`${candidateRows.length} candidatos cadastrados`}
+      subtitle={
+        candidatesState.status === "success"
+          ? `${candidatesState.data.total} ${candidatesState.data.total === 1 ? "candidato cadastrado" : "candidatos cadastrados"}`
+          : "Candidatos cadastrados"
+      }
       actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
       <div className="w-full space-y-4">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -581,7 +644,7 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
             className="bg-white"
           />
           <div className="flex gap-2 flex-wrap">
-            {["all","ACTIVE","INVITED","BLOCKED","INACTIVE"].map(s => (
+            {["all","ACTIVE","PENDING_VERIFICATION","INVITED","BLOCKED","INACTIVE"].map(s => (
               <FilterChip
                 key={s}
                 onClick={() => setStatus(s)}
@@ -594,44 +657,65 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
           </div>
         </div>
 
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">E-mail</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status da conta</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Onboarding / Perfil</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden lg:table-cell">Cadastro</th>
-                  <th className="py-3 px-5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.map(c => (
-                  <tr key={c.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{c.id}</td>
-                    <td className="py-3.5 px-4">
-                      <p className="font-semibold text-foreground">{c.name}</p>
-                      <p className="text-xs text-muted-foreground">{c.email}</p>
-                    </td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{c.email}</td>
-                    <td className="py-3.5 px-4"><Badge variant={statusVariant[c.accountStatus]}>{statusLabel[c.accountStatus]}</Badge></td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{c.onboardingLabel}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{formatAdminDate(c.createdAt)}</td>
-                    <td className="py-3.5 px-5">
-                      <div className="flex gap-1.5">
-                        <button onClick={() => routerNavigate(`/admin/candidates/${encodeURIComponent(c.id)}`)} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" /></button>
-                        <button className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                      </div>
-                    </td>
+        {candidatesState.status === "loading" ? (
+          <AdminLoadingCard label="Carregando candidatos..." />
+        ) : candidatesState.status === "error" ? (
+          <EmptyState
+            icon={AlertCircle}
+            title="Não foi possível carregar os candidatos"
+            description={candidatesState.message}
+            action={<Btn variant="outline" onClick={reloadCandidates}>Tentar novamente</Btn>}
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title={candidateRows.length === 0 ? "Nenhum candidato cadastrado" : "Nenhum candidato encontrado"}
+            description={
+              candidateRows.length === 0
+                ? "Os candidatos aparecerão aqui assim que criarem uma conta no RH Connect."
+                : "Ajuste a busca ou o filtro de status para ver outros candidatos."
+            }
+          />
+        ) : (
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">E-mail</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status da conta</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Onboarding / Perfil</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden lg:table-cell">Cadastro</th>
+                    <th className="py-3 px-5" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filtered.map(c => (
+                    <tr key={c.id} className="hover:bg-muted/30 transition-colors">
+                      <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{c.displayId}</td>
+                      <td className="py-3.5 px-4">
+                        <p className="font-semibold text-foreground">{c.name}</p>
+                        <p className="text-xs text-muted-foreground">{c.email}</p>
+                      </td>
+                      <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{c.email}</td>
+                      <td className="py-3.5 px-4"><Badge variant={statusVariant[c.accountStatus]}>{statusLabel[c.accountStatus]}</Badge></td>
+                      <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{c.onboardingLabel}</td>
+                      <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{formatAdminDate(c.createdAt)}</td>
+                      <td className="py-3.5 px-5">
+                        <div className="flex gap-1.5">
+                          <button onClick={() => routerNavigate(`/admin/candidates/${encodeURIComponent(c.id)}`)} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"><Eye className="w-3.5 h-3.5" /></button>
+                          <button className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
       </div>
     </AdminLayout>
   );
@@ -743,6 +827,14 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
                   </div>
                   <p className="font-bold text-foreground text-sm">{ev.name}</p>
                   <p className="text-xs text-muted-foreground mt-1">{ev.email}</p>
+                  <div className="grid grid-cols-3 gap-2 text-center mt-3">
+                    {["Pendentes", "Concluídas", "Média"].map(label => (
+                      <div key={label} className="bg-muted/50 rounded-lg p-2">
+                        <p className="text-sm font-bold text-foreground">—</p>
+                        <p className="text-[10px] text-muted-foreground">{label}</p>
+                      </div>
+                    ))}
+                  </div>
                   <p className="text-[11px] text-muted-foreground mt-3">Senha ainda não definida</p>
                 </div>
               ))}
@@ -822,58 +914,65 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
           className="bg-white"
         />
 
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden lg:table-cell">Vaga</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data/hora</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Avaliador</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
-                  <th className="py-3 px-5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.map(i => (
-                  <tr key={i.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{i.id}</td>
-                    <td className="py-3.5 px-4 font-semibold text-foreground">{i.candidate}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{i.job}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{i.date}</td>
-                    <td className="py-3.5 px-4"><Badge variant={statusVariantFromAdminStatus(i.status)}>{i.status}</Badge></td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{i.evaluator}</td>
-                    <td className="py-3.5 px-4">
-                      {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{formatScore(i.score)}</Badge> : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="py-3.5 px-5">
-                      <button
-                        onClick={() => {
-                          if (i.realId && i.candidateId) {
-                            routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}?interviewId=${encodeURIComponent(i.realId)}`);
-                            return;
-                          }
-                          if (i.candidateId) {
-                            const legacyQuery = i.legacyInterviewId ? `?legacyInterviewId=${encodeURIComponent(i.legacyInterviewId)}` : "";
-                            routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}${legacyQuery}`);
-                            return;
-                          }
-                          onNavigate("admin-candidate-detail");
-                        }}
-                        className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+        {filtered.length === 0 ? (
+          <EmptyState
+            icon={MessageSquare}
+            title="Nenhuma entrevista registrada"
+            description="As entrevistas enviadas pelos candidatos aparecerão aqui."
+          />
+        ) : (
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden lg:table-cell">Vaga</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data/hora</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Avaliador</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
+                    <th className="py-3 px-5" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filtered.map(i => (
+                    <tr key={i.id} className="hover:bg-muted/30 transition-colors">
+                      <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{i.id}</td>
+                      <td className="py-3.5 px-4 font-semibold text-foreground">{i.candidate}</td>
+                      <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{i.job}</td>
+                      <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{i.date}</td>
+                      <td className="py-3.5 px-4"><Badge variant={statusVariantFromAdminStatus(i.status)}>{i.status}</Badge></td>
+                      <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{i.evaluator}</td>
+                      <td className="py-3.5 px-4">
+                        {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{formatScore(i.score)}</Badge> : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="py-3.5 px-5">
+                        <button
+                          onClick={() => {
+                            if (i.realId && i.candidateId) {
+                              routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}?interviewId=${encodeURIComponent(i.realId)}`);
+                              return;
+                            }
+                            if (i.candidateId) {
+                              routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}`);
+                              return;
+                            }
+                            onNavigate("admin-candidate-detail");
+                          }}
+                          className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
       </div>
     </AdminLayout>
   );
@@ -883,7 +982,6 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const [assigned, setAssigned] = useState<Record<string, string>>({});
   const [, refresh] = useState(0);
 
   const realPending = getPendingAdminInterviews().map((interview) => ({
@@ -893,23 +991,14 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
     date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
     realId: interview.id,
   }));
-  const pending = [
-    ...realPending,
-    ...INTERVIEWS.filter(i => i.status === "Aguardando").map((interview) => ({
-      ...interview,
-      date: formatAdminInterviewDateTime(interview.submittedAt),
-      realId: undefined,
-    })),
-  ];
+  const pending = realPending;
 
-  const handleAssign = (evaluatorId: string, evaluatorName: string) => {
+  const handleAssign = (evaluatorId: string) => {
     if (!selected) return;
     const selectedInterview = pending.find((item) => item.id === selected);
     if (selectedInterview?.realId) {
       assignInterview(selectedInterview.realId, evaluatorId);
       refresh((value) => value + 1);
-    } else {
-      setAssigned(a => ({ ...a, [selected]: evaluatorName }));
     }
     setSelected(null);
   };
@@ -929,6 +1018,13 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div>
             <h3 className="font-bold text-foreground mb-3">Entrevistas Pendentes</h3>
             <div className="space-y-2.5">
+              {pending.length === 0 && (
+                <EmptyState
+                  icon={CheckCircle}
+                  title="Nenhuma entrevista pendente"
+                  description="Quando um candidato enviar uma entrevista, ela aparecerá aqui para atribuição."
+                />
+              )}
               {pending.map(i => (
                 <button key={i.id} type="button" onClick={() => setSelected(i.id === selected ? null : i.id)} aria-pressed={selected === i.id}
                   className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i.id ? "border-primary bg-blue-50" : "border-border bg-white hover:border-primary/30"}`}>
@@ -938,7 +1034,6 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
                       <p className="text-sm text-muted-foreground">{i.job} · {i.date}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      {assigned[i.id] && <Badge variant="success">Atribuído</Badge>}
                       {selected === i.id ? <Check className="w-4 h-4 text-primary" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                     </div>
                   </div>
@@ -957,7 +1052,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
             ) : (
               <div className="space-y-2.5">
                 {EVALUATORS.filter(e => e.status === "Ativo").map(ev => (
-                  <button key={ev.id} onClick={() => handleAssign(ev.id, ev.name)}
+                  <button key={ev.id} onClick={() => handleAssign(ev.id)}
                     className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
@@ -1265,11 +1360,9 @@ export function AdminCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Consentimentos e Privacidade ────────────────────────────────────
 
 export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const requests = [
-    { id: "#C-032", candidate: "Fernanda Oliveira", type: "Exclusão de dados",            date: "11/08/2026", status: "Pendente" as const },
-    { id: "#C-018", candidate: "Paulo Carvalho",    type: "Cópia dos dados",              date: "09/08/2026", status: "Em análise" as const },
-    { id: "#C-009", candidate: "Ana Rodrigues",     type: "Revogação do consentimento de IA", date: "06/08/2026", status: "Pendente" as const },
-  ];
+  // Sem solicitações mockadas: as solicitações de privacidade devem vir de
+  // candidatos reais (ainda sem backend). Até lá, a lista é vazia.
+  const requests: { id: string; candidate: string; type: string; date: string; status: "Pendente" | "Em análise" }[] = [];
 
   return (
     <AdminLayout current="admin-consent" onNavigate={onNavigate}
@@ -1278,13 +1371,16 @@ export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
       <div className="w-full space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard value="124" label="Consentimentos ativos"    icon={CheckCircle} color="bg-green-50 text-green-600" />
-          <StatCard value="3"   label="Solicitações pendentes"   icon={AlertCircle} color="bg-red-50 text-red-600" />
+          <StatCard value={requests.length} label="Solicitações pendentes"   icon={AlertCircle} color="bg-red-50 text-red-600" />
           <StatCard value="18"  label="Autorizaram uso em IA"    icon={Shield}      color="bg-purple-50 text-purple-600" />
         </div>
 
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-4">Solicitações Pendentes</h3>
           <div className="space-y-3">
+            {requests.length === 0 && (
+              <p className="text-sm text-muted-foreground">Nenhuma solicitação de privacidade pendente.</p>
+            )}
             {requests.map(r => (
               <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 bg-muted/40 rounded-xl">
                 <div className="flex-1 min-w-0">
@@ -1334,8 +1430,6 @@ export function AdminAuditScreen({ onNavigate }: { onNavigate: NavFn }) {
   const logs = [
     { time: "11/08 11:42", user: "carlos.andrade", action: "EVALUATION_SUBMITTED", detail: "Avaliação #E-0040 enviada · Score: 8.2", ip: "10.0.0.14" },
     { time: "11/08 10:15", user: "sistema",         action: "INTERVIEW_RECEIVED",  detail: "Entrevista #E-0041 recebida do candidato #C-001", ip: "—" },
-    { time: "11/08 09:30", user: "ana.machado",     action: "USER_CREATED",        detail: "Avaliador beatriz.lima ativado no sistema",        ip: "10.0.0.2" },
-    { time: "11/08 08:55", user: "beatriz.lima",    action: "EVALUATION_SUBMITTED",detail: "Avaliação #E-0039 enviada · Score: 8.4",           ip: "10.0.0.21" },
     { time: "10/08 17:20", user: "ana.machado",     action: "CRITERIA_UPDATED",    detail: "Peso do critério Domínio alterado: 20% → 25%",     ip: "10.0.0.2" },
     { time: "10/08 16:45", user: "carlos.andrade",  action: "INTERVIEW_ASSIGNED",  detail: "Entrevista #E-0038 atribuída a carlos.andrade",    ip: "10.0.0.14" },
     { time: "10/08 14:00", user: "sistema",         action: "CONSENT_REQUEST",     detail: "Solicitação de exclusão #C-032 recebida",          ip: "—" },
@@ -1518,9 +1612,8 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
   const { id: candidateIdParam } = useParams();
   const [searchParams] = useSearchParams();
   const interviewIdParam = searchParams.get("interviewId") ?? undefined;
-  const legacyInterviewIdParam = searchParams.get("legacyInterviewId") ?? undefined;
   const adminVisibleInterviews = getAdminVisibleInterviews();
-  const candidateAccount = createAdminCandidateRows().find((item) => item.id === candidateIdParam) ?? null;
+  const candidateDetail = useAdminCandidateDetail(candidateIdParam);
   const relatedInterviews = adminVisibleInterviews.filter((item) => item.candidateId === candidateIdParam);
   const realInterview =
     getInterviewById(interviewIdParam) ??
@@ -1531,42 +1624,46 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
     : -1;
   const assignment = getAssignmentByInterviewId(realInterview?.id);
   const evaluation = getEvaluationByInterviewId(realInterview?.id);
-  const legacyCandidate = CANDIDATES.find((item) => item.id === candidateIdParam) ?? null;
-  const legacyInterview =
-    INTERVIEWS.find((item) => item.id === legacyInterviewIdParam && item.candidate === legacyCandidate?.name) ??
-    null;
   const averageScore = getAverageScore(evaluation?.scores);
 
-  const candidate = realInterview
-    ? {
-        id: realInterview.candidateId,
-        name: realInterview.candidateName,
-        email: realInterview.candidateEmail,
-        job: realInterview.context.title,
-        date: formatAdminInterviewDateTime(realInterview.submittedAt ?? realInterview.createdAt),
-        status: statusLabelFromInterview(realInterview.status),
-        score: averageScore,
-      }
-    : legacyCandidate ?? {
-        id: candidateIdParam ?? "—",
-        name: "Candidato não encontrado",
-        email: "—",
-        job: "Conta de candidato",
-        date: "—",
-        status: "—",
-        score: null,
-      };
-  const isLegacyCandidateDetail = !realInterview && Boolean(legacyInterview);
-  const candidateDisplay = !realInterview && candidateAccount
-    ? {
-        id: candidateAccount.id,
-        name: candidateAccount.name,
-        email: candidateAccount.email,
-        job: "Conta de candidato",
-        status: candidateAccount.onboardingLabel,
-        score: null,
-      }
-    : candidate;
+  if (candidateDetail.state.status !== "success") {
+    const detailState = candidateDetail.state;
+    return (
+      <AdminLayout current="admin-candidates" onNavigate={onNavigate}
+        title="Detalhe do Candidato"
+        subtitle={detailState.status === "loading" ? "Carregando..." : undefined}
+        actions={<Btn variant="outline" size="sm" onClick={() => onNavigate("admin-candidates")}>Voltar</Btn>}>
+        <div className="w-full">
+          {detailState.status === "loading" && <AdminLoadingCard label="Carregando dados do candidato..." />}
+          {detailState.status === "not_found" && (
+            <EmptyState
+              icon={Users}
+              title="Candidato não encontrado"
+              description="Esta conta não existe ou não pertence a um candidato."
+              action={<Btn variant="outline" onClick={() => onNavigate("admin-candidates")}>Voltar à lista</Btn>}
+            />
+          )}
+          {detailState.status === "error" && (
+            <EmptyState
+              icon={AlertCircle}
+              title="Não foi possível carregar o candidato"
+              description={detailState.message}
+              action={<Btn variant="outline" onClick={candidateDetail.reload}>Tentar novamente</Btn>}
+            />
+          )}
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  const candidateAccount = toAdminCandidateRow(candidateDetail.state.data);
+  const candidateDisplay = {
+    id: candidateAccount.id,
+    name: candidateAccount.name,
+    email: candidateAccount.email,
+    job: realInterview ? realInterview.context.title : "Conta de candidato",
+    status: realInterview ? statusLabelFromInterview(realInterview.status) : candidateAccount.onboardingLabel,
+  };
 
   const interview = realInterview
     ? {
@@ -1575,44 +1672,25 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
         evaluator: assignment?.evaluatorName ?? "—",
         score: averageScore,
       }
-    : isLegacyCandidateDetail
-      ? legacyInterview && {
-          ...legacyInterview,
-          date: formatAdminInterviewDateTime(legacyInterview.submittedAt),
-        }
-      : null;
+    : null;
 
   const criteriaScores = evaluation?.scores
     ? Object.entries(evaluation.scores).map(([name, score]) => ({ name, score }))
-    : [
-        { name: "Clareza",      score: 9 },
-        { name: "Coerência",    score: 8 },
-        { name: "Objetividade", score: 8 },
-        { name: "Domínio",      score: 7 },
-        { name: "Organização",  score: 8 },
-        { name: "Aderência",    score: 7 },
-        { name: "Exemplos",     score: 6 },
-      ];
+    : [];
 
-  const timeline = realInterview
-    ? [
-        { date: formatAdminInterviewDateTime(realInterview.createdAt), label: "Entrevista criada", icon: FileText },
-        ...(realInterview.submittedAt ? [{ date: formatAdminInterviewDateTime(realInterview.submittedAt), label: "Entrevista enviada", icon: MessageSquare }] : []),
-        ...(assignment ? [{ date: formatAdminInterviewDateTime(assignment.assignedAt), label: "Avaliador atribuído", icon: Clock }] : []),
-        ...(evaluation?.completedAt ? [{ date: formatAdminInterviewDateTime(evaluation.completedAt), label: "Avaliação concluída", icon: CheckCircle }] : []),
-      ]
-    : candidateAccount?.createdAt
+  const timeline = [
+    ...(candidateAccount.createdAt ? [{ date: formatAdminDate(candidateAccount.createdAt), label: "Cadastro criado", icon: FileText }] : []),
+    ...(candidateAccount.onboardingCompletedAt ? [{ date: formatAdminDate(candidateAccount.onboardingCompletedAt), label: "Onboarding concluído", icon: CheckCircle }] : []),
+    ...(realInterview
       ? [
-          { date: formatAdminDate(candidateAccount.createdAt), label: "Cadastro criado", icon: FileText },
+          { date: formatAdminInterviewDateTime(realInterview.createdAt), label: "Entrevista criada", icon: FileText },
+          ...(realInterview.submittedAt ? [{ date: formatAdminInterviewDateTime(realInterview.submittedAt), label: "Entrevista enviada", icon: MessageSquare }] : []),
+          ...(assignment ? [{ date: formatAdminInterviewDateTime(assignment.assignedAt), label: "Avaliador atribuído", icon: Clock }] : []),
+          ...(evaluation?.completedAt ? [{ date: formatAdminInterviewDateTime(evaluation.completedAt), label: "Avaliação concluída", icon: CheckCircle }] : []),
         ]
-      : isLegacyCandidateDetail
-        ? [
-            { date: formatAdminInterviewDateTime(legacyInterview?.submittedAt), label: "Entrevista enviada", icon: MessageSquare },
-          ]
-        : [];
-  const candidateProfile = candidateIdParam && candidateDisplay.name !== "Candidato não encontrado"
-    ? getCandidateProfile(candidateIdParam)
-    : null;
+      : []),
+  ];
+  const candidateProfile = getAdminCandidateProfile();
   const professionalArea = candidateProfile?.areaId
     ? PROFESSIONAL_AREAS.find((area) => area.id === candidateProfile.areaId)?.name ?? candidateProfile.areaId
     : "";
@@ -1665,7 +1743,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
             <div>
               <h3 className="font-bold text-foreground">Perfil Profissional</h3>
-              <p className="text-xs text-muted-foreground">Dados preenchidos pelo candidato em Meu Perfil.</p>
+              <p className="text-xs text-muted-foreground">Título profissional e localização vêm da conta. Os demais campos ainda não são sincronizados com o servidor.</p>
             </div>
           </div>
 
@@ -1676,6 +1754,8 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
               { label: "Cargo desejado", value: candidateProfile?.desiredRole },
               { label: "Senioridade", value: candidateProfile?.seniority },
               { label: "Tipo de contrato", value: candidateProfile?.contractType },
+              { label: "Título profissional", value: candidateAccount.professionalTitle },
+              { label: "Localização", value: candidateAccount.location },
             ].map((item) => (
               <div key={item.label} className="rounded-xl border border-border bg-muted/30 p-3">
                 <p className="text-xs text-muted-foreground mb-0.5">{item.label}</p>

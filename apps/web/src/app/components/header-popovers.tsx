@@ -34,9 +34,9 @@ export type NotifConfig = {
 // ─── Per-profile configs ──────────────────────────────────────────────────────
 
 export const CANDIDATE_ACCOUNT: AccountConfig = {
-  name: "João Lima",
-  email: "joao.lima@gmail.com",
-  initials: "JL",
+  name: "Candidato",
+  email: "",
+  initials: "RC",
   avatarClass: "bg-gradient-to-br from-blue-500 to-blue-700",
   profileLabel: "Meu perfil",
   profileScreen: "profile",

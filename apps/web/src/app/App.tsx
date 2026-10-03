@@ -87,7 +87,7 @@ import {
   type ExternalLearningResource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
-import { DEFAULT_CANDIDATE, DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
+import { DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
 import {
   completeAiEvaluation,
   getAvailableCandidateReports,
@@ -155,6 +155,11 @@ const ONBOARDING_BY_ROLE: Record<MockUserRole, string> = {
   ADMIN: "/admin/onboarding",
 };
 
+// Identidade neutra, sem dados fictícios: só é usada quando não há candidato
+// autenticado (as telas de candidato ficam atrás de `protect("CANDIDATE", …)`,
+// então na prática nunca é exibida).
+const UNAUTHENTICATED_CANDIDATE_IDENTITY = { id: "", name: "", email: "" };
+
 function getCandidateIdentity(session: MockAuthSession) {
   const user = session.user;
   if (session.authenticated && user?.role === "CANDIDATE") {
@@ -165,7 +170,7 @@ function getCandidateIdentity(session: MockAuthSession) {
     };
   }
 
-  return DEFAULT_CANDIDATE;
+  return UNAUTHENTICATED_CANDIDATE_IDENTITY;
 }
 
 // Ponte de compatibilidade TEMPORÁRIA entre a sessão real (Auth/Prompt 03 —
