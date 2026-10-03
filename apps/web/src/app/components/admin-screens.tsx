@@ -184,7 +184,7 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 const EVALUATORS = [
   { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
   { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Tecnologia da Informação · UX/UI Design", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
+  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Secretariado · Assessoria Executiva", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
 ];
 
 type AdminCandidateRow = {
@@ -1210,14 +1210,19 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [newRoleAreaId, setNewRoleAreaId] = useState<ProfessionalAreaId | "">("information-technology");
   const [newRoleSubareaId, setNewRoleSubareaId] = useState("");
   const newRoleSubareas = newRoleAreaId ? getProfessionalSubareasByArea(newRoleAreaId) : [];
+  // Catálogo ADMINISTRATIVO de cargos (configuração estrutural, ainda não
+  // persistida). Não carrega métricas operacionais: as entrevistas não têm
+  // vínculo com um cargo cadastrado (o título vem da vaga analisada), então
+  // "Entrevistas ativas" não possui fonte real por cargo e exibe 0.
   const roles = [
-    { title: "Desenvolvedor Full Stack", area: "Tecnologia da Informação", subarea: "Desenvolvimento Full Stack", active: 8, status: "Ativo" },
-    { title: "Designer UX/UI",           area: "Tecnologia da Informação", subarea: "UX/UI Design", active: 4, status: "Ativo" },
-    { title: "Analista de RH",           area: "Gestão de RH", subarea: "Gestão de Pessoas", active: 7, status: "Ativo" },
-    { title: "Tech Recruiter",           area: "Gestão de RH", subarea: "Recrutamento e Seleção", active: 5, status: "Ativo" },
-    { title: "Secretária Executiva",     area: "Secretariado", subarea: "Secretariado Executivo", active: 6, status: "Ativo" },
-    { title: "Assessor Executivo",       area: "Secretariado", subarea: "Assessoria Executiva", active: 3, status: "Inativo" },
+    { title: "Desenvolvedor Full Stack", area: "Tecnologia da Informação", subarea: "Desenvolvimento Full Stack", status: "Ativo" },
+    { title: "Designer UX/UI",           area: "Tecnologia da Informação", subarea: "UX/UI Design", status: "Ativo" },
+    { title: "Analista de RH",           area: "Gestão de RH", subarea: "Gestão de Pessoas", status: "Ativo" },
+    { title: "Tech Recruiter",           area: "Gestão de RH", subarea: "Recrutamento e Seleção", status: "Ativo" },
+    { title: "Secretária Executiva",     area: "Secretariado", subarea: "Secretariado Executivo", status: "Ativo" },
+    { title: "Assessor Executivo",       area: "Secretariado", subarea: "Assessoria Executiva", status: "Inativo" },
   ];
+  const ACTIVE_INTERVIEWS_PER_ROLE = 0;
 
   return (
     <AdminLayout current="admin-roles" onNavigate={onNavigate}
@@ -1283,7 +1288,7 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
                     <td className="py-3.5 px-5 font-semibold text-foreground">{r.title}</td>
                     <td className="py-3.5 px-4 text-muted-foreground">{r.area}</td>
                     <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{r.subarea}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{r.active}</td>
+                    <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{ACTIVE_INTERVIEWS_PER_ROLE}</td>
                     <td className="py-3.5 px-4"><Badge variant={r.status === "Ativo" ? "success" : "default"}>{r.status}</Badge></td>
                     <td className="py-3.5 px-5">
                       <div className="flex gap-1.5">

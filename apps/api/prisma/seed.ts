@@ -145,8 +145,8 @@ const OFFICIAL_ACCOUNTS: OfficialAccount[] = [
     initialStatus: 'ACTIVE',
     withPassword: true,
     evaluatorProfile: {
-      area: 'Tecnologia da Informação',
-      specialization: 'UX/UI Design',
+      area: 'Secretariado',
+      specialization: 'Assessoria Executiva',
     },
   },
   {
