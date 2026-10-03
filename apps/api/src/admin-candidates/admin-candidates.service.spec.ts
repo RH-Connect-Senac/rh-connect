@@ -7,8 +7,8 @@ const createdAt = new Date('2026-09-14T12:00:00.000Z');
 function makeRecord(overrides: Record<string, unknown> = {}) {
   return {
     user_id: 7,
-    name: 'Maria Souza',
-    email: 'maria.souza@gmail.com',
+    name: 'Test Candidate',
+    email: 'test.candidate@example.test',
     account_status: 'ACTIVE',
     onboarding_completed_at: null,
     created_at: createdAt,
@@ -53,8 +53,8 @@ describe('AdminCandidatesService', () => {
     expect(result.candidates).toEqual([
       {
         id: 7,
-        name: 'Maria Souza',
-        email: 'maria.souza@gmail.com',
+        name: 'Test Candidate',
+        email: 'test.candidate@example.test',
         accountStatus: 'ACTIVE',
         onboardingCompleted: false,
         onboardingCompletedAt: null,

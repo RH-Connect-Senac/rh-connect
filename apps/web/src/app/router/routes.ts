@@ -89,19 +89,26 @@ export const APP_ROUTES = [
   { screen: "admin-settings", path: "/admin/settings", label: "Configuracoes admin", group: "admin", priority: "P3", status: "simulado", backDependency: "sim" },
 ] satisfies AppRoute[];
 
-export const DEFAULT_ROUTE_PARAMS: Partial<Record<AppScreen, string>> = {
-  "interview-done": "interview-demo",
-  pending: "interview-demo",
-  report: "report-demo",
-  "eval-screen": "evaluation-demo",
-  "eval-review": "evaluation-demo",
-  "eval-done": "evaluation-demo",
-  "admin-candidate-detail": "candidate-demo",
+// Rotas dinâmicas (`:id`) não têm id padrão: sem um id real, o atalho cai na
+// listagem-pai da própria área. Nenhum id fictício é inventado.
+const PARENT_LIST_SCREEN: Partial<Record<AppScreen, AppScreen>> = {
+  "interview-done": "interview-history",
+  pending: "interview-history",
+  report: "interview-history",
+  "eval-screen": "eval-queue",
+  "eval-review": "eval-queue",
+  "eval-done": "eval-queue",
+  "admin-candidate-detail": "admin-candidates",
 };
 
 export function getPathForScreen(screen: AppScreen) {
   const route = APP_ROUTES.find((item) => item.screen === screen);
   if (!route) return "/";
 
-  return route.path.replace(/:id/g, DEFAULT_ROUTE_PARAMS[screen] ?? "demo");
+  if (route.path.includes(":id")) {
+    const parent = PARENT_LIST_SCREEN[screen];
+    return parent ? getPathForScreen(parent) : "/";
+  }
+
+  return route.path;
 }

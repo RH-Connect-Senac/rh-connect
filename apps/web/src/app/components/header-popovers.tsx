@@ -82,8 +82,8 @@ export const ADMIN_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
 // ─── Identidade real (Prompt 08) ───────────────────────────────────────────────
 
 // `CANDIDATE_ACCOUNT`/`EVAL_ACCOUNT`/`ADMIN_ACCOUNT` acima são dados de
-// DEMONSTRAÇÃO (usados como valor padrão antes da sessão real carregar, ou
-// quando não há usuário autenticado do role correspondente). Quando existe
+// configuração-base de cada perfil (usada como valor padrão antes da sessão
+// real carregar, ou quando não há usuário autenticado do role correspondente). Quando existe
 // um usuário autenticado real, `resolveAccountConfig` sobrescreve apenas
 // `name`/`email`/`initials` com os dados da sessão — nunca o `avatarClass`,
 // `profileLabel` ou as rotas de navegação, que continuam vindo do config

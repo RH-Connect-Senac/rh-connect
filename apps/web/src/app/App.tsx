@@ -216,16 +216,6 @@ function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
 // também importável por `eval-screens.tsx`/`admin-screens.tsx`, sem criar
 // dependência circular com este arquivo. Ver comentário completo lá.
 
-const CRITERIA = [
-  { name: "Clareza",         score: 9 },
-  { name: "Coerência",       score: 9 },
-  { name: "Objetividade",    score: 8 },
-  { name: "Domínio",         score: 7 },
-  { name: "Organização",     score: 7 },
-  { name: "Aderência",       score: 8 },
-  { name: "Exemplos",        score: 7 },
-];
-
 type InterviewDraft = {
   interviewId?: string;
   context: JobInterviewContext | null;
@@ -2267,8 +2257,6 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
   const interview = getInterviewById(id);
   const report = getReportByInterviewId(id);
   const candidateIdentity = getCandidateIdentity(session);
-  const isRealPendingRoute = Boolean(id && id !== "interview-demo");
-  const canAccessInterview = !isRealPendingRoute || !interview || interview.candidateId === candidateIdentity.id;
   const evaluationMode = interview?.evaluationMode ?? "HUMAN";
   const pendingDescription = evaluationMode === "AI"
     ? "Sua entrevista foi recebida com sucesso e será analisada pela IA Avaliadora do RH Connect."
@@ -2287,16 +2275,26 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
         { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
         { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
       ];
-  const TIMELINE = [
-    { label: "Conta criada",          date: "02/07/2026",      done: true },
-    { label: "Entrevista realizada",  date: "18/07/2026",      done: true },
-    { label: "Respostas enviadas",    date: "18/07/2026",      done: true },
-    { label: "Atribuída ao avaliador",date: "19/07/2026",      done: true },
-    { label: "Em avaliação",          date: "20/07/2026",      done: false, active: true },
-    { label: "Relatório disponível",  date: "Estimativa: 21/07",done: false },
-  ];
+  const formatTimelineDate = (value?: string) => (value ? new Date(value).toLocaleDateString("pt-BR") : "—");
+  const reportAvailable = report?.status === "AVAILABLE";
+  const timelineSteps = interview
+    ? [
+        { label: "Entrevista realizada", date: formatTimelineDate(interview.createdAt), done: true },
+        { label: "Respostas enviadas", date: formatTimelineDate(interview.submittedAt), done: Boolean(interview.submittedAt) },
+        ...(evaluationMode === "HUMAN"
+          ? [{ label: "Atribuída ao avaliador", date: "—", done: Boolean(interview.assignedEvaluatorId) }]
+          : []),
+        { label: "Em avaliação", date: "—", done: reportAvailable },
+        { label: "Relatório disponível", date: formatTimelineDate(report?.generatedAt), done: reportAvailable },
+      ]
+    : [];
+  const firstPendingStep = timelineSteps.findIndex((step) => !step.done);
+  const TIMELINE: { label: string; date: string; done: boolean; active?: boolean }[] = timelineSteps.map((step, index) => ({
+    ...step,
+    active: index === firstPendingStep,
+  }));
 
-  if (!canAccessInterview) {
+  if (!interview || interview.candidateId !== candidateIdentity.id) {
     return (
       <AuthLayout current="pending" onNavigate={onNavigate} title="Entrevista indisponível" subtitle="Acompanhamento da entrevista">
         <Card className="w-full max-w-2xl p-6 text-center">
@@ -2310,7 +2308,7 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
   }
 
   return (
-    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle={`${interview?.context.title ?? "Desenvolvedor Full Stack Júnior"} · ${interview?.context.company ?? "Tech Labs"}`}>
+    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle={`${interview.context.title} · ${interview.context.company}`}>
       <div className="w-full">
         {/* Status hero */}
         <Card className="p-6 sm:p-8 mb-6 text-center">
@@ -2326,7 +2324,7 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
               <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />
               {pendingStatusLabel}
             </StatusBadge>
-            <span className="text-xs text-muted-foreground">· Protocolo #ENT-2026-0847</span>
+            <span className="text-xs text-muted-foreground">· Protocolo {interview.id}</span>
           </div>
         </Card>
 
@@ -2405,18 +2403,17 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
   const interview = getInterviewById(id);
   const evaluation = getEvaluationByInterviewId(id);
   const report = getReportByInterviewId(id);
-  const isRealReportRoute = Boolean(id && id !== "report-demo");
   const candidateIdentity = getCandidateIdentity(session);
   const [resultView, setResultView] = useState<"Atual" | "Anterior" | "Melhor resultado">("Atual");
   const [isReportFading, setIsReportFading] = useState(false);
   const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
 
-  if (isRealReportRoute && interview && interview.candidateId !== candidateIdentity.id) {
+  if (!interview || interview.candidateId !== candidateIdentity.id) {
     return (
       <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle="Relatório da entrevista">
         <Card className="w-full max-w-2xl p-6 text-center">
           <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">Este relatório não pertence à sua conta</h3>
+          <h3 className="font-bold text-foreground mb-2">{interview ? "Este relatório não pertence à sua conta" : "Relatório não encontrado"}</h3>
           <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para consultar relatórios vinculados ao seu perfil.</p>
           <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
         </Card>
@@ -2424,12 +2421,12 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
     );
   }
 
-  if (isRealReportRoute && (!report || report.status !== "AVAILABLE")) {
-    const pendingReportMessage = interview?.evaluationMode === "AI"
+  if (!report || report.status !== "AVAILABLE") {
+    const pendingReportMessage = interview.evaluationMode === "AI"
       ? "O relatório ficará disponível após o processamento da avaliação por IA."
       : "O relatório fica disponível após a conclusão da avaliação humana.";
     return (
-      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview?.context.title ?? "Entrevista em avaliação"}>
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview.context.title}>
         <Card className="w-full max-w-2xl p-6 text-center">
           <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
           <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
@@ -2446,7 +2443,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
         name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
         score,
       }))
-      : CRITERIA;
+      : [];
   const resolveEvaluationScore = (candidateEvaluation?: typeof evaluation) =>
     candidateEvaluation?.overallScore ?? getAverageScore(candidateEvaluation?.scores);
   const resolveComparisonTimestamp = (item: {
@@ -2530,7 +2527,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
     .filter((option) => Boolean(reportResults[option]));
   const currentReport = reportResults[resultView] ?? reportResults.Atual!;
   const radarData = currentReport.criteria;
-  const computedAverageScore = radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length;
+  const computedAverageScore = radarData.length ? radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length : 0;
   const averageScoreValue = currentReport.overallScore ?? computedAverageScore;
   const averageScore = averageScoreValue.toFixed(1);
 
@@ -2573,7 +2570,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
       current="report"
       onNavigate={onNavigate}
       title="Resultado e Relatório"
-      subtitle={`${interview?.context.title ?? "Desenvolvedor Full Stack Júnior"} · ${interview?.context.company ?? "Tech Labs"}${report?.generatedAt ? ` · ${new Date(report.generatedAt).toLocaleDateString("pt-BR")}` : " · 18/07/2026"}`}
+      subtitle={`${interview.context.title} · ${interview.context.company}${report.generatedAt ? ` · ${new Date(report.generatedAt).toLocaleDateString("pt-BR")}` : ""}`}
       actions={<Btn variant="outline" size="sm" onClick={() => toast.success("PDF gerado! O download iniciará em instantes.")}><Upload className="w-3.5 h-3.5" /> Exportar PDF</Btn>}
     >
       <div className="w-full">
@@ -3682,6 +3679,19 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
   const routerNavigate = useNavigate();
   const { id } = useParams();
   const interview = getInterviewById(id);
+  if (!interview) {
+    return (
+      <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
+        <EmptyState
+          icon={MessageSquare}
+          title="Entrevista não encontrada"
+          description="Acesse o histórico de entrevistas para acompanhar o envio das suas respostas."
+          className="w-full max-w-xl p-10"
+          action={<Btn variant="primary" onClick={() => onNavigate("interview-history")}>Ver histórico</Btn>}
+        />
+      </AuthLayout>
+    );
+  }
   const evaluationMode = interview?.evaluationMode ?? "HUMAN";
   const doneMessage = evaluationMode === "AI"
     ? "Suas respostas foram recebidas com sucesso e serão analisadas pela IA Avaliadora do RH Connect."
@@ -3720,19 +3730,19 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-[11px] text-muted-foreground">Protocolo</p>
-                <p className="text-sm font-bold text-foreground">{interview?.id ?? "#ENT-2026-0418"}</p>
+                <p className="text-sm font-bold text-foreground">{interview.id}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">{interview?.context.title ?? "Desenvolvedor Full Stack Júnior"}</p>
+                <p className="text-sm font-semibold text-foreground">{interview.context.title}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>
-                <p className="text-sm font-semibold text-foreground">{interview?.submittedAt ? new Date(interview.submittedAt).toLocaleString("pt-BR") : "18/07/2026 às 14h32"}</p>
+                <p className="text-sm font-semibold text-foreground">{interview.submittedAt ? new Date(interview.submittedAt).toLocaleString("pt-BR") : "—"}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Status</p>
-                <StatusBadge tone="warning">{interview?.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
+                <StatusBadge tone="warning">{interview.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
               </div>
             </div>
           </div>
@@ -3776,7 +3786,7 @@ function EmailVerifyScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) 
           </div>
           <h1 className="text-xl font-extrabold text-foreground mb-2">Verifique seu e-mail</h1>
           <p className="text-sm text-muted-foreground mb-1">Enviamos um link de confirmação para:</p>
-          <p className="font-bold text-foreground text-sm mb-6">jo**@gmail.com</p>
+          <p className="font-bold text-foreground text-sm mb-6">o e-mail informado no cadastro</p>
           <div className="bg-muted rounded-xl p-4 text-left mb-6">
             <p className="text-xs text-muted-foreground leading-relaxed">
               Abra seu e-mail e clique no link de confirmação. Se não encontrar, verifique a pasta de spam ou lixo eletrônico.
@@ -4767,7 +4777,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                       <div>
                         <p className="text-sm font-bold text-foreground">Uso das respostas textuais para avaliação</p>
                         <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Autorização para registrar suas respostas textuais e disponibilizá-las para avaliação conforme a modalidade escolhida. Este consentimento é obrigatório para usar o sistema.</p>
-                        <p className="text-xs text-green-600 font-semibold mt-1.5">Autorizado em 15/07/2026</p>
+                        <p className="text-xs text-green-600 font-semibold mt-1.5">Autorizado no cadastro</p>
                       </div>
                     </div>
                     <StatusBadge tone="success">Ativo</StatusBadge>

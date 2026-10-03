@@ -363,37 +363,48 @@ function createAdminInterviewRows(): AdminInterviewRow[] {
 }
 
 const QUESTIONS_DATA = [
-  { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica",  uses: 247, active: true },
-  { id: 2, text: "Descreva uma situação em que precisou lidar com um prazo apertado.", category: "Comportamental", difficulty: "Intermediária", uses: 231, active: true },
-  { id: 3, text: "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?", category: "Perfil", difficulty: "Básica", uses: 218, active: true },
-  { id: 4, text: "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.", category: "Comportamental", difficulty: "Intermediária", uses: 205, active: true },
-  { id: 5, text: "Onde você se vê profissionalmente daqui a três anos?", category: "Carreira", difficulty: "Básica", uses: 198, active: true },
-  { id: 6, text: "Como você lida com situações de conflito no ambiente de trabalho?", category: "Comportamental", difficulty: "Avançada", uses: 124, active: true },
-  { id: 7, text: "Descreva um projeto ou iniciativa do qual você se orgulha.", category: "Experiência", difficulty: "Intermediária", uses: 98, active: false },
+  { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica", active: true },
+  { id: 2, text: "Descreva uma situação em que precisou lidar com um prazo apertado.", category: "Comportamental", difficulty: "Intermediária", active: true },
+  { id: 3, text: "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?", category: "Perfil", difficulty: "Básica", active: true },
+  { id: 4, text: "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.", category: "Comportamental", difficulty: "Intermediária", active: true },
+  { id: 5, text: "Onde você se vê profissionalmente daqui a três anos?", category: "Carreira", difficulty: "Básica", active: true },
+  { id: 6, text: "Como você lida com situações de conflito no ambiente de trabalho?", category: "Comportamental", difficulty: "Avançada", active: true },
+  { id: 7, text: "Descreva um projeto ou iniciativa do qual você se orgulha.", category: "Experiência", difficulty: "Intermediária", active: false },
 ];
 
 // ─── Screen: Dashboard Administrativo ────────────────────────────────────────
 
 // ─── Gráfico Interativo de Entrevistas por Mês ───────────────────────────────
 
+const MONTH_SHORT_LABELS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const MONTH_FULL_LABELS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+/** Entrevistas reais enviadas por mês, nos últimos `months` meses (zero quando não há dado). */
+function buildMonthlyInterviewData(months: number) {
+  const now = new Date();
+  const buckets = Array.from({ length: months }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (months - 1 - index), 1);
+    return {
+      key: date.getFullYear() * 12 + date.getMonth(),
+      m: MONTH_SHORT_LABELS[date.getMonth()],
+      full: MONTH_FULL_LABELS[date.getMonth()],
+      v: 0,
+    };
+  });
+
+  for (const interview of getAdminVisibleInterviews()) {
+    const date = new Date(interview.submittedAt ?? interview.createdAt);
+    if (Number.isNaN(date.getTime())) continue;
+    const bucket = buckets.find((item) => item.key === date.getFullYear() * 12 + date.getMonth());
+    if (bucket) bucket.v += 1;
+  }
+
+  return buckets.map(({ m, full, v }) => ({ m, full, v }));
+}
+
 function InterviewsChartCard() {
-  const data6m = [
-    { m: "Mar", v: 28, full: "Março" },
-    { m: "Abr", v: 35, full: "Abril" },
-    { m: "Mai", v: 42, full: "Maio" },
-    { m: "Jun", v: 38, full: "Junho" },
-    { m: "Jul", v: 51, full: "Julho" },
-    { m: "Ago", v: 34, full: "Agosto" },
-  ];
-  const data12m = [
-    { m: "Set", v: 19, full: "Setembro" },
-    { m: "Out", v: 24, full: "Outubro" },
-    { m: "Nov", v: 31, full: "Novembro" },
-    { m: "Dez", v: 22, full: "Dezembro" },
-    { m: "Jan", v: 27, full: "Janeiro" },
-    { m: "Fev", v: 33, full: "Fevereiro" },
-    ...data6m,
-  ];
+  const data6m = buildMonthlyInterviewData(6);
+  const data12m = buildMonthlyInterviewData(12);
 
   const [period, setPeriod] = useState<"6m" | "12m">("6m");
   const [hovered, setHovered] = useState<string | null>(null);
@@ -407,7 +418,7 @@ function InterviewsChartCard() {
   }, [period]);
 
   const data = period === "6m" ? data6m : data12m;
-  const maxV = Math.max(...data.map(d => d.v));
+  const maxV = Math.max(...data.map(d => d.v), 1);
 
   const toggle = (m: string) => setSelected(s => s === m ? null : m);
 
@@ -514,11 +525,6 @@ function InterviewsChartCard() {
 }
 
 export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const monthData = [
-    { m: "Mar", v: 28 }, { m: "Abr", v: 35 }, { m: "Mai", v: 42 },
-    { m: "Jun", v: 38 }, { m: "Jul", v: 51 }, { m: "Ago", v: 34 },
-  ];
-  const maxV = Math.max(...monthData.map(d => d.v));
   const candidatesList = useAdminCandidatesList();
   const candidateCount = candidatesList.state.status === "success" ? candidatesList.state.data.total : null;
   const interviewRows = createAdminInterviewRows();
@@ -541,7 +547,7 @@ export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
       <div className="w-full space-y-5">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <StatCard value={candidateCount ?? "—"}  label="Candidatos cadastrados" icon={Users}     color="bg-blue-50 text-blue-600" />
-          <StatCard value="12"   label="Avaliadores ativos"     icon={UserCheck} color="bg-teal-50 text-teal-600" />
+          <StatCard value={EVALUATORS.filter((evaluator) => evaluator.status === "Ativo").length}   label="Avaliadores ativos"     icon={UserCheck} color="bg-teal-50 text-teal-600" />
           <StatCard value={pendingInterviews.length}   label="Avaliações pendentes"   icon={Clock}     color="bg-amber-50 text-amber-600" />
           <StatCard value={averageScore !== null ? formatScore(averageScore) : "—"}  label="Score médio geral"      icon={Star}      color="bg-green-50 text-green-600" />
         </div>
@@ -1108,7 +1114,6 @@ export function AdminQuestionsScreen({ onNavigate }: { onNavigate: NavFn }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="info">{q.category}</Badge>
                     <Badge variant={q.difficulty === "Básica" ? "success" : q.difficulty === "Intermediária" ? "warning" : "error"}>{q.difficulty}</Badge>
-                    <span className="text-xs text-muted-foreground">{q.uses} usos</span>
                     {!q.active && <Badge variant="default">Inativa</Badge>}
                   </div>
                 </div>
@@ -1370,9 +1375,9 @@ export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
       subtitle="Gestão de consentimentos LGPD e solicitações de privacidade">
       <div className="w-full space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatCard value="124" label="Consentimentos ativos"    icon={CheckCircle} color="bg-green-50 text-green-600" />
+          <StatCard value="—" label="Consentimentos ativos"    icon={CheckCircle} color="bg-green-50 text-green-600" />
           <StatCard value={requests.length} label="Solicitações pendentes"   icon={AlertCircle} color="bg-red-50 text-red-600" />
-          <StatCard value="18"  label="Autorizaram uso em IA"    icon={Shield}      color="bg-purple-50 text-purple-600" />
+          <StatCard value="—"  label="Autorizaram uso em IA"    icon={Shield}      color="bg-purple-50 text-purple-600" />
         </div>
 
         <Card className="p-5 sm:p-6">
@@ -1427,13 +1432,9 @@ export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function AdminAuditScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [search, setSearch] = useState("");
-  const logs = [
-    { time: "11/08 11:42", user: "carlos.andrade", action: "EVALUATION_SUBMITTED", detail: "Avaliação #E-0040 enviada · Score: 8.2", ip: "10.0.0.14" },
-    { time: "11/08 10:15", user: "sistema",         action: "INTERVIEW_RECEIVED",  detail: "Entrevista #E-0041 recebida do candidato #C-001", ip: "—" },
-    { time: "10/08 17:20", user: "ana.machado",     action: "CRITERIA_UPDATED",    detail: "Peso do critério Domínio alterado: 20% → 25%",     ip: "10.0.0.2" },
-    { time: "10/08 16:45", user: "carlos.andrade",  action: "INTERVIEW_ASSIGNED",  detail: "Entrevista #E-0038 atribuída a carlos.andrade",    ip: "10.0.0.14" },
-    { time: "10/08 14:00", user: "sistema",         action: "CONSENT_REQUEST",     detail: "Solicitação de exclusão #C-032 recebida",          ip: "—" },
-  ].filter(l => search === "" || l.user.includes(search) || l.action.includes(search) || l.detail.toLowerCase().includes(search.toLowerCase()));
+  // Sem logs mockados: o registro de auditoria real ainda não tem backend.
+  const allLogs: { time: string; user: string; action: string; detail: string; ip: string }[] = [];
+  const logs = allLogs.filter(l => search === "" || l.user.includes(search) || l.action.includes(search) || l.detail.toLowerCase().includes(search.toLowerCase()));
 
   const actionColor = (a: string) => {
     if (a.includes("SUBMITTED")) return "bg-green-100 text-green-700";
@@ -1457,6 +1458,14 @@ export function AdminAuditScreen({ onNavigate }: { onNavigate: NavFn }) {
           className="bg-white"
         />
 
+        {logs.length === 0 ? (
+          <EmptyState
+            icon={History}
+            title="Nenhum registro de auditoria"
+            description="As ações do sistema aparecerão aqui quando o registro de auditoria estiver disponível."
+            className="p-12"
+          />
+        ) : (
         <Card>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1485,6 +1494,7 @@ export function AdminAuditScreen({ onNavigate }: { onNavigate: NavFn }) {
             </table>
           </div>
         </Card>
+        )}
       </div>
     </AdminLayout>
   );
