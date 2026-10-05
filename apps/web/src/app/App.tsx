@@ -24,6 +24,24 @@ import {
 } from "./components/header-popovers";
 import { ProfileShell, type ProfileShellNavItem } from "./components/shared/profile-shell";
 import { RHConnectLogo } from "./components/brand/rh-connect-logo";
+import { LegalDocumentContent, getLegalIndexItems, type LegalIndexItem } from "./components/legal/legal-document-view";
+import { LandingFooter } from "./components/landing-footer";
+import { BackToTop } from "./components/ui/back-to-top";
+import { LegalHeader } from "./components/legal/legal-header";
+import { SETTINGS_PATH, isSettingsTabKey, resolveLegalOrigin } from "./components/legal/legal-origin";
+import { clearRegisterDraft, getRegisterDraft, saveRegisterDraft } from "./services/register-draft-store";
+import { LegalHero } from "./components/legal/legal-hero";
+import {
+  LegalDocumentSwitch,
+  LegalMobileIndex,
+  LegalSidebarIndex,
+  useLegalActiveSection,
+  useLegalHashScroll,
+  type LegalDocumentKey,
+} from "./components/legal/legal-navigation";
+import type { LegalDocument } from "./domain/legal/legal-types";
+import { privacyPolicy } from "./domain/legal/privacy-policy";
+import { termsOfUse } from "./domain/legal/terms-of-use";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
 import { SuggestionsScreen } from "./components/suggestions-screen";
 import {
@@ -47,7 +65,6 @@ import {
   externalResourceToEditorialCard,
   rhConnectMaterialToEditorialCard,
 } from "./components/materials/editorial-material-card";
-import { BackToTop } from "./components/ui/back-to-top";
 import { ContinueLearningSection } from "./components/materials/continue-learning-section";
 import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
@@ -696,11 +713,11 @@ function AuthScreen({
   const [rememberAccess, setRememberAccess] = useState(() => Boolean(getRememberedLoginEmail()));
   const [loginError, setLoginError] = useState("");
   const [isLoginSubmitting, setIsLoginSubmitting] = useState(false);
-  const [registerName, setRegisterName] = useState("");
-  const [registerEmail, setRegisterEmail] = useState("");
-  const [registerPassword, setRegisterPassword] = useState("");
-  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
-  const [registerAcceptedTerms, setRegisterAcceptedTerms] = useState(false);
+  const [registerName, setRegisterName] = useState(() => getRegisterDraft()?.name ?? "");
+  const [registerEmail, setRegisterEmail] = useState(() => getRegisterDraft()?.email ?? "");
+  const [registerPassword, setRegisterPassword] = useState(() => getRegisterDraft()?.password ?? "");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState(() => getRegisterDraft()?.confirmPassword ?? "");
+  const [registerAcceptedTerms, setRegisterAcceptedTerms] = useState(() => getRegisterDraft()?.acceptedTerms ?? false);
   const [registerError, setRegisterError] = useState("");
   const [isRegisterSubmitting, setIsRegisterSubmitting] = useState(false);
   const authNavigate = useNavigate();
@@ -708,6 +725,17 @@ function AuthScreen({
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab]);
+
+  // Rascunho do cadastro apenas em memória, para sobreviver à ida aos Termos/Privacidade.
+  useEffect(() => {
+    saveRegisterDraft({
+      name: registerName,
+      email: registerEmail,
+      password: registerPassword,
+      confirmPassword: registerConfirmPassword,
+      acceptedTerms: registerAcceptedTerms,
+    });
+  }, [registerName, registerEmail, registerPassword, registerConfirmPassword, registerAcceptedTerms]);
 
   const selectAuthTab = (nextTab: "login" | "register") => {
     setTab(nextTab);
@@ -774,6 +802,8 @@ function AuthScreen({
       const result = await onRegister({ name, email, password, termsAccepted: registerAcceptedTerms });
       if (!result.ok) {
         setRegisterError(result.message);
+      } else {
+        clearRegisterDraft();
       }
     } finally {
       setIsRegisterSubmitting(false);
@@ -3914,588 +3944,125 @@ function ResetPasswordScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
 // ─── Fase C: LEG-001 Termos de Uso ───────────────────────────────────────────
 
-type LegalSection = {
-  title: string;
-  body: ReactNode;
-};
-
 function LegalPageLayout({
+  current,
   title,
   updatedAt,
   introduction,
+  indexItems,
   session,
   onNavigate,
   children,
-  actions,
 }: {
+  current: LegalDocumentKey;
   title: string;
   updatedAt: string;
   introduction: string;
+  indexItems: LegalIndexItem[];
   session: MockAuthSession;
   onNavigate: (s: Screen) => void;
   children: ReactNode;
-  actions: ReactNode;
 }) {
   const routerNavigate = useNavigate();
   const location = useLocation();
-  const state = location.state as { from?: string } | null;
-  const fallbackBackPath = getPathForScreen("landing");
-  const backPath = state?.from || fallbackBackPath;
-  const handleBack = () => routerNavigate(backPath);
+  const legalOrigin = resolveLegalOrigin((location.state as { from?: string } | null)?.from);
+
+  const sectionIds = indexItems.map((item) => item.id);
+  const activeSectionId = useLegalActiveSection(sectionIds);
+  useLegalHashScroll(sectionIds);
+
+  const openTerms = () => onNavigate("terms");
+  const openPrivacy = () => onNavigate("privacy");
+  const isAuthenticated = session.authenticated && Boolean(session.user);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-background to-blue-50/40 text-foreground">
-      <header className="border-b border-border/70 bg-white/85 backdrop-blur">
-        <div className="mx-auto grid w-full max-w-[840px] grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-4 sm:px-6">
-          <div className="flex justify-start">
-            <Btn variant="outline" size="sm" onClick={handleBack}>
-              <ChevronLeft className="h-4 w-4" />
-              Voltar
-            </Btn>
-          </div>
-          <button
-            type="button"
-            onClick={() => onNavigate("landing")}
-            className="cursor-pointer rounded-lg transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-            aria-label="Ir para a página inicial"
-          >
-            <RHConnectLogo className="h-9" />
-          </button>
-          <div />
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-white text-foreground">
+      <LegalHeader
+        authenticated={isAuthenticated}
+        onOpenHome={() => onNavigate("landing")}
+        onOpenLogin={() => onNavigate("auth")}
+        onOpenRegister={() => onNavigate("register")}
+        onOpenArea={() => routerNavigate(getEntryPathForSession(session))}
+        backAction={legalOrigin ? { label: legalOrigin.label, onClick: () => routerNavigate(legalOrigin.path) } : undefined}
+      />
 
-      <main className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
-        <div className="mx-auto w-full max-w-[840px]">
-          <div className="mb-9 space-y-4">
-            <Badge variant="info">Documento institucional</Badge>
-            <div className="space-y-3">
-              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-foreground sm:text-4xl">
-                {title}
-              </h1>
-              <p className="text-sm font-semibold text-muted-foreground">{updatedAt}</p>
-              <p className="max-w-3xl text-base leading-7 text-muted-foreground">{introduction}</p>
+      <LegalHero title={title} subtitle={introduction} updatedAt={updatedAt} />
+      <LegalDocumentSwitch current={current} onOpenTerms={openTerms} onOpenPrivacy={openPrivacy} />
+
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-10 sm:px-8 sm:pb-20 sm:pt-14">
+        <div className="lg:grid lg:grid-cols-[230px_minmax(0,1fr)] lg:items-start lg:gap-16">
+          <aside className="hidden lg:sticky lg:top-24 lg:block lg:[@media(max-height:760px)]:top-20 lg:[@media(max-height:420px)]:static">
+            <LegalSidebarIndex items={indexItems} activeId={activeSectionId} />
+          </aside>
+          <div className="min-w-0 max-w-[780px]">
+            <div className="mb-8 lg:hidden">
+              <LegalMobileIndex items={indexItems} activeId={activeSectionId} />
             </div>
-          </div>
-
-          {children}
-
-          <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-border pt-6">
-            {actions}
-            {!(session.authenticated && Boolean(session.user)) && (
-              <Btn variant="primary" onClick={() => onNavigate("register")}>
-                Criar conta
-              </Btn>
-            )}
-            <Btn variant="outline" onClick={handleBack}>
-              Voltar
-            </Btn>
+            {children}
           </div>
         </div>
       </main>
+
+      <LandingFooter
+        onNavigate={(screen) => onNavigate(screen)}
+        contentMaxWidthClassName="max-w-[68rem]"
+      />
+      <BackToTop />
     </div>
   );
 }
 
-function LegalSections({ sections }: { sections: LegalSection[] }) {
+function LegalDocumentScreen({
+  current,
+  document,
+  description,
+  onNavigate,
+  session,
+}: {
+  current: LegalDocumentKey;
+  document: LegalDocument;
+  description: string;
+  onNavigate: (s: Screen) => void;
+  session: MockAuthSession;
+}) {
   return (
-    <div className="space-y-4 sm:space-y-5">
-      {sections.map((section) => (
-        <section key={section.title} className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-          <h2 className="mb-3 text-lg font-bold leading-snug text-foreground">{section.title}</h2>
-          <div className="space-y-3 text-sm leading-7 text-muted-foreground">{section.body}</div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function PendingInstitutionalAlert({ children }: { children: ReactNode }) {
-  return (
-    <Alert variant="warning" className="mt-4 rounded-2xl">
-      <AlertCircle className="h-4 w-4" />
-      <div className="text-sm leading-6">{children}</div>
-    </Alert>
-  );
-}
-
-const institutionalContactItems = [
-  ["Responsável", "Pendente de definição institucional"],
-  ["CNPJ", "Pendente de definição institucional"],
-  ["E-mail de contato", "Pendente de definição institucional"],
-  ["Endereço", "Pendente de definição institucional"],
-  ["Site oficial", "Pendente de definição institucional"],
-];
-
-const privacyControllerItems = [
-  ["Controlador", "Pendente de definição institucional"],
-  ["CNPJ", "Pendente de definição institucional"],
-  ["E-mail de privacidade", "Pendente de definição institucional"],
-  ["Encarregado/DPO, quando aplicável", "Pendente de definição institucional"],
-  ["Endereço", "Pendente de definição institucional"],
-];
-
-function LegalInfoList({ items }: { items: string[][] }) {
-  return (
-    <dl className="grid gap-3 sm:grid-cols-2">
-      {items.map(([label, value]) => (
-        <div key={label} className="rounded-xl bg-muted/50 p-3">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
-          <dd className="mt-1 font-semibold text-foreground">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <LegalPageLayout
+      current={current}
+      title={document.title}
+      updatedAt={`Última atualização: ${document.updatedAt}`}
+      introduction={description}
+      indexItems={getLegalIndexItems(document)}
+      session={session}
+      onNavigate={onNavigate}
+    >
+      <LegalDocumentContent document={document} />
+    </LegalPageLayout>
   );
 }
 
 function TermsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
-  const sections: LegalSection[] = [
-    {
-      title: "1. Sobre o RH Connect",
-      body: (
-        <p>
-          O RH Connect é uma plataforma voltada ao treinamento de candidatos para entrevistas de emprego. A plataforma
-          oferece recursos para organização do perfil profissional, prática de entrevistas, envio de respostas e
-          recebimento de relatório após avaliação humana autorizada.
-        </p>
-      ),
-    },
-    {
-      title: "2. Perfis de acesso",
-      body: (
-        <p>
-          A plataforma possui perfis de Candidato, Avaliador e Administrador. Cada perfil acessa funcionalidades
-          compatíveis com sua finalidade, como realização de entrevistas, avaliação humana ou gestão operacional.
-        </p>
-      ),
-    },
-    {
-      title: "3. Cadastro e conta",
-      body: (
-        <p>
-          O usuário deve fornecer informações corretas no cadastro e manter a confidencialidade de suas credenciais de
-          acesso. A conta é pessoal e deve ser utilizada somente pelo próprio usuário autorizado.
-        </p>
-      ),
-    },
-    {
-      title: "4. Perfil profissional",
-      body: (
-        <p>
-          O candidato pode informar dados profissionais, formação, experiências, habilidades e preferências de atuação.
-          Essas informações ajudam a contextualizar a jornada dentro da plataforma e devem refletir dados verdadeiros.
-        </p>
-      ),
-    },
-    {
-      title: "5. Entrevistas",
-      body: (
-        <p>
-          Na versão atual, as entrevistas são realizadas por respostas textuais. O candidato deve revisar suas respostas
-          antes do envio, pois o material enviado será usado para avaliação humana e geração do relatório.
-        </p>
-      ),
-    },
-    {
-      title: "6. Ditado por voz",
-      body: (
-        <p>
-          Quando disponível no navegador, o ditado por voz pode auxiliar o candidato a transformar fala em texto. Nesta
-          versão, o RH Connect não armazena arquivo de áudio decorrente desse recurso.
-        </p>
-      ),
-    },
-    {
-      title: "7. Avaliação humana",
-      body: (
-        <p>
-          A avaliação final das entrevistas é realizada por avaliador humano autorizado. A pontuação e o relatório
-          apresentados ao candidato decorrem dessa análise humana.
-        </p>
-      ),
-    },
-    {
-      title: "8. Prazo de avaliação",
-      body: (
-        <p>
-          O prazo de avaliação pode variar conforme disponibilidade operacional e volume de entrevistas. Quando houver
-          uma estimativa ou status de acompanhamento disponível, ela terá finalidade informativa.
-        </p>
-      ),
-    },
-    {
-      title: "9. Inteligência Artificial",
-      body: (
-        <>
-          <p>
-            O RH Connect prevê a incorporação futura de recursos de Inteligência Artificial como parte da evolução da
-            plataforma, incluindo funcionalidades de apoio à geração de perguntas, recomendações, análise de conteúdo e
-            desenvolvimento profissional.
-          </p>
-          <p>
-            Também poderá ser realizado futuramente o treinamento, ajuste ou aperfeiçoamento de modelos de Inteligência
-            Artificial destinados ao funcionamento e evolução do RH Connect.
-          </p>
-          <p>
-            Quando essas atividades envolverem dados pessoais, o tratamento deverá observar a legislação aplicável, com
-            transparência quanto às finalidades, categorias de dados utilizadas, bases legais, medidas de proteção,
-            fornecedores envolvidos e direitos dos titulares.
-          </p>
-          <p>
-            A utilização atual da plataforma não representa autorização automática para uso dos dados pessoais do usuário
-            no treinamento de modelos de IA.
-          </p>
-          <p>
-            Quando a participação em treinamento ou aperfeiçoamento de modelos envolver dados pessoais de Candidatos,
-            essa finalidade deverá ser apresentada de forma específica, destacada e facultativa.
-          </p>
-          <p>
-            A recusa em participar do treinamento de IA não deverá impedir o acesso às funcionalidades essenciais da
-            Plataforma que não dependam dessa finalidade.
-          </p>
-          <p>
-            Sempre que tecnicamente adequado, o RH Connect deverá priorizar medidas de minimização, anonimização,
-            pseudonimização ou outras medidas destinadas a reduzir a exposição de dados pessoais.
-          </p>
-        </>
-      ),
-    },
-    {
-      title: "10. Uso adequado da plataforma",
-      body: (
-        <p>
-          O usuário deve utilizar o RH Connect de forma ética, respeitosa e compatível com sua finalidade educacional.
-          É proibido inserir conteúdo ofensivo, discriminatório, ilegal ou que viole direitos de terceiros.
-        </p>
-      ),
-    },
-    {
-      title: "11. Disponibilidade e evolução",
-      body: (
-        <p>
-          A plataforma pode receber melhorias, ajustes e manutenções. Funcionalidades podem evoluir conforme decisões de
-          produto, requisitos institucionais e necessidades técnicas.
-        </p>
-      ),
-    },
-    {
-      title: "12. Privacidade e proteção de dados",
-      body: (
-        <p>
-          O tratamento de dados pessoais é descrito na Política de Privacidade do RH Connect. O uso da plataforma deve
-          observar a legislação aplicável de proteção de dados e os direitos dos titulares.
-        </p>
-      ),
-    },
-    {
-      title: "13. Encerramento e suspensão",
-      body: (
-        <p>
-          O acesso poderá ser encerrado ou suspenso em caso de uso inadequado, violação destes Termos, necessidade
-          operacional ou solicitação aplicável do próprio usuário, conforme regras da organização responsável.
-        </p>
-      ),
-    },
-    {
-      title: "14. Ausência de garantia de resultados",
-      body: (
-        <p>
-          O RH Connect é uma ferramenta de preparação e desenvolvimento. A plataforma não atua como agência de emprego,
-          não intermedeia contratações e não garante aprovação em processos seletivos.
-        </p>
-      ),
-    },
-    {
-      title: "15. Atualizações destes Termos",
-      body: (
-        <p>
-          Estes Termos podem ser atualizados para refletir alterações legais, institucionais ou funcionais. A data de
-          atualização indica a versão vigente apresentada ao usuário.
-        </p>
-      ),
-    },
-    {
-      title: "16. Identificação e contato",
-      body: (
-        <>
-          <LegalInfoList items={institutionalContactItems} />
-          <PendingInstitutionalAlert>
-            Pendência para publicação definitiva: estas informações deverão ser substituídas pelos dados oficiais
-            fornecidos pela organização responsável antes da publicação definitiva do RH Connect.
-          </PendingInstitutionalAlert>
-        </>
-      ),
-    },
-  ];
-
   return (
-    <LegalPageLayout
-      title="Termos de Uso do RH Connect"
-      updatedAt="Última atualização: 14 de setembro de 2026"
-      introduction="Estes Termos estabelecem as condições para utilização do RH Connect. Ao criar uma conta e utilizar a plataforma, o usuário declara ter acesso a estes Termos e à Política de Privacidade."
-      session={session}
+    <LegalDocumentScreen
+      current="terms"
+      document={termsOfUse}
+      description="Consulte as condições, responsabilidades e diretrizes para utilização da plataforma RH Connect."
       onNavigate={onNavigate}
-      actions={<Btn variant="outline" onClick={() => onNavigate("privacy")}>Ver Política de Privacidade</Btn>}
-    >
-      <LegalSections sections={sections} />
-    </LegalPageLayout>
+      session={session}
+    />
   );
 }
 
 // ─── Fase C: LEG-002 Política de Privacidade ─────────────────────────────────
 
 function PrivacyScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
-  const sections: LegalSection[] = [
-    {
-      title: "1. Responsável pelo tratamento",
-      body: (
-        <>
-          <LegalInfoList items={privacyControllerItems} />
-          <PendingInstitutionalAlert>
-            Pendência para publicação definitiva: os dados oficiais do controlador e dos canais de privacidade deverão
-            substituir estas indicações antes da utilização definitiva da plataforma.
-          </PendingInstitutionalAlert>
-        </>
-      ),
-    },
-    {
-      title: "2. Quais dados podem ser tratados",
-      body: (
-        <p>
-          Podem ser tratados dados de identificação, contato, credenciais de acesso, informações profissionais inseridas
-          pelo usuário, respostas textuais das entrevistas, avaliações humanas, relatórios, preferências de uso e dados
-          técnicos necessários ao funcionamento da plataforma.
-        </p>
-      ),
-    },
-    {
-      title: "3. Ditado por voz",
-      body: (
-        <p>
-          O ditado por voz, quando utilizado, depende de recursos disponíveis no navegador do usuário para converter fala
-          em texto. Nesta versão, o RH Connect não armazena arquivo de áudio gerado por esse recurso.
-        </p>
-      ),
-    },
-    {
-      title: "4. O que não faz parte da versão atual",
-      body: (
-        <p>
-          A versão atual não inclui entrevista em vídeo, armazenamento de gravação de vídeo, análise automática final ou
-          uso de dados pessoais para treinamento de Inteligência Artificial.
-        </p>
-      ),
-    },
-    {
-      title: "5. Para que os dados são utilizados",
-      body: (
-        <p>
-          Os dados são utilizados para criar e manter a conta, permitir o preenchimento do perfil profissional, preparar
-          entrevistas contextualizadas, registrar respostas, viabilizar avaliação humana e apresentar relatório ao
-          candidato.
-        </p>
-      ),
-    },
-    {
-      title: "6. Bases legais",
-      body: (
-        <p>
-          As bases legais aplicáveis podem incluir execução de contrato ou procedimentos preliminares, consentimento
-          quando necessário, cumprimento de obrigação legal ou regulatória e legítimo interesse, conforme a finalidade de
-          cada tratamento.
-        </p>
-      ),
-    },
-    {
-      title: "7. Avaliação humana",
-      body: (
-        <p>
-          A avaliação final é realizada por avaliador humano autorizado. A pontuação e o relatório disponibilizados ao
-          candidato derivam dessa análise humana.
-        </p>
-      ),
-    },
-    {
-      title: "8. Inteligência Artificial no futuro",
-      body: (
-        <>
-          <p>
-            O RH Connect prevê a incorporação futura de recursos de Inteligência Artificial como parte da evolução da
-            plataforma, incluindo funcionalidades de apoio à geração de perguntas, recomendações, análise de conteúdo e
-            desenvolvimento profissional.
-          </p>
-          <p>
-            Esses recursos serão implementados de forma progressiva e deverão observar transparência, finalidade
-            específica, minimização de dados e base legal adequada para cada operação de tratamento.
-          </p>
-          <div className="space-y-3">
-            <h3 className="text-base font-bold text-foreground">8.1. Treinamento e aperfeiçoamento de modelos de IA</h3>
-            <p>
-              O RH Connect poderá futuramente realizar treinamento, ajuste ou aperfeiçoamento de modelos de Inteligência
-              Artificial destinados ao funcionamento e evolução da plataforma.
-            </p>
-            <p>
-              Quando essa atividade envolver dados pessoais de Candidatos, a participação dependerá de autorização
-              específica, destacada e facultativa, apresentada separadamente das funcionalidades essenciais da Plataforma.
-            </p>
-            <p>
-              A simples utilização do RH Connect não será considerada autorização para utilização dos dados pessoais do
-              Candidato no treinamento de modelos de IA.
-            </p>
-            <p>Antes da autorização, deverão ser apresentadas informações claras sobre:</p>
-            <ul className="list-disc space-y-2 pl-5">
-              <li>categorias de dados que poderão ser utilizadas;</li>
-              <li>finalidade do treinamento;</li>
-              <li>forma de utilização dos dados;</li>
-              <li>período de retenção aplicável;</li>
-              <li>fornecedores ou operadores envolvidos, quando houver;</li>
-              <li>eventuais transferências internacionais;</li>
-              <li>medidas de proteção adotadas;</li>
-              <li>possibilidade de revogação da autorização, quando aplicável.</li>
-            </ul>
-            <p>
-              A recusa em autorizar a participação no treinamento de IA não deverá impedir o acesso às funcionalidades
-              essenciais do RH Connect que não dependam dessa finalidade.
-            </p>
-            <p>
-              Sempre que tecnicamente adequado, deverão ser adotadas medidas de minimização, anonimização,
-              pseudonimização ou outras técnicas destinadas a reduzir a exposição de dados pessoais.
-            </p>
-          </div>
-        </>
-      ),
-    },
-    {
-      title: "9. Compartilhamento de dados",
-      body: (
-        <p>
-          Os dados podem ser acessados por usuários autorizados de acordo com seu perfil e finalidade dentro da
-          plataforma. Compartilhamentos adicionais dependerão de necessidade operacional, obrigação legal ou autorização
-          aplicável.
-        </p>
-      ),
-    },
-    {
-      title: "10. Armazenamento local e tecnologias semelhantes",
-      body: (
-        <p>
-          A plataforma pode utilizar armazenamento local do navegador e tecnologias semelhantes para manter sessão,
-          preferências e dados necessários ao funcionamento da experiência atual.
-        </p>
-      ),
-    },
-    {
-      title: "11. Retenção e exclusão",
-      body: (
-        <p>
-          Os dados serão mantidos pelo período necessário às finalidades informadas, observadas obrigações legais,
-          necessidade operacional e solicitações aplicáveis dos titulares.
-        </p>
-      ),
-    },
-    {
-      title: "12. Segurança",
-      body: (
-        <p>
-          O RH Connect deve adotar medidas proporcionais para proteger os dados pessoais, considerando a natureza das
-          informações tratadas, os riscos envolvidos e a evolução da plataforma.
-        </p>
-      ),
-    },
-    {
-      title: "13. Incidentes de segurança",
-      body: (
-        <p>
-          Caso ocorra incidente de segurança que possa acarretar risco ou dano relevante aos titulares, a organização
-          responsável deverá avaliar as medidas cabíveis e comunicações necessárias.
-        </p>
-      ),
-    },
-    {
-      title: "14. Direitos dos titulares",
-      body: (
-        <p>
-          Os titulares podem solicitar confirmação de tratamento, acesso, correção, portabilidade, anonimização,
-          bloqueio, eliminação, informação sobre compartilhamento e revogação de consentimento, conforme legislação
-          aplicável.
-        </p>
-      ),
-    },
-    {
-      title: "15. Como exercer seus direitos",
-      body: (
-        <p>
-          Os canais oficiais para exercício de direitos serão informados pela organização responsável. Até a publicação
-          definitiva, esses dados institucionais permanecem pendentes de definição.
-        </p>
-      ),
-    },
-    {
-      title: "16. Usuários menores de idade",
-      body: (
-        <p>
-          O uso por menores de idade deverá observar as regras institucionais aplicáveis e a legislação vigente,
-          incluindo eventual necessidade de autorização do responsável legal.
-        </p>
-      ),
-    },
-    {
-      title: "17. Links de vagas e serviços externos",
-      body: (
-        <p>
-          O usuário pode informar links de vagas ou acessar referências externas. O RH Connect não controla políticas,
-          conteúdos ou práticas de privacidade de sites e serviços de terceiros.
-        </p>
-      ),
-    },
-    {
-      title: "18. Atualizações desta Política",
-      body: (
-        <p>
-          Esta Política pode ser atualizada para refletir mudanças legais, institucionais ou funcionais. A data de
-          atualização indica a versão apresentada ao usuário.
-        </p>
-      ),
-    },
-  ];
-
   return (
-    <LegalPageLayout
-      title="Política de Privacidade do RH Connect"
-      updatedAt="Última atualização: 14 de setembro de 2026"
-      introduction="O RH Connect reconhece a importância da privacidade e da proteção de dados pessoais. Esta Política explica quais informações podem ser tratadas, para quais finalidades e quais direitos estão disponíveis aos titulares."
-      session={session}
+    <LegalDocumentScreen
+      current="privacy"
+      document={privacyPolicy}
+      description="Consulte como o RH Connect trata dados pessoais e quais são os direitos relacionados à privacidade."
       onNavigate={onNavigate}
-      actions={<Btn variant="outline" onClick={() => onNavigate("terms")}>Ver Termos de Uso</Btn>}
-    >
-      <Card className="mb-6 border-blue-100 bg-blue-50/70 p-5 shadow-sm sm:p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-primary shadow-sm">
-            <Shield className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">Resumo da versão atual</h2>
-            <p className="text-sm text-muted-foreground">Transparência sobre o funcionamento vigente da plataforma.</p>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {[
-            "Entrevistas em texto",
-            "Avaliação humana",
-            "Ditado por voz sem armazenamento de áudio",
-            "Sem entrevista em vídeo",
-            "Recursos de IA previstos para evolução futura",
-          ].map((item) => (
-            <div key={item} className="flex items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-sm font-semibold text-blue-900">
-              <CheckCircle className="h-4 w-4 shrink-0 text-blue-600" />
-              <span>{item}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      <LegalSections sections={sections} />
-    </LegalPageLayout>
+      session={session}
+    />
   );
 }
 
@@ -4571,7 +4138,16 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
   const account = getCandidateAccountConfig(candidateUser);
-  const [tab, setTab] = useState<SettingsTab>("conta");
+  const [settingsSearchParams, setSettingsSearchParams] = useSearchParams();
+  const [tab, setTabState] = useState<SettingsTab>(() => {
+    const requestedTab = settingsSearchParams.get("tab");
+    return isSettingsTabKey(requestedTab) ? requestedTab : "conta";
+  });
+  // A aba ativa fica na URL (?tab=) para que o retorno dos documentos legais a restaure.
+  const setTab = (nextTab: SettingsTab) => {
+    setTabState(nextTab);
+    setSettingsSearchParams(nextTab === "conta" ? {} : { tab: nextTab }, { replace: true });
+  };
   const [notifs, setNotifs] = useState({ resultado: true, novidades: false, dicas: true, email: true });
   const [consentIA, setConsentIA] = useState(false);
   const [modal, setModal] = useState<null | "senha" | "revogar-ia" | "excluir-dados" | "excluir-conta" | "conta-excluida" | "senha-alterada">(null);
@@ -5953,6 +5529,11 @@ function PublicAuthRoute({ session, children }: { session: MockAuthSession; chil
 function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const routerNavigate = useNavigate();
   const location = useLocation();
+
+  // O rascunho do cadastro só existe enquanto o usuário permanece em cadastro ↔ Termos/Privacidade.
+  useEffect(() => {
+    if (!["/register", "/terms", "/privacy"].includes(location.pathname)) clearRegisterDraft();
+  }, [location.pathname]);
   const [session, setSession] = useState<MockAuthSession>(initialSession);
   const initialDraftSnapshot = useRef(getStoredInterviewDraft(getCandidateIdentity(session).id));
   const [interviewDraft, setInterviewDraft] = useState<InterviewDraft>(() => initialDraftSnapshot.current?.draft ?? createEmptyInterviewDraft());
@@ -6005,8 +5586,10 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
       const state = location.state as { from?: string } | null;
       const isCurrentLegalPage = location.pathname === getPathForScreen("terms") || location.pathname === getPathForScreen("privacy");
       const currentPath = `${location.pathname}${location.search}`;
-      const from = isCurrentLegalPage ? state?.from : currentPath;
-      routerNavigate(targetPath, { state: { from: from || getPathForScreen("landing") } });
+      // A origem é preservada ao alternar entre os documentos e só vale se for uma origem
+      // interna conhecida (cadastro ou Configurações). Landing/acesso direto ficam sem origem.
+      const origin = resolveLegalOrigin(isCurrentLegalPage ? state?.from : currentPath);
+      routerNavigate(targetPath, origin ? { state: { from: origin.path } } : undefined);
       return;
     }
 
