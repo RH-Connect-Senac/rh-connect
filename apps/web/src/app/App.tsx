@@ -65,7 +65,6 @@ import {
   externalResourceToEditorialCard,
   rhConnectMaterialToEditorialCard,
 } from "./components/materials/editorial-material-card";
-import { BackToTop } from "./components/ui/back-to-top";
 import { ContinueLearningSection } from "./components/materials/continue-learning-section";
 import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
