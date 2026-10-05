@@ -10,7 +10,7 @@ import {
   Award, TrendingUp, X, Shield, GraduationCap, Zap, BookOpen,
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
   Target, Send, Upload, Menu,
-  Heart, Bookmark, FileText, Trash2, Lock, Database, Bot,
+  Heart, FileText, Trash2, Lock, Database, Bot,
   ToggleLeft, ToggleRight, ChevronUp, Filter, CalendarDays
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
@@ -41,7 +41,15 @@ import {
 } from "./components/admin-screens";
 import { CandidateOnboardingScreen } from "./components/onboarding-screens";
 import { Input } from "./components/ui/input";
-import { SearchInput } from "./components/ui/search-input";
+import { MaterialsPageHeader } from "./components/materials/materials-page-header";
+import {
+  EditorialMaterialCard,
+  externalResourceToEditorialCard,
+  rhConnectMaterialToEditorialCard,
+} from "./components/materials/editorial-material-card";
+import { BackToTop } from "./components/ui/back-to-top";
+import { ContinueLearningSection } from "./components/materials/continue-learning-section";
+import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
 import { Textarea } from "./components/ui/textarea";
@@ -83,8 +91,18 @@ import {
   toggleMaterialFavorite,
 } from "./services/materials-service";
 import {
-  listCacholaResources,
+  getExternalResourceUserStates,
+  recordExternalResourceAccess,
+  type ExternalResourceUserState,
+  toggleExternalResourceFavorite,
+} from "./services/external-resource-user-state";
+import {
+  listExternalResourceCategories,
+  listExternalResources,
   type ExternalLearningResource,
+  type ExternalResourceCategory,
+  type ExternalResourcesPagination,
+  type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
 import { DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
@@ -5041,99 +5059,32 @@ function sortMaterialsByLastAccess(items: MaterialCardView[]) {
     });
 }
 
-const CACHOLA_VISIBLE_STEP = 6;
+// Tamanho de página usado nas requisições de recursos externos (tanto a
+// primeira página quanto cada "Ver mais"). Antes da 3E.2 esse número (25)
+// só definia o único lote buscado; agora define o tamanho de CADA página
+// real da paginação do backend.
+const EXTERNAL_PAGE_SIZE = 25;
 
-function MaterialCard({
-  material, onFavorite, onOpen,
-}: {
-  material: MaterialCardView;
-  onFavorite: () => void;
-  onOpen: () => void;
-}) {
-  return (
-    <Card className="h-full min-h-[214px] p-6 flex flex-col gap-5 hover:shadow-md transition-all">
-      <div className="flex flex-1 items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">{materialTypeLabel(material.type)}</UIBadge>
-            {material.status !== "NOT_STARTED" && (
-              <span className="text-[11px] text-muted-foreground">• {materialStatusLabel(material.status)}</span>
-            )}
-          </div>
-          <p className="font-bold text-foreground text-sm leading-snug mb-1">{material.title}</p>
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{material.description}</p>
-        </div>
-        <button
-          onClick={onFavorite}
-          aria-label={material.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
-          className={`p-1.5 rounded-lg transition-colors shrink-0 ${material.isFavorite ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-amber-400"}`}
-        >
-          <Bookmark className={`w-4 h-4 ${material.isFavorite ? "fill-current" : ""}`} />
-        </button>
-      </div>
-      <div className="mt-auto flex items-center justify-between gap-3 pt-3 border-t border-border">
-        <UIBadge variant="primary">{material.category}</UIBadge>
-        <Btn variant="primary" size="sm" onClick={onOpen}>Abrir material</Btn>
-      </div>
-    </Card>
-  );
-}
+// Itens + paginação de UMA fonte parceira na aba Todos.
+type TodosExternalSourceState = {
+  items: ExternalLearningResource[];
+  pagination: ExternalResourcesPagination | null;
+};
+const EMPTY_TODOS_SOURCE_STATE: TodosExternalSourceState = { items: [], pagination: null };
 
-function ExternalResourceCard({ resource }: { resource: ExternalLearningResource }) {
-  const handleOpen = () => {
-    if (!resource.url) {
-      toast.info("Este recurso abre pela plataforma Cachola.");
-      return;
-    }
+const EXTERNAL_RESOURCE_NO_URL_MESSAGE: Record<ExternalResourceSource, string> = {
+  CACHOLA: "Este recurso abre pela plataforma Cachola.",
+  ORANGO: "Este recurso abre pela plataforma Orango.",
+};
 
-    window.open(resource.url, "_blank", "noopener,noreferrer");
-  };
+// Abertura de conteúdo externo: nova aba, ou aviso se não houver URL.
+function openExternalResource(resource: ExternalLearningResource) {
+  if (!resource.url) {
+    toast.info(EXTERNAL_RESOURCE_NO_URL_MESSAGE[resource.source]);
+    return;
+  }
 
-  return (
-    <Card className="h-full min-h-[214px] p-6 flex flex-col gap-5 hover:shadow-md transition-all">
-      <div className="flex flex-1 items-start justify-between gap-3">
-        <div className="flex flex-1 min-w-0 gap-4">
-          <div className="flex h-[72px] w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-blue-50 text-blue-600">
-            {resource.coverUrl ? (
-              <img
-                src={resource.coverUrl}
-                alt=""
-                aria-hidden="true"
-                className="h-full w-full object-cover"
-                loading="lazy"
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-            ) : (
-              <BookOpen className="w-4 h-4" />
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-              <UIBadge variant="neutral" className="px-2 py-0.5 text-[11px] font-bold bg-blue-50 text-blue-700">
-                {resource.resourceType}
-              </UIBadge>
-              <span className="text-[11px] text-muted-foreground">Cachola Senac</span>
-            </div>
-            <p className="font-bold text-foreground text-sm leading-snug mb-1">{resource.title}</p>
-            {resource.section && resource.section !== "Sem seção" && (
-              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                {resource.section}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="p-1.5 rounded-lg text-muted-foreground shrink-0">
-          <BookOpen className="w-4 h-4" />
-        </div>
-      </div>
-      <div className="mt-auto flex items-center justify-between gap-3 pt-3 border-t border-border">
-        <UIBadge variant="primary">{resource.area ?? "Cachola"}</UIBadge>
-        <Btn variant="primary" size="sm" onClick={handleOpen}>Acessar na Cachola</Btn>
-      </div>
-    </Card>
-  );
+  window.open(resource.url, "_blank", "noopener,noreferrer");
 }
 
 function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
@@ -5141,44 +5092,299 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const candidateIdentity = getCandidateIdentity(session);
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todas as categorias");
-  const [abaFiltro, setAbaFiltro] = useState<"todos" | "favoritos" | "recentes" | "recomendados">("todos");
+  const [abaFiltro, setAbaFiltro] = useState<"todos" | "recomendados" | "rh" | "cachola" | "orango" | "historico" | "favoritos">("todos");
   const [materialStates, setMaterialStates] = useState<MaterialUserState[]>(() => getMaterialUserStates(candidateIdentity.id));
-  const [cacholaResources, setCacholaResources] = useState<ExternalLearningResource[]>([]);
-  const [loadingCacholaResources, setLoadingCacholaResources] = useState(false);
-  const [cacholaSearch, setCacholaSearch] = useState("");
+  const [selectedExternalSource, setSelectedExternalSource] = useState<ExternalResourceSource>("CACHOLA");
+  const [externalResources, setExternalResources] = useState<ExternalLearningResource[]>([]);
+  const [externalResourcesPagination, setExternalResourcesPagination] = useState<ExternalResourcesPagination | null>(null);
+  const [loadingExternalResources, setLoadingExternalResources] = useState(false);
+  const [loadingMoreExternalResources, setLoadingMoreExternalResources] = useState(false);
+  // Termo enviado ao backend: acompanha `busca` com debounce de 300ms (e é
+  // limpo na hora quando `busca` fica vazia). O filtro de RH Connect continua
+  // usando `busca` direto, sem atraso.
+  const [debouncedBusca, setDebouncedBusca] = useState("");
   const [selectedCacholaArea, setSelectedCacholaArea] = useState("Todos");
-  const [visibleCacholaCount, setVisibleCacholaCount] = useState(CACHOLA_VISIBLE_STEP);
+  const [selectedOrangoCategory, setSelectedOrangoCategory] = useState("");
+  const [orangoCategories, setOrangoCategories] = useState<ExternalResourceCategory[]>([]);
+  const [loadingOrangoCategories, setLoadingOrangoCategories] = useState(false);
+  const [showOrangoCategories, setShowOrangoCategories] = useState(false);
+  const [showCacholaAreas, setShowCacholaAreas] = useState(false);
   const [showCats, setShowCats] = useState(false);
+  // Identificador da requisição de recursos externos "em vigor". Incrementado
+  // tanto pelo efeito de primeira página (troca de fonte/categoria) quanto
+  // pelo handler de "Ver mais": qualquer resposta cujo id não bata mais com
+  // o valor corrente é stale e é descartada, sem sobrescrever/acumular no
+  // estado atual. Cobre os dois casos pedidos: trocar fonte/categoria
+  // enquanto uma página carrega, e um "Ver mais" cuja resposta chega depois
+  // de uma troca de fonte/categoria já ter iniciado uma nova busca.
+  const externalResourcesRequestIdRef = useRef(0);
+  // Aba "Todos": primeira página das duas fontes, com controle de requisição próprio
+  // (não interfere no externalResourcesRequestIdRef das abas Cachola / Orango).
+  const todosExternalRequestIdRef = useRef(0);
+  // Cada fonte mantém a PRÓPRIA paginação (itens + limit/offset/hasMore); a aba
+  // Todos apenas coordena as duas.
+  const [todosCachola, setTodosCachola] = useState<TodosExternalSourceState>(EMPTY_TODOS_SOURCE_STATE);
+  const [todosOrango, setTodosOrango] = useState<TodosExternalSourceState>(EMPTY_TODOS_SOURCE_STATE);
+  const [loadingTodosExternal, setLoadingTodosExternal] = useState(false);
+  const [loadingMoreTodosExternal, setLoadingMoreTodosExternal] = useState(false);
+  // Histórico de acesso e favoritos locais dos conteúdos de parceiros.
+  const [externalUserStates, setExternalUserStates] = useState<ExternalResourceUserState[]>(() => getExternalResourceUserStates(candidateIdentity.id));
 
   const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
 
   useEffect(() => {
+    const term = busca.trim();
+    if (term === "") {
+      setDebouncedBusca("");
+      return;
+    }
+    const timer = window.setTimeout(() => setDebouncedBusca(term), 300);
+    return () => window.clearTimeout(timer);
+  }, [busca]);
+
+  // Primeira página: dispara sempre que a fonte, a categoria Orango ou o termo
+  // de busca (já com debounce) mudam.
+  // Sempre busca com offset 0 e SUBSTITUI (nunca acumula) os recursos atuais.
+  useEffect(() => {
+    const requestId = ++externalResourcesRequestIdRef.current;
+
+    // Qualquer "Ver mais" em andamento é invalidado por este novo requestId
+    // (troca de fonte/categoria) e nunca mais vai resolver como atual — seu
+    // `finally` fica sem efeito, então sem isso `loadingMoreExternalResources`
+    // ficaria travado em `true`. Zera aqui, já que esta é a única entrada de
+    // efeito que sempre roda quando a paginação é reiniciada do zero.
+    setLoadingExternalResources(true);
+    setLoadingMoreExternalResources(false);
+    listExternalResources({
+      source: selectedExternalSource,
+      limit: EXTERNAL_PAGE_SIZE,
+      offset: 0,
+      // Filtro por categoria é aplicado no backend (via slug) — só faz
+      // sentido para ORANGO; "Todas as categorias" (string vazia) omite o
+      // parâmetro e preserva o comportamento multi-fonte já existente.
+      category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
+      search: debouncedBusca || undefined,
+    })
+      .then(({ resources, pagination }) => {
+        if (externalResourcesRequestIdRef.current !== requestId) return;
+        setExternalResources(resources);
+        setExternalResourcesPagination(pagination);
+      })
+      .catch(() => {
+        if (externalResourcesRequestIdRef.current !== requestId) return;
+        setExternalResources([]);
+        setExternalResourcesPagination(null);
+      })
+      .finally(() => {
+        if (externalResourcesRequestIdRef.current === requestId) {
+          setLoadingExternalResources(false);
+        }
+      });
+  }, [selectedExternalSource, selectedOrangoCategory, debouncedBusca]);
+
+  // Lista completa de categorias Orango, carregada do endpoint dedicado
+  // (`/external-resources/categories`) — nunca derivada de `externalResources`,
+  // que só contém as páginas já carregadas até o momento.
+  useEffect(() => {
+    if (selectedExternalSource !== "ORANGO") {
+      setOrangoCategories([]);
+      return;
+    }
+
     let active = true;
 
-    setLoadingCacholaResources(true);
-    listCacholaResources({ limit: 25 })
-      .then((resources) => {
+    setLoadingOrangoCategories(true);
+    listExternalResourceCategories({ source: "ORANGO" })
+      .then((categories) => {
         if (active) {
-          setCacholaResources(resources);
+          setOrangoCategories(categories);
         }
       })
       .catch(() => {
         if (active) {
-          setCacholaResources([]);
+          setOrangoCategories([]);
         }
       })
       .finally(() => {
         if (active) {
-          setLoadingCacholaResources(false);
+          setLoadingOrangoCategories(false);
         }
       });
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedExternalSource]);
+
+  // Aba "Todos": busca a primeira página de cada fonte parceira (mesmo serviço,
+  // sem alterar a API) para exibir as três origens no mesmo catálogo. Ao mudar
+  // a busca ou a aba, recomeça da primeira página e substitui os resultados.
+  // O cleanup invalida qualquer resposta ainda em voo (primeira página ou
+  // "Carregar mais") quando a aba/busca muda.
+  useEffect(() => {
+    if (abaFiltro !== "todos") return;
+
+    const requestId = ++todosExternalRequestIdRef.current;
+    setLoadingTodosExternal(true);
+    setLoadingMoreTodosExternal(false);
+    Promise.all(
+      (["CACHOLA", "ORANGO"] as ExternalResourceSource[]).map((source) =>
+        listExternalResources({
+          source,
+          limit: EXTERNAL_PAGE_SIZE,
+          search: debouncedBusca || undefined,
+        })
+          .then(({ resources, pagination }): TodosExternalSourceState => ({ items: resources, pagination: pagination ?? null }))
+          .catch((): TodosExternalSourceState => EMPTY_TODOS_SOURCE_STATE),
+      ),
+    )
+      .then(([cachola, orango]) => {
+        if (todosExternalRequestIdRef.current !== requestId) return;
+        setTodosCachola(cachola);
+        setTodosOrango(orango);
+      })
+      .finally(() => {
+        if (todosExternalRequestIdRef.current === requestId) {
+          setLoadingTodosExternal(false);
+        }
+      });
+
+    return () => {
+      todosExternalRequestIdRef.current++;
+      setLoadingMoreTodosExternal(false);
+    };
+  }, [abaFiltro, debouncedBusca]);
+
+  // "Carregar mais" da aba Todos: busca a PRÓXIMA página só das fontes que ainda
+  // têm `hasMore` e ACUMULA os resultados (sem duplicar). Ignora cliques
+  // repetidos enquanto algo está carregando.
+  const handleLoadMoreTodos = () => {
+    if (loadingTodosExternal || loadingMoreTodosExternal) return;
+
+    const pending = (
+      [
+        ["CACHOLA", todosCachola, setTodosCachola],
+        ["ORANGO", todosOrango, setTodosOrango],
+      ] as const
+    ).filter(([, state]) => state.pagination?.hasMore === true);
+    if (pending.length === 0) return;
+
+    const requestId = ++todosExternalRequestIdRef.current;
+    setLoadingMoreTodosExternal(true);
+    Promise.all(
+      pending.map(([source, state, setState]) => {
+        const pagination = state.pagination as ExternalResourcesPagination;
+        return listExternalResources({
+          source,
+          limit: EXTERNAL_PAGE_SIZE,
+          offset: pagination.offset + pagination.limit,
+          search: debouncedBusca || undefined,
+        })
+          .then(({ resources, pagination: nextPagination }) => ({ setState, resources, nextPagination }))
+          // Falha: mantém o que já foi carregado dessa fonte, sem avançar a página.
+          .catch(() => null);
+      }),
+    )
+      .then((results) => {
+        if (todosExternalRequestIdRef.current !== requestId) return;
+        for (const result of results) {
+          if (!result) continue;
+          result.setState((current) => {
+            const existingIds = new Set(current.items.map((resource) => resource.id));
+            return {
+              items: [...current.items, ...result.resources.filter((resource) => !existingIds.has(resource.id))],
+              pagination: result.nextPagination ?? current.pagination,
+            };
+          });
+        }
+      })
+      .finally(() => {
+        if (todosExternalRequestIdRef.current === requestId) {
+          setLoadingMoreTodosExternal(false);
+        }
+      });
+  };
+
+  const handleSelectExternalSource = (source: ExternalResourceSource) => {
+    setSelectedExternalSource(source);
+    setSelectedCacholaArea("Todos");
+    setSelectedOrangoCategory("");
+    setShowOrangoCategories(false);
+    setShowCacholaAreas(false);
+  };
+
+  // "Ver mais": busca a PRÓXIMA página real na API (offset = onde a última
+  // página carregada terminou) e ACUMULA no array existente, sem substituir.
+  // Ignora cliques repetidos enquanto uma página já está sendo carregada, e
+  // não faz nada se o backend já sinalizou que não há mais páginas.
+  const handleLoadMoreExternalResources = () => {
+    if (loadingExternalResources || loadingMoreExternalResources) return;
+    if (!externalResourcesPagination?.hasMore) return;
+
+    const requestId = ++externalResourcesRequestIdRef.current;
+    const offset = externalResourcesPagination.offset + externalResourcesPagination.limit;
+
+    setLoadingMoreExternalResources(true);
+    listExternalResources({
+      source: selectedExternalSource,
+      limit: EXTERNAL_PAGE_SIZE,
+      offset,
+      category: selectedExternalSource === "ORANGO" && selectedOrangoCategory ? selectedOrangoCategory : undefined,
+      search: debouncedBusca || undefined,
+    })
+      .then(({ resources, pagination }) => {
+        if (externalResourcesRequestIdRef.current !== requestId) return;
+
+        setExternalResources((current) => {
+          // Evita duplicatas por `id` — defensivo contra uma eventual
+          // sobreposição entre páginas.
+          const existingIds = new Set(current.map((resource) => resource.id));
+          const newResources = resources.filter((resource) => !existingIds.has(resource.id));
+          return [...current, ...newResources];
+        });
+        setExternalResourcesPagination(pagination);
+      })
+      .catch(() => {
+        // Falha ao buscar a próxima página: mantém a lista já carregada,
+        // só não avança — sem quebrar a tela.
+      })
+      .finally(() => {
+        if (externalResourcesRequestIdRef.current === requestId) {
+          setLoadingMoreExternalResources(false);
+        }
+      });
+  };
 
   const refreshMaterialStates = () => setMaterialStates(getMaterialUserStates(candidateIdentity.id));
+  const refreshExternalUserStates = () => setExternalUserStates(getExternalResourceUserStates(candidateIdentity.id));
+
+  // Troca de aba do Explore. Cachola / Orango escolhem a fonte carregada pelo
+  // fluxo existente; sair da aba RH Connect limpa a categoria RH para que um
+  // filtro "escondido" não afete as outras abas.
+  const handleChangeAba = (tab: typeof abaFiltro) => {
+    setAbaFiltro(tab);
+    setShowCats(false);
+    setShowOrangoCategories(false);
+    setShowCacholaAreas(false);
+    if (tab !== "rh") setCategoria("Todas as categorias");
+    if (tab === "cachola" && selectedExternalSource !== "CACHOLA") handleSelectExternalSource("CACHOLA");
+    if (tab === "orango" && selectedExternalSource !== "ORANGO") handleSelectExternalSource("ORANGO");
+  };
+
+  const getExternalUserState = (resource: ExternalLearningResource) =>
+    externalUserStates.find((item) => item.source === resource.source && item.resourceId === resource.id);
+
+  // Registra o acesso local e abre a plataforma externa exatamente como antes.
+  const handleOpenExternalResource = (resource: ExternalLearningResource) => {
+    recordExternalResourceAccess(candidateIdentity.id, resource);
+    refreshExternalUserStates();
+    openExternalResource(resource);
+  };
+
+  const handleToggleExternalFavorite = (resource: ExternalLearningResource) => {
+    toggleExternalResourceFavorite(candidateIdentity.id, resource);
+    refreshExternalUserStates();
+  };
 
   const toggleFavorito = (id: string) => {
     toggleMaterialFavorite(candidateIdentity.id, id);
@@ -5194,29 +5400,42 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   const filtrado = materiais.filter(m => {
     const matchBusca = busca === "" || m.title.toLowerCase().includes(busca.toLowerCase()) || m.description.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoria === "Todas as categorias" || m.category === categoria;
-    const matchAba = abaFiltro === "todos" ? true : abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "recentes" ? Boolean(m.lastAccessedAt) : m.recommended;
+    const matchAba = abaFiltro === "favoritos" ? m.isFavorite : abaFiltro === "historico" ? Boolean(m.lastAccessedAt) : true;
     return matchBusca && matchCat && matchAba;
   });
-  const filtradoOrdenado = abaFiltro === "recentes" ? sortMaterialsByLastAccess(filtrado) : filtrado;
+  const filtradoOrdenado = abaFiltro === "historico" ? sortMaterialsByLastAccess(filtrado) : filtrado;
 
-  const recomendados = materiais.filter(m => m.recommended).slice(0, 3);
-  const recentes = sortMaterialsByLastAccess(materiais).slice(0, 3);
-  const cacholaAreas = cacholaResources.reduce<string[]>((areas, resource) => {
+  const recomendados = materiais.filter(m => m.recommended).slice(0, 2);
+  const emAndamento = sortMaterialsByLastAccess(materiais).filter(m => m.status === "IN_PROGRESS");
+  const cacholaAreas = externalResources.reduce<string[]>((areas, resource) => {
     const area = resource.area?.trim();
     return area && !areas.includes(area) ? [...areas, area] : areas;
   }, []);
-  const normalizedCacholaSearch = cacholaSearch.trim().toLowerCase();
-  const filteredCacholaResources = cacholaResources
-    .filter((resource) => {
-      if (!normalizedCacholaSearch) return true;
-
-      return [resource.title, resource.area, resource.resourceType]
-        .some((value) => value?.toLowerCase().includes(normalizedCacholaSearch));
-    })
+  // A busca textual agora é feita no backend (parâmetro `search`); aqui resta
+  // apenas o filtro de área da Cachola, que continua no cliente.
+  const filteredExternalResources = externalResources
     .filter((resource) => selectedCacholaArea === "Todos" || resource.area === selectedCacholaArea);
-  const visibleCacholaResources = filteredCacholaResources.slice(0, visibleCacholaCount);
-  const hasMoreCacholaResources = visibleCacholaResources.length < filteredCacholaResources.length;
-  const resetCacholaVisibleCount = () => setVisibleCacholaCount(CACHOLA_VISIBLE_STEP);
+  // A paginação agora é real (server-side): o que foi carregado até aqui é
+  // exibido por inteiro (filtrado só por área, no cliente); não
+  // há mais um recorte local adicional por "visibleCount". "Tem mais" passa
+  // a refletir exclusivamente `pagination.hasMore` do backend.
+  const visibleExternalResources = filteredExternalResources;
+  const hasMoreExternalResources = externalResourcesPagination?.hasMore === true;
+  // Cards externos exibidos nas abas Cachola / Orango (só a fonte em vista).
+  const sourceExternalResources = visibleExternalResources.filter((resource) => resource.source === selectedExternalSource);
+  const buscaNormalizada = busca.trim().toLowerCase();
+  const matchesBusca = (title: string) => buscaNormalizada === "" || title.toLowerCase().includes(buscaNormalizada);
+  // Histórico / Favoritos de parceiros vêm do estado local (snapshot do recurso).
+  const externalHistory = externalUserStates
+    .filter((item) => item.lastAccessedAt && matchesBusca(item.resource.title))
+    .sort((a, b) => new Date(b.lastAccessedAt as string).getTime() - new Date(a.lastAccessedAt as string).getTime());
+  const externalFavorites = externalUserStates.filter((item) => item.isFavorite && matchesBusca(item.resource.title));
+  // Aba Todos: o botão aparece se QUALQUER fonte ainda tem mais páginas.
+  const todosHasMore = todosCachola.pagination?.hasMore === true || todosOrango.pagination?.hasMore === true;
+  const favoritosCount = materiais.filter(m => m.isFavorite).length + externalUserStates.filter((item) => item.isFavorite).length;
+  const selectedOrangoCategoryLabel = selectedOrangoCategory
+    ? orangoCategories.find((category) => category.slug === selectedOrangoCategory)?.name ?? "Todas as categorias"
+    : "Todas as categorias";
 
   return (
     <AuthLayout
@@ -5226,194 +5445,252 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
       subtitle="Conteúdo para você se preparar para entrevistas"
     >
       <div className="w-full space-y-6">
-        {/* Destaques: Recomendados */}
+        <MaterialsPageHeader
+          search={busca}
+          onSearchChange={setBusca}
+          onSearchClear={() => setBusca("")}
+        />
+
+        {/* Continue aprendendo: RH IN_PROGRESS + parceiros acessados (máx. 3); sem itens, não renderiza */}
         {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
-          <section>
-            <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
-              <Star className="w-4 h-4 text-amber-500" /> Recomendados para você
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {recomendados.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
-              ))}
-            </div>
-          </section>
+          <ContinueLearningSection
+            materials={emAndamento}
+            onOpen={handleOpenMaterial}
+            onFavorite={(m) => toggleFavorito(m.id)}
+            externalItems={externalUserStates.filter((item) => Boolean(item.lastAccessedAt))}
+            onOpenExternal={handleOpenExternalResource}
+          />
         )}
 
-        {/* Destaques: Recentes */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (
-          <section>
-            <h2 className="font-bold text-foreground mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-blue-500" /> Acessados recentemente
-            </h2>
-            {recentes.length === 0 ? (
-              <Card className="p-4 text-sm text-muted-foreground">
-                Seus materiais acessados aparecerão aqui.
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {recentes.map(m => (
-                  <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* Fonte complementar: Cachola */}
-        {abaFiltro === "todos" && busca === "" && categoria === "Todas as categorias" && (loadingCacholaResources || cacholaResources.length > 0) && (
-          <section>
-            <div className="mb-4">
-              <h2 className="font-bold text-foreground mb-1 flex items-center gap-2">
-                <Lightbulb className="w-4 h-4 text-blue-500" /> Conteúdos complementares da Cachola
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Explore materiais complementares selecionados para apoiar seu desenvolvimento.
-              </p>
-            </div>
-            {loadingCacholaResources ? (
-              <Card className="p-4 text-sm text-muted-foreground">
-                Buscando recomendações complementares...
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                <SearchInput
-                  value={cacholaSearch}
-                  onChange={(event) => {
-                    setCacholaSearch(event.target.value);
-                    resetCacholaVisibleCount();
-                  }}
-                  onClear={() => {
-                    setCacholaSearch("");
-                    resetCacholaVisibleCount();
-                  }}
-                  placeholder="Buscar conteúdos da Cachola..."
-                  aria-label="Buscar conteúdos da Cachola"
-                />
-                <div className="flex flex-wrap gap-2">
-                  {["Todos", ...cacholaAreas].map((area) => (
-                    <FilterChip
-                      key={area}
-                      selected={selectedCacholaArea === area}
-                      onClick={() => {
-                        setSelectedCacholaArea(area);
-                        resetCacholaVisibleCount();
-                      }}
-                    >
-                      {area}
-                    </FilterChip>
-                  ))}
-                </div>
-                {filteredCacholaResources.length === 0 ? (
-                  <Card className="p-4 text-sm text-muted-foreground">
-                    Nenhum conteúdo encontrado para os filtros selecionados.
-                  </Card>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                      {visibleCacholaResources.map(resource => (
-                        <ExternalResourceCard key={resource.id} resource={resource} />
+        {/* Explore os materiais: um único catálogo, controlado pelas abas */}
+        <ExploreCatalogSection
+          id="materials-filters"
+          tabs={[
+            { id: "todos", label: "Todos" },
+            { id: "recomendados", label: "Recomendados" },
+            { id: "rh", label: "RH Connect" },
+            { id: "cachola", label: "Cachola" },
+            { id: "orango", label: "Orango" },
+            { id: "historico", label: "Histórico" },
+            { id: "favoritos", label: `Favoritos (${favoritosCount})` },
+          ]}
+          activeTab={abaFiltro}
+          onTabChange={(tab) => handleChangeAba(tab as typeof abaFiltro)}
+        >
+          <ExploreCatalogGroup
+            title={
+              abaFiltro === "recomendados" ? "Recomendados para você"
+              : abaFiltro === "rh" ? "Materiais RH Connect"
+              : abaFiltro === "cachola" ? "Conteúdos da Cachola"
+              : abaFiltro === "orango" ? "Conteúdos do Orango"
+              : abaFiltro === "historico" ? "Histórico"
+              : abaFiltro === "favoritos" ? "Seus favoritos"
+              : "Todos os conteúdos"
+            }
+            filters={
+              abaFiltro === "rh" ? (
+                <div className="relative sm:w-56">
+                  <button
+                    onClick={() => setShowCats(!showCats)}
+                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
+                  >
+                    <span className="truncate">{categoria === "Todas as categorias" ? "Todas as categorias" : categoria}</span>
+                    <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                  </button>
+                  {showCats && (
+                    <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden">
+                      {SUPPORT_MATERIAL_CATEGORIES.map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => { setCategoria(cat); setShowCats(false); }}
+                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${categoria === cat ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                        >
+                          {cat}
+                        </button>
                       ))}
                     </div>
-                    {hasMoreCacholaResources && (
-                      <div className="flex justify-center pt-1">
-                        <Btn
-                          variant="primary"
-                          onClick={() => setVisibleCacholaCount((current) => current + CACHOLA_VISIBLE_STEP)}
-                          className="px-5 py-2.5 font-semibold"
-                        >
-                          Ver mais conteúdos
-                          <ChevronDown className="ml-1.5 h-4 w-4" />
-                        </Btn>
+                  )}
+                </div>
+              ) : abaFiltro === "cachola" && !loadingExternalResources && selectedExternalSource === "CACHOLA" ? (
+                <div className="space-y-1.5">
+                  <div className="relative w-full sm:w-56">
+                    <button
+                      onClick={() => setShowCacholaAreas(!showCacholaAreas)}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
+                    >
+                      <span className="truncate">{selectedCacholaArea === "Todos" ? "Todas as categorias" : selectedCacholaArea}</span>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                    {showCacholaAreas && (
+                      <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                        {["Todos", ...cacholaAreas].map((area) => (
+                          <button
+                            key={area}
+                            onClick={() => {
+                              setSelectedCacholaArea(area);
+                              setShowCacholaAreas(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedCacholaArea === area ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                          >
+                            {area === "Todos" ? "Todas as categorias" : area}
+                          </button>
+                        ))}
                       </div>
                     )}
-                  </>
-                )}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* Barra de busca + filtros */}
-        <section>
-          <h2 className="font-bold text-foreground mb-3">
-            {abaFiltro === "todos" ? "Todos os materiais" : abaFiltro === "favoritos" ? "Favoritos" : abaFiltro === "recentes" ? "Acessados recentemente" : "Recomendados"}
-          </h2>
-
-          {/* Filtros de aba */}
-          <div className="flex flex-wrap gap-2 mb-4">
-            {([["todos","Todos"],["recomendados","Recomendados"],["recentes","Recentes"],["favoritos","Favoritos"]] as const).map(([id, label]) => (
-              <FilterChip
-                key={id}
-                onClick={() => setAbaFiltro(id)}
-                selected={abaFiltro === id}
-                className="px-3.5"
-              >
-                {label}
-                {id === "favoritos" && ` (${materiais.filter(m => m.isFavorite).length})`}
-              </FilterChip>
-            ))}
-          </div>
-
-          {/* Busca + categoria */}
-          <div className="flex flex-col sm:flex-row gap-3 mb-5">
-            <SearchInput
-              containerClassName="flex-1"
-              value={busca}
-              onChange={e => setBusca(e.target.value)}
-              onClear={() => setBusca("")}
-              placeholder="Pesquisar materiais..."
-              className="bg-white"
-            />
-            <div className="relative sm:w-56">
-              <button
-                onClick={() => setShowCats(!showCats)}
-                className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all"
-              >
-                <span className="truncate">{categoria === "Todas as categorias" ? "Todas as categorias" : categoria}</span>
-                <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
-              </button>
-              {showCats && (
-                <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden">
-                  {SUPPORT_MATERIAL_CATEGORIES.map(cat => (
-                    <button
-                      key={cat}
-                      onClick={() => { setCategoria(cat); setShowCats(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${categoria === cat ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
+                  </div>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Lista de resultados */}
-          {filtradoOrdenado.length === 0 ? (
-            <EmptyState
-              icon={BookOpen}
-              title="Nenhum material encontrado"
-              description={
-                abaFiltro === "favoritos"
-                  ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer material."
-                  : "Tente ajustar os filtros ou a busca."
-              }
-              action={
-                <Btn variant="outline" onClick={() => { setBusca(""); setCategoria("Todas as categorias"); setAbaFiltro("todos"); }}>
-                  Limpar filtros
+              ) : abaFiltro === "orango" && !loadingExternalResources && selectedExternalSource === "ORANGO" ? (
+                <div className="space-y-1.5">
+                  <div className="relative w-full sm:w-56">
+                    <button
+                      onClick={() => setShowOrangoCategories(!showOrangoCategories)}
+                      disabled={loadingOrangoCategories}
+                      className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border border-border rounded-xl bg-input-background text-sm text-foreground hover:border-primary/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <span className="truncate">{selectedOrangoCategoryLabel}</span>
+                      <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                    {showOrangoCategories && (
+                      <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-border rounded-xl shadow-lg z-20 overflow-hidden max-h-72 overflow-y-auto">
+                        <button
+                          onClick={() => {
+                            setSelectedOrangoCategory("");
+                            setShowOrangoCategories(false);
+                          }}
+                          className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === "" ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                        >
+                          Todas as categorias
+                        </button>
+                        {orangoCategories.map((category) => (
+                          <button
+                            key={category.slug}
+                            onClick={() => {
+                              setSelectedOrangoCategory(category.slug);
+                              setShowOrangoCategories(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${selectedOrangoCategory === category.slug ? "font-semibold text-primary bg-blue-50" : "text-foreground"}`}
+                          >
+                            {category.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : undefined
+            }
+            footer={
+              (abaFiltro === "todos" && todosHasMore && !loadingTodosExternal) ||
+              ((abaFiltro === "cachola" || abaFiltro === "orango") && hasMoreExternalResources && !loadingExternalResources) ? (
+                <Btn
+                  variant="primary"
+                  onClick={abaFiltro === "todos" ? handleLoadMoreTodos : handleLoadMoreExternalResources}
+                  disabled={abaFiltro === "todos" ? loadingMoreTodosExternal : loadingMoreExternalResources}
+                  className="px-5 py-2.5 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {(abaFiltro === "todos" ? loadingMoreTodosExternal : loadingMoreExternalResources) ? "Carregando..." : "Carregar mais"}
+                  <ChevronDown className="ml-1.5 h-4 w-4" />
                 </Btn>
+              ) : undefined
+            }
+          >
+            {(() => {
+              const rhCard = (m: MaterialCardView) => (
+                <EditorialMaterialCard
+                  key={`rh-${m.id}`}
+                  variant="vertical"
+                  data={rhConnectMaterialToEditorialCard(m, {
+                    onOpen: () => handleOpenMaterial(m),
+                    onFavorite: () => toggleFavorito(m.id),
+                  })}
+                />
+              );
+              const externalCard = (resource: ExternalLearningResource) => (
+                <EditorialMaterialCard
+                  key={`${resource.source}-${resource.id}`}
+                  variant="vertical"
+                  data={{
+                    ...externalResourceToEditorialCard(resource, { onOpen: () => handleOpenExternalResource(resource) }),
+                    favorite: {
+                      active: getExternalUserState(resource)?.isFavorite === true,
+                      onToggle: () => handleToggleExternalFavorite(resource),
+                    },
+                  }}
+                />
+              );
+
+              let cards: ReactNode[] = [];
+              let loading = false;
+              if (abaFiltro === "todos") {
+                // Ordem fixa: RH Connect → Cachola → Orango.
+                cards = [...filtradoOrdenado.map(rhCard), ...todosCachola.items.map(externalCard), ...todosOrango.items.map(externalCard)];
+                loading = loadingTodosExternal && todosCachola.items.length === 0 && todosOrango.items.length === 0;
+              } else if (abaFiltro === "recomendados") {
+                // Mesmos materiais (`recommended`, no máximo 2) que antes ficavam na seção
+                // independente, agora no mesmo card editorial vertical do restante do Explore.
+                cards = recomendados
+                  .filter((m) => filtrado.some((item) => item.id === m.id))
+                  .map(rhCard);
+              } else if (abaFiltro === "rh") {
+                cards = filtradoOrdenado.map(rhCard);
+              } else if (abaFiltro === "cachola" || abaFiltro === "orango") {
+                cards = sourceExternalResources.map(externalCard);
+                // Enquanto a fonte nova ainda não carregou, evita piscar "vazio".
+                loading = loadingExternalResources || externalResources.some((resource) => resource.source !== selectedExternalSource);
+              } else {
+                // Histórico (mais recente primeiro) e Favoritos: as três origens.
+                const rhEntries = filtradoOrdenado.map((m) => ({
+                  time: m.lastAccessedAt ? new Date(m.lastAccessedAt).getTime() : 0,
+                  node: rhCard(m),
+                }));
+                const externalEntries = (abaFiltro === "historico" ? externalHistory : externalFavorites).map((item) => ({
+                  time: item.lastAccessedAt ? new Date(item.lastAccessedAt).getTime() : 0,
+                  node: externalCard(item.resource),
+                }));
+                cards = abaFiltro === "historico"
+                  ? [...rhEntries, ...externalEntries].sort((a, b) => b.time - a.time).map((entry) => entry.node)
+                  : [...rhEntries, ...externalEntries].map((entry) => entry.node);
               }
-            />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {filtradoOrdenado.map(m => (
-                <MaterialCard key={m.id} material={m} onFavorite={() => toggleFavorito(m.id)} onOpen={() => handleOpenMaterial(m)} />
-              ))}
-            </div>
-          )}
-        </section>
+
+              if (loading) {
+                return (
+                  <Card className="p-4 text-sm text-muted-foreground">
+                    Buscando recomendações complementares...
+                  </Card>
+                );
+              }
+
+              if (cards.length === 0) {
+                return (
+                  <EmptyState
+                    icon={BookOpen}
+                    title="Nenhum conteúdo encontrado"
+                    description={
+                      abaFiltro === "favoritos"
+                        ? "Você ainda não salvou nenhum favorito. Clique no ícone de marcador em qualquer conteúdo."
+                        : abaFiltro === "historico"
+                          ? "Os conteúdos que você abrir aparecerão aqui."
+                          : "Tente ajustar os filtros ou a busca."
+                    }
+                    action={
+                      <Btn variant="outline" onClick={() => { setBusca(""); handleChangeAba("todos"); }}>
+                        Limpar filtros
+                      </Btn>
+                    }
+                  />
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {cards}
+                </div>
+              );
+            })()}
+          </ExploreCatalogGroup>
+        </ExploreCatalogSection>
       </div>
+      <BackToTop />
     </AuthLayout>
   );
 }
