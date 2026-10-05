@@ -8,7 +8,6 @@ import {
   type CandidateProfilePatch,
   type CandidateProfilesStorage,
 } from "../domain/candidate-profile";
-import { DEFAULT_CANDIDATE } from "../mocks/interviews";
 import type { MockAuthUser } from "./auth-service";
 
 function canUseStorage() {
@@ -34,35 +33,6 @@ function createEmptyCandidateProfile(candidateId: string): CandidateProfile {
     experiences: [],
     technicalSkills: [],
     behavioralSkills: [],
-    updatedAt: nowIso(),
-  };
-}
-
-function createDemoCandidateProfile(): CandidateProfile {
-  return {
-    ...createEmptyCandidateProfile(DEFAULT_CANDIDATE.id),
-    professionalSummary: "Profissional em busca da primeira oportunidade na área de Tecnologia da Informação.",
-    areaId: "information-technology",
-    subareaId: "frontend-development",
-    desiredRole: "Desenvolvedor Front-end",
-    seniority: "Júnior",
-    contractType: "CLT",
-    formations: [
-      {
-        id: "demo-formation-ads",
-        title: "Análise e Desenvolvimento de Sistemas",
-        institution: "SENAC-DF",
-        level: "Tecnólogo",
-        status: "Em andamento",
-        startDate: "2025",
-        endDate: "2026",
-        period: "2025 – 2026",
-      },
-    ],
-    courses: [],
-    experiences: [],
-    technicalSkills: ["JavaScript", "React", "Git", "Testes", "SQL", "Comunicação técnica"],
-    behavioralSkills: ["Comunicação", "Trabalho em equipe", "Criatividade", "Proatividade"],
     updatedAt: nowIso(),
   };
 }
@@ -222,7 +192,7 @@ function cleanExperiences(values: CandidateExperience[]) {
 function createInitialStorage(): CandidateProfilesStorage {
   return {
     version: CANDIDATE_PROFILE_VERSION,
-    profiles: [createDemoCandidateProfile()],
+    profiles: [],
   };
 }
 
@@ -254,19 +224,7 @@ function saveStorage(storage: CandidateProfilesStorage) {
   window.localStorage.setItem(CANDIDATE_PROFILE_STORAGE_KEY, JSON.stringify(storage));
 }
 
-// Prompt 10: o desempate por `sessionUser?.id === "candidate-demo"` foi
-// removido — dependia do Auth mock (`loginMockUser`/`loginMockWithCredentials`,
-// removidos neste mesmo prompt), que era a única forma de uma sessão real
-// carregar esse id. `candidateId === DEFAULT_CANDIDATE.id` sozinho já cobre
-// o caso de negócio que continua vivo (Admin visualizando o perfil do
-// candidato demo via `admin-screens.tsx`, que chama `getCandidateProfile`
-// sem `sessionUser`). O parâmetro `sessionUser` foi mantido na assinatura
-// (não removido) para não forçar mudança nos call sites existentes.
 function resolveProfileSeed(candidateId: string) {
-  if (candidateId === DEFAULT_CANDIDATE.id) {
-    return createDemoCandidateProfile();
-  }
-
   return createEmptyCandidateProfile(candidateId);
 }
 
