@@ -3,8 +3,8 @@
  *
  * Este serviço fala diretamente com a API (NestJS) e é totalmente
  * independente do Auth mock (`auth-service.ts`): não lê nem escreve nada em
- * localStorage, não alimenta os candidatos de negócio/demo expostos por
- * `getMockCandidateAccounts` (decisão D1 — nenhum adapter, nenhum dual-write).
+ * localStorage e não mantém nenhuma lista local de candidatos (decisão D1 —
+ * nenhum adapter, nenhum dual-write).
  *
  * O Login real (Prompt 03) já está integrado: uma conta criada aqui é
  * reconhecida por `loginRealWithCredentials` (`real-session-service.ts`).

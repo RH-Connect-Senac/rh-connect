@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { InterviewsAiModule } from './interviews-ai/interviews-ai.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { ExternalResourcesModule } from './external-resources/external-resources.module';
+import { AdminCandidatesModule } from './admin-candidates/admin-candidates.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ExternalResourcesModule } from './external-resources/external-resources
     InterviewsAiModule,
     ExternalResourcesModule,
     FeedbackModule,
+    AdminCandidatesModule,
   ],
   controllers: [AppController],
   providers: [],

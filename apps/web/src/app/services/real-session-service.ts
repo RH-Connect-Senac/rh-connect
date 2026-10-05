@@ -55,7 +55,7 @@ function isValidAccountStatus(value: unknown): value is MockAccountStatus {
 }
 
 // A API retorna `id` numérico (`user_id`); o restante do Front já trabalha
-// com `MockAuthUser.id` como string (ids mock como "candidate-demo"), então
+// com `MockAuthUser.id` como string (formato herdado do Auth mock), então
 // convertemos aqui, uma única vez, na borda.
 function toSessionUser(payload: unknown): MockAuthUser | null {
   if (!payload || typeof payload !== "object") {
