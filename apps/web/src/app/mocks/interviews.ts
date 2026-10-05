@@ -3,12 +3,6 @@ import type { InterviewsMockState } from "../domain/interviews";
 export const INTERVIEWS_MOCK_STORAGE_KEY = "rhconnect:interviews:v1";
 export const INTERVIEWS_MOCK_VERSION = 1;
 
-export const DEFAULT_CANDIDATE = {
-  id: "candidate-joao-lima",
-  name: "João Lima",
-  email: "joao.lima@gmail.com",
-};
-
 export const DEFAULT_EVALUATOR = {
   id: "evaluator-carlos-andrade",
   name: "Carlos Andrade",
@@ -24,7 +18,6 @@ export const DEFAULT_EVALUATOR = {
 // com o `assignedEvaluatorId` que o Admin grava no mock de atribuição.
 export const EVALUATOR_DIRECTORY = [
   { id: DEFAULT_EVALUATOR.id, name: DEFAULT_EVALUATOR.name, email: DEFAULT_EVALUATOR.email },
-  { id: "evaluator-beatriz-lima", name: "Beatriz Lima", email: "beatriz.lima@gmail.com" },
   { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha", email: "eduardo.rocha@gmail.com" },
   { id: "evaluator-camila-dias", name: "Camila Dias", email: "camila.dias@gmail.com" },
 ];
