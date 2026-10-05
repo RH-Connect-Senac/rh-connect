@@ -73,6 +73,11 @@ function MaterialsHeroSlideOverlayContent({
 }: {
   overlay: MaterialsHeroSlideOverlay;
 }) {
+  /*
+   * =========================================================
+   * RH CONNECT
+   * =========================================================
+   */
   if (overlay === "rh-connect") {
     return (
       <div
@@ -85,38 +90,38 @@ function MaterialsHeroSlideOverlayContent({
           items-center
           px-6
 
-          sm:px-9
-          md:px-12
-          lg:px-20
-          xl:px-24
-          min-[1440px]:px-28
+          @min-[700px]:px-8
+          @min-[850px]:px-10
+          @min-[1000px]:px-12
+          @min-[1150px]:px-16
+          @min-[1400px]:px-20
         "
       >
         <div
           className="
             flex
-            w-[50%]
+            w-[48%]
             max-w-[18rem]
             flex-col
-            gap-3
+            gap-2.5
             text-left
 
-            sm:w-[44%]
-            sm:max-w-[22rem]
-            sm:gap-4
+            @min-[700px]:w-[46%]
+            @min-[700px]:max-w-[22rem]
+            @min-[700px]:gap-3
 
-            md:w-[38%]
-            md:max-w-[24rem]
+            @min-[850px]:w-[44%]
+            @min-[850px]:max-w-[25rem]
 
-            lg:w-[34%]
-            lg:max-w-[26rem]
-            lg:gap-4
+            @min-[1000px]:w-[42%]
+            @min-[1000px]:max-w-[28rem]
 
-            min-[1440px]:max-w-[30rem]
-            min-[1440px]:gap-5
+            @min-[1150px]:w-[40%]
+            @min-[1150px]:max-w-[30rem]
+            @min-[1150px]:gap-4
 
-            min-[1800px]:max-w-[34rem]
-            min-[1800px]:gap-6
+            @min-[1400px]:w-[38%]
+            @min-[1400px]:max-w-[34rem]
           "
         >
           <img
@@ -128,35 +133,46 @@ function MaterialsHeroSlideOverlayContent({
               shrink-0
               self-start
 
-              sm:h-8
-              md:h-9
-              lg:h-10
-              min-[1440px]:h-12
-              min-[1800px]:h-14
+              @min-[700px]:h-8
+              @min-[850px]:h-9
+              @min-[1000px]:h-10
+              @min-[1150px]:h-11
+              @min-[1400px]:h-12
             "
             draggable={false}
           />
 
           <h2
             className="
-              max-w-[12ch]
+              max-w-[18ch]
               text-2xl
               font-extrabold
               leading-[1.04]
               tracking-normal
               text-[#001640]
 
-              sm:text-3xl
-              md:text-4xl
-              lg:text-[2.5rem]
-              min-[1440px]:text-[3.25rem]
-              min-[1800px]:text-[3.75rem]
+              @min-[700px]:text-[1.75rem]
+
+              @min-[850px]:max-w-[20ch]
+              @min-[850px]:text-[1.9rem]
+
+              @min-[1000px]:max-w-[22ch]
+              @min-[1000px]:text-[2.1rem]
+
+              @min-[1150px]:text-[2.35rem]
+
+              @min-[1400px]:max-w-[20ch]
+              @min-[1400px]:text-[3rem]
             "
           >
-            <span className="block">Prepare-se para</span>
+            <span className="block">
+              Prepare-se para
+            </span>
+
             <span className="block text-[#0075fe]">
               entrevistas com
             </span>
+
             <span className="block text-[#0075fe]">
               mais confiança
             </span>
@@ -170,13 +186,17 @@ function MaterialsHeroSlideOverlayContent({
               leading-snug
               text-[#16345f]
 
-              sm:max-w-[35ch]
-              sm:text-sm
-              md:max-w-[38ch]
-              md:text-base
-              lg:text-base
-              min-[1440px]:text-lg
-              min-[1800px]:text-xl
+              @min-[700px]:max-w-[35ch]
+              @min-[700px]:text-sm
+
+              @min-[850px]:max-w-[38ch]
+
+              @min-[1000px]:max-w-[40ch]
+
+              @min-[1150px]:max-w-[42ch]
+              @min-[1150px]:text-base
+
+              @min-[1400px]:text-lg
             "
           >
             Materiais práticos com dicas, exemplos e orientações
@@ -187,6 +207,11 @@ function MaterialsHeroSlideOverlayContent({
     );
   }
 
+  /*
+   * =========================================================
+   * CACHOLA
+   * =========================================================
+   */
   if (overlay === "cachola") {
     return (
       <div
@@ -199,11 +224,11 @@ function MaterialsHeroSlideOverlayContent({
           items-center
           px-6
 
-          sm:px-9
-          md:px-12
-          lg:px-20
-          xl:px-24
-          min-[1440px]:px-28
+          @min-[700px]:px-8
+          @min-[850px]:px-10
+          @min-[1000px]:px-12
+          @min-[1150px]:px-16
+          @min-[1400px]:px-20
         "
       >
         <div
@@ -321,6 +346,7 @@ function MaterialsHeroSlideOverlayContent({
             <span className="block">
               Conteúdos digitais para
             </span>
+
             <span className="block">
               aprender do seu jeito
             </span>
@@ -344,9 +370,8 @@ function MaterialsHeroSlideOverlayContent({
               lg:text-base
 
               min-[1440px]:text-lg
-
               min-[1800px]:text-xl
-          "
+            "
           >
             Explore livros, audiolivros, podcasts e outros materiais
             educacionais do Senac para estudar com mais autonomia,
@@ -357,6 +382,11 @@ function MaterialsHeroSlideOverlayContent({
     );
   }
 
+  /*
+   * =========================================================
+   * ORANGO
+   * =========================================================
+   */
   if (overlay !== "orango") return null;
 
   return (
@@ -523,7 +553,6 @@ function MaterialsHeroSlideOverlayContent({
             lg:text-base
 
             min-[1440px]:text-lg
-
             min-[1800px]:text-xl
           "
         >
@@ -693,12 +722,14 @@ export function MaterialsHeroSlider({
           >
             <div
               className="
-    relative
-    h-[280px]
-    overflow-hidden
+                @container
+                relative
+                h-[280px]
+                overflow-hidden
 
-    lg:h-[310px]
-    2xl:h-[480px]
+                lg:h-[340px]
+                xl:h-[360px]
+                2xl:h-[480px]
               "
             >
               <img
@@ -723,9 +754,9 @@ export function MaterialsHeroSlider({
                 style={{
                   ...(slide.objectPosition
                     ? {
-                      objectPosition:
-                        slide.objectPosition,
-                    }
+                        objectPosition:
+                          slide.objectPosition,
+                      }
                     : null),
                 }}
               />
