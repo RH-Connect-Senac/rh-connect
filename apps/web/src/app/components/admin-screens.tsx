@@ -4,9 +4,11 @@ import { useState, useEffect, useContext } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
 import type { MockAccountStatus } from "../services/auth-service";
-import type { CandidateProfile } from "../domain/candidate-profile";
+import { buildAdminProfileView } from "../domain/admin-profile-view";
+import type { ProfessionalProfile } from "../domain/professional-profile";
 import {
   getAdminCandidate,
+  getAdminCandidateProfile,
   listAdminCandidates,
   type AdminCandidate,
   type AdminCandidatesList,
@@ -199,7 +201,6 @@ type AdminCandidateRow = {
   createdAt?: string;
   onboardingCompletedAt?: string;
   professionalTitle?: string;
-  location?: string;
 };
 
 type AdminInterviewRow = {
@@ -235,9 +236,6 @@ function createAdminInterviewDisplayId(index: number) {
 // CANDIDATE em `app_user`). Não há fallback fictício: sem dados, as telas
 // mostram carregando, erro ou o estado vazio real.
 function toAdminCandidateRow(candidate: AdminCandidate): AdminCandidateRow {
-  const city = candidate.profile?.city?.trim();
-  const state = candidate.profile?.state?.trim();
-
   return {
     id: candidate.id,
     displayId: `#C-${candidate.id.padStart(3, "0")}`,
@@ -248,7 +246,6 @@ function toAdminCandidateRow(candidate: AdminCandidate): AdminCandidateRow {
     createdAt: candidate.createdAt,
     onboardingCompletedAt: candidate.onboardingCompletedAt ?? undefined,
     professionalTitle: candidate.profile?.professionalTitle?.trim() || undefined,
-    location: [city, state].filter(Boolean).join(" / ") || undefined,
   };
 }
 
@@ -316,13 +313,39 @@ function useAdminCandidateDetail(candidateId: string | undefined) {
   return { state, reload: () => setAttempt((value) => value + 1) };
 }
 
-// O perfil profissional completo (área, subárea, formações, cursos,
-// experiências e habilidades) ainda não existe no backend — hoje fica só no
-// localStorage do próprio candidato. O Admin NÃO deve ler o localStorage do
-// seu navegador como se fosse o perfil do candidato; por isso retorna `null`
-// até a migração desse módulo.
-function getAdminCandidateProfile(): CandidateProfile | null {
-  return null;
+// Perfil Profissional REAL (somente leitura) vindo de
+// `GET /admin/candidates/:id/profile`. Sem fallback: carregando, erro ou dado real.
+function useAdminCandidateProfile(candidateId: string | undefined) {
+  const [state, setState] = useState<AdminRemoteState<ProfessionalProfile>>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!candidateId) {
+      setState({ status: "not_found" });
+      return;
+    }
+
+    setState({ status: "loading" });
+
+    getAdminCandidateProfile(candidateId).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setState({ status: "success", data: result.data });
+      } else if (result.reason === "not_found") {
+        setState({ status: "not_found" });
+      } else {
+        setState({ status: "error", message: result.message });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [candidateId, attempt]);
+
+  return { state, reload: () => setAttempt((value) => value + 1) };
 }
 
 function AdminLoadingCard({ label }: { label: string }) {
@@ -1623,6 +1646,152 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
   );
 }
 
+function AdminProfessionalProfileCard({
+  profile,
+}: {
+  profile: ReturnType<typeof useAdminCandidateProfile>;
+}) {
+  const { state, reload } = profile;
+  const view = state.status === "success" ? buildAdminProfileView(state.data) : null;
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+        <div>
+          <h3 className="font-bold text-foreground">Perfil Profissional</h3>
+          <p className="text-xs text-muted-foreground">Dados do perfil preenchido pelo candidato (somente leitura).</p>
+        </div>
+        {view && (
+          <Badge variant={view.isComplete ? "success" : "warning"}>
+            {view.isComplete ? "Perfil completo" : "Perfil incompleto"}
+          </Badge>
+        )}
+      </div>
+
+      {state.status === "loading" && (
+        <span role="status" aria-live="polite" className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Spinner size="md" />
+          Carregando perfil profissional...
+        </span>
+      )}
+
+      {state.status === "not_found" && (
+        <p className="text-sm text-muted-foreground">Perfil profissional não encontrado para este candidato.</p>
+      )}
+
+      {state.status === "error" && (
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-red-600" role="alert">{state.message}</p>
+          <Btn variant="outline" size="sm" onClick={reload}>Tentar novamente</Btn>
+        </div>
+      )}
+
+      {view && (
+        <>
+          {!view.isComplete && view.missingSectionLabels.length > 0 && (
+            <p className="text-xs text-muted-foreground mb-4">
+              Pendências: {view.missingSectionLabels.join(", ")}.
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 text-sm">
+            {view.objective.map((item) => (
+              <div key={item.label} className="rounded-xl border border-border bg-muted/30 p-3">
+                <p className="text-xs text-muted-foreground mb-0.5">{item.label}</p>
+                <p className="font-semibold text-foreground">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 pt-5 border-t border-border">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Resumo profissional</p>
+            <p className="text-sm text-foreground leading-relaxed">{view.summary}</p>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Formação acadêmica</p>
+              {view.educations.length ? (
+                <div className="space-y-3">
+                  {view.educations.map((item) => (
+                    <div key={item.key}>
+                      <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                      <p className="text-xs text-muted-foreground">{item.subtitle}</p>
+                      <p className="text-xs text-muted-foreground">{item.period}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">{view.educationsEmptyMessage}</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Cursos complementares</p>
+              {view.courses.length ? (
+                <div className="space-y-3">
+                  {view.courses.map((item) => (
+                    <div key={item.key}>
+                      <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                      <p className="text-xs text-muted-foreground">{item.subtitle}</p>
+                      <p className="text-xs text-muted-foreground">{item.period}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">{view.coursesEmptyMessage}</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Experiência profissional</p>
+              {view.experiences.length ? (
+                <div className="space-y-3">
+                  {view.experiences.map((item) => (
+                    <div key={item.key}>
+                      <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                      <p className="text-xs text-muted-foreground">{item.period}</p>
+                      {item.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">{view.experiencesEmptyMessage}</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border p-4">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Habilidades e competências</p>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Técnicas</p>
+                  {view.technicalSkills.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {view.technicalSkills.map((skill) => <Badge key={skill.key} variant="info">{skill.name}</Badge>)}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">{view.technicalSkillsEmptyMessage}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-2">Comportamentais</p>
+                  {view.behavioralSkills.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {view.behavioralSkills.map((skill) => <Badge key={skill.key} variant="success">{skill.name}</Badge>)}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">{view.behavioralSkillsEmptyMessage}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ─── Screen: Detalhe do Candidato ─────────────────────────────────────────────
 
 export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }) {
@@ -1631,6 +1800,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
   const interviewIdParam = searchParams.get("interviewId") ?? undefined;
   const adminVisibleInterviews = getAdminVisibleInterviews();
   const candidateDetail = useAdminCandidateDetail(candidateIdParam);
+  const candidateProfileState = useAdminCandidateProfile(candidateIdParam);
   const relatedInterviews = adminVisibleInterviews.filter((item) => item.candidateId === candidateIdParam);
   const realInterview =
     getInterviewById(interviewIdParam) ??
@@ -1707,18 +1877,6 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
         ]
       : []),
   ];
-  const candidateProfile = getAdminCandidateProfile();
-  const professionalArea = candidateProfile?.areaId
-    ? PROFESSIONAL_AREAS.find((area) => area.id === candidateProfile.areaId)?.name ?? candidateProfile.areaId
-    : "";
-  const professionalSubarea = candidateProfile?.subareaId
-    ? (
-        candidateProfile.areaId
-          ? getProfessionalSubareasByArea(candidateProfile.areaId as ProfessionalAreaId).find((subarea) => subarea.id === candidateProfile.subareaId)?.name
-          : undefined
-      ) ?? candidateProfile.subareaId
-    : "";
-  const notInformed = "Não informado";
 
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
@@ -1756,129 +1914,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           </div>
         </Card>
 
-        <Card className="p-6">
-          <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
-            <div>
-              <h3 className="font-bold text-foreground">Perfil Profissional</h3>
-              <p className="text-xs text-muted-foreground">Título profissional e localização vêm da conta. Os demais campos ainda não são sincronizados com o servidor.</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
-            {[
-              { label: "Área", value: professionalArea },
-              { label: "Subárea", value: professionalSubarea },
-              { label: "Cargo desejado", value: candidateProfile?.desiredRole },
-              { label: "Senioridade", value: candidateProfile?.seniority },
-              { label: "Tipo de contrato", value: candidateProfile?.contractType },
-              { label: "Título profissional", value: candidateAccount.professionalTitle },
-              { label: "Localização", value: candidateAccount.location },
-            ].map((item) => (
-              <div key={item.label} className="rounded-xl border border-border bg-muted/30 p-3">
-                <p className="text-xs text-muted-foreground mb-0.5">{item.label}</p>
-                <p className="font-semibold text-foreground">{item.value?.trim() || notInformed}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-5 pt-5 border-t border-border">
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Resumo profissional</p>
-            <p className="text-sm text-foreground leading-relaxed">
-              {candidateProfile?.professionalSummary?.trim() || notInformed}
-            </p>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-xl border border-border p-4">
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Formação acadêmica</p>
-              {candidateProfile?.formations.length ? (
-                <div className="space-y-3">
-                  {candidateProfile.formations.map((formation) => (
-                    <div key={formation.id}>
-                      <p className="text-sm font-semibold text-foreground">{formation.title || notInformed}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[formation.institution, formation.level, formation.status].filter(Boolean).join(" · ") || notInformed}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {[formation.startDate, formation.endDate].filter(Boolean).join(" – ") || notInformed}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Nenhuma formação cadastrada.</p>
-              )}
-            </div>
-
-            <div className="rounded-xl border border-border p-4">
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Cursos complementares</p>
-              {candidateProfile?.courses.length ? (
-                <div className="space-y-3">
-                  {candidateProfile.courses.map((course) => (
-                    <div key={course.id}>
-                      <p className="text-sm font-semibold text-foreground">{course.name || notInformed}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[course.institution, course.workload, course.completedAt].filter(Boolean).join(" · ") || notInformed}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Nenhum curso complementar cadastrado.</p>
-              )}
-            </div>
-
-            <div className="rounded-xl border border-border p-4">
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Experiência profissional</p>
-              {candidateProfile?.experiences.length ? (
-                <div className="space-y-3">
-                  {candidateProfile.experiences.map((experience) => (
-                    <div key={experience.id}>
-                      <p className="text-sm font-semibold text-foreground">
-                        {[experience.role, experience.company].filter(Boolean).join(" · ") || notInformed}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {[
-                          experience.startDate,
-                          experience.current ? "Atual" : experience.endDate,
-                        ].filter(Boolean).join(" – ") || notInformed}
-                      </p>
-                      {experience.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{experience.description}</p>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Nenhuma experiência cadastrada.</p>
-              )}
-            </div>
-
-            <div className="rounded-xl border border-border p-4">
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Habilidades e competências</p>
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Técnicas</p>
-                  {candidateProfile?.technicalSkills.length ? (
-                    <div className="flex flex-wrap gap-2">
-                      {candidateProfile.technicalSkills.map((skill) => <Badge key={skill} variant="info">{skill}</Badge>)}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">Nenhuma habilidade técnica cadastrada.</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Comportamentais</p>
-                  {candidateProfile?.behavioralSkills.length ? (
-                    <div className="flex flex-wrap gap-2">
-                      {candidateProfile.behavioralSkills.map((skill) => <Badge key={skill} variant="success">{skill}</Badge>)}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">Nenhuma competência comportamental cadastrada.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </Card>
+        <AdminProfessionalProfileCard profile={candidateProfileState} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Timeline */}

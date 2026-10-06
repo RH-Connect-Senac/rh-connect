@@ -1,299 +1,289 @@
-import {
-  CANDIDATE_PROFILE_STORAGE_KEY,
-  CANDIDATE_PROFILE_VERSION,
-  type CandidateCourse,
-  type CandidateExperience,
-  type CandidateFormation,
-  type CandidateProfile,
-  type CandidateProfilePatch,
-  type CandidateProfilesStorage,
-} from "../domain/candidate-profile";
-import type { MockAuthUser } from "./auth-service";
+/**
+ * Perfil Profissional REAL do candidato (Fluxo 02).
+ *
+ * Consome `/candidate/profile` (protegido por JWT + `@Roles('CANDIDATE')` no
+ * Back). O banco/API é a única fonte de verdade: não há cache, fallback nem
+ * qualquer leitura/gravação no armazenamento do navegador. Toda operação de escrita devolve
+ * o perfil completo já recalculado pelo Back (`isComplete` / `missingSections`),
+ * e a tela só reflete o que a API confirmou (sem atualização otimista).
+ */
+import type {
+  AcademicLevel,
+  ContractType,
+  DeclarationSection,
+  CourseStatus,
+  EducationStatus,
+  ObjectiveFieldKey,
+  ProfessionalLevel,
+  ProfessionalProfile,
+  ProfileSectionKey,
+  SkillType,
+} from "../domain/professional-profile";
+import type {
+  CoursePayload,
+  EducationPayload,
+  ExperiencePayload,
+} from "../domain/professional-profile-forms";
 
-function canUseStorage() {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+const API_BASE_URL = (
+  (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+    .env?.VITE_API_URL ?? "http://localhost:3000"
+).replace(/\/+$/, "");
+
+const PROFILE_PATH = "/candidate/profile";
+
+export type ProfileFailureReason =
+  | "unauthorized" // 401 (sessão expirada) / 403
+  | "not_found" // 404
+  | "conflict" // 409
+  | "invalid" // 400
+  | "network" // sem resposta
+  | "error"; // 5xx / payload inesperado
+
+export type ProfileResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; reason: ProfileFailureReason; message: string };
+
+export type ObjectivePatch = {
+  professionalTitle?: string | null;
+  professionalArea?: string | null;
+  professionalSubarea?: string | null;
+  desiredPosition?: string | null;
+  professionalLevel?: ProfessionalLevel | null;
+  contractType?: ContractType | null;
+  professionalSummary?: string | null;
+};
+
+// ── Transporte ──────────────────────────────────────────────────────────────
+
+async function refreshAccessToken(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
-function nowIso() {
-  return new Date().toISOString();
+// O access token dura 15 minutos: num 401 renova uma única vez via
+// `/auth/refresh` (mesmo fluxo dos demais services reais) e repete.
+async function requestApi(
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<Response | null> {
+  const doFetch = () =>
+    fetch(`${API_BASE_URL}${PROFILE_PATH}${path}`, {
+      method,
+      credentials: "include",
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  try {
+    const response = await doFetch();
+    if (response.status !== 401) return response;
+    if (!(await refreshAccessToken())) return response;
+    return await doFetch();
+  } catch {
+    return null;
+  }
 }
 
-function createEmptyCandidateProfile(candidateId: string): CandidateProfile {
-  return {
-    version: CANDIDATE_PROFILE_VERSION,
-    candidateId,
-    professionalSummary: "",
-    areaId: "",
-    subareaId: "",
-    desiredRole: "",
-    seniority: "",
-    contractType: "",
-    formations: [],
-    courses: [],
-    experiences: [],
-    technicalSkills: [],
-    behavioralSkills: [],
-    updatedAt: nowIso(),
-  };
+const DEFAULT_MESSAGES: Record<ProfileFailureReason, string> = {
+  unauthorized: "Sua sessão expirou. Faça login novamente.",
+  not_found: "Registro não encontrado. Ele pode ter sido removido.",
+  conflict: "Não foi possível concluir esta ação.",
+  invalid: "Dados inválidos. Revise os campos e tente novamente.",
+  network: "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.",
+  error: "Não foi possível concluir a operação. Tente novamente em instantes.",
+};
+
+function reasonFromStatus(status: number): ProfileFailureReason {
+  if (status === 400 || status === 422) return "invalid";
+  if (status === 401 || status === 403) return "unauthorized";
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  return "error";
 }
 
-function normalizeString(value: unknown) {
-  return typeof value === "string" ? value : "";
+/** Extrai a(s) mensagem(ns) do erro padrão do Nest ({ message: string | string[] }). */
+export async function extractApiMessage(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { message?: unknown };
+    if (typeof body.message === "string" && body.message.trim()) return body.message;
+    if (Array.isArray(body.message)) {
+      const parts = body.message.filter((item): item is string => typeof item === "string");
+      if (parts.length > 0) return parts.join(" ");
+    }
+  } catch {
+    // corpo ausente ou não-JSON
+  }
+  return null;
 }
 
-function normalizeStringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function hasAnyText(values: string[]) {
-  return values.some((value) => value.trim().length > 0);
-}
-
-function normalizeFormation(value: unknown): CandidateFormation | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Partial<CandidateFormation>;
-  if (typeof item.id !== "string") return null;
-
-  const startDate = normalizeString(item.startDate);
-  const endDate = normalizeString(item.endDate);
-  const period = normalizeString(item.period);
-
-  return {
-    id: item.id,
-    title: normalizeString(item.title),
-    institution: normalizeString(item.institution),
-    level: normalizeString(item.level),
-    status: normalizeString(item.status),
-    startDate: startDate || period,
-    endDate,
-    period,
-  };
-}
-
-function normalizeCourse(value: unknown): CandidateCourse | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Partial<CandidateCourse>;
-  if (typeof item.id !== "string") return null;
-
-  return {
-    id: item.id,
-    name: normalizeString(item.name),
-    institution: normalizeString(item.institution),
-    workload: normalizeString(item.workload),
-    completedAt: normalizeString(item.completedAt),
-  };
-}
-
-function normalizeExperience(value: unknown): CandidateExperience | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Partial<CandidateExperience>;
-  if (typeof item.id !== "string") return null;
-
-  return {
-    id: item.id,
-    company: normalizeString(item.company),
-    role: normalizeString(item.role),
-    startDate: normalizeString(item.startDate),
-    endDate: normalizeString(item.endDate),
-    current: item.current === true,
-    description: normalizeString(item.description),
-  };
-}
-
-function normalizeProfile(value: unknown): CandidateProfile | null {
-  if (!value || typeof value !== "object") return null;
-  const profile = value as Partial<CandidateProfile>;
-  if (typeof profile.candidateId !== "string") return null;
-
-  return {
-    version: CANDIDATE_PROFILE_VERSION,
-    candidateId: profile.candidateId,
-    professionalSummary: normalizeString(profile.professionalSummary),
-    areaId: normalizeString(profile.areaId),
-    subareaId: normalizeString(profile.subareaId),
-    desiredRole: normalizeString(profile.desiredRole),
-    seniority: normalizeString(profile.seniority),
-    contractType: normalizeString(profile.contractType),
-    formations: Array.isArray(profile.formations)
-      ? profile.formations.map(normalizeFormation).filter((item): item is CandidateFormation => item !== null)
-      : [],
-    courses: Array.isArray(profile.courses)
-      ? profile.courses.map(normalizeCourse).filter((item): item is CandidateCourse => item !== null)
-      : [],
-    experiences: Array.isArray(profile.experiences)
-      ? profile.experiences.map(normalizeExperience).filter((item): item is CandidateExperience => item !== null)
-      : [],
-    technicalSkills: normalizeStringArray(profile.technicalSkills),
-    behavioralSkills: normalizeStringArray(profile.behavioralSkills),
-    updatedAt: normalizeString(profile.updatedAt) || nowIso(),
-  };
-}
-
-function normalizeStorage(value: unknown): CandidateProfilesStorage | null {
-  if (!value || typeof value !== "object") return null;
-  const storage = value as Partial<CandidateProfilesStorage>;
-  if (storage.version !== CANDIDATE_PROFILE_VERSION || !Array.isArray(storage.profiles)) return null;
-
-  const byCandidateId = new Map<string, CandidateProfile>();
-  for (const rawProfile of storage.profiles) {
-    const profile = normalizeProfile(rawProfile);
-    if (profile) byCandidateId.set(profile.candidateId, profile);
+async function run(
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<ProfileResult<ProfessionalProfile>> {
+  const response = await requestApi(method, path, body);
+  if (!response) {
+    return { ok: false, reason: "network", message: DEFAULT_MESSAGES.network };
   }
 
-  return {
-    version: CANDIDATE_PROFILE_VERSION,
-    profiles: Array.from(byCandidateId.values()),
-  };
-}
-
-function cleanStringArray(values: string[]) {
-  const seen = new Set<string>();
-  return values
-    .map((value) => value.trim())
-    .filter((value) => {
-      if (!value) return false;
-      const key = value.toLocaleLowerCase("pt-BR");
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
-
-function cleanFormations(values: CandidateFormation[]) {
-  return values.filter((item) => hasAnyText([
-    item.title,
-    item.institution,
-    item.level,
-    item.startDate,
-    item.endDate,
-    item.status,
-  ]));
-}
-
-function cleanCourses(values: CandidateCourse[]) {
-  return values.filter((item) => hasAnyText([
-    item.name,
-    item.institution,
-    item.workload,
-    item.completedAt,
-  ]));
-}
-
-function cleanExperiences(values: CandidateExperience[]) {
-  return values.filter((item) => hasAnyText([
-    item.company,
-    item.role,
-    item.startDate,
-    item.endDate,
-    item.description,
-  ]));
-}
-
-function createInitialStorage(): CandidateProfilesStorage {
-  return {
-    version: CANDIDATE_PROFILE_VERSION,
-    profiles: [],
-  };
-}
-
-function readStorage(): CandidateProfilesStorage {
-  if (!canUseStorage()) return createInitialStorage();
-
-  const raw = window.localStorage.getItem(CANDIDATE_PROFILE_STORAGE_KEY);
-  if (!raw) {
-    const initial = createInitialStorage();
-    saveStorage(initial);
-    return initial;
+  if (!response.ok) {
+    const reason = reasonFromStatus(response.status);
+    // 401/403 e 5xx usam sempre a mensagem padrão (não vazar detalhe técnico).
+    const apiMessage =
+      reason === "invalid" || reason === "conflict" || reason === "not_found"
+        ? await extractApiMessage(response)
+        : null;
+    return { ok: false, reason, message: apiMessage ?? DEFAULT_MESSAGES[reason] };
   }
 
   try {
-    const parsed = JSON.parse(raw);
-    const normalized = normalizeStorage(parsed);
-    if (normalized) return normalized;
+    const profile = parseProfessionalProfile(await response.json());
+    if (profile) return { ok: true, data: profile };
   } catch {
-    // Invalid localStorage data is safely replaced by a clean profile state.
+    // cai no erro genérico abaixo
   }
-
-  const reset = createInitialStorage();
-  saveStorage(reset);
-  return reset;
+  return { ok: false, reason: "error", message: DEFAULT_MESSAGES.error };
 }
 
-function saveStorage(storage: CandidateProfilesStorage) {
-  if (!canUseStorage()) return;
-  window.localStorage.setItem(CANDIDATE_PROFILE_STORAGE_KEY, JSON.stringify(storage));
-}
+// ── Parsing defensivo da resposta ───────────────────────────────────────────
 
-function resolveProfileSeed(candidateId: string) {
-  return createEmptyCandidateProfile(candidateId);
-}
+const SECTION_KEYS: ProfileSectionKey[] = [
+  "objective",
+  "education",
+  "courses",
+  "experience",
+  "technicalSkills",
+  "behavioralSkills",
+];
 
-export function getCandidateProfile(candidateId: string, sessionUser?: Pick<MockAuthUser, "id" | "role"> | null) {
-  const storage = readStorage();
-  const existing = storage.profiles.find((profile) => profile.candidateId === candidateId);
-  if (existing) return existing;
+const OBJECTIVE_KEYS: ObjectiveFieldKey[] = [
+  "professionalTitle",
+  "professionalArea",
+  "professionalSubarea",
+  "desiredPosition",
+  "professionalLevel",
+  "contractType",
+  "professionalSummary",
+];
 
-  const profile = resolveProfileSeed(candidateId);
-  saveStorage({
-    version: CANDIDATE_PROFILE_VERSION,
-    profiles: [...storage.profiles, profile],
-  });
-  return profile;
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+const asString = (value: unknown): string | null =>
+  typeof value === "string" ? value : null;
+const asArray = (value: unknown): Record<string, unknown>[] =>
+  Array.isArray(value) ? value.filter(isRecord) : [];
 
-export function saveCandidateProfile(candidateId: string, patch: CandidateProfilePatch) {
-  const storage = readStorage();
-  const current = storage.profiles.find((profile) => profile.candidateId === candidateId) ?? createEmptyCandidateProfile(candidateId);
-  const next: CandidateProfile = {
-    ...current,
-    ...patch,
-    version: CANDIDATE_PROFILE_VERSION,
-    candidateId,
-    formations: cleanFormations(patch.formations ?? current.formations),
-    courses: cleanCourses(patch.courses ?? current.courses),
-    experiences: cleanExperiences(patch.experiences ?? current.experiences),
-    technicalSkills: cleanStringArray(patch.technicalSkills ?? current.technicalSkills),
-    behavioralSkills: cleanStringArray(patch.behavioralSkills ?? current.behavioralSkills),
-    updatedAt: nowIso(),
+export function parseProfessionalProfile(payload: unknown): ProfessionalProfile | null {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.isComplete !== "boolean") return null;
+  if (!Array.isArray(payload.missingSections)) return null;
+  if (!isRecord(payload.declarations)) return null;
+
+  const declarations = payload.declarations;
+
+  return {
+    professionalTitle: asString(payload.professionalTitle),
+    professionalArea: asString(payload.professionalArea),
+    professionalSubarea: asString(payload.professionalSubarea),
+    desiredPosition: asString(payload.desiredPosition),
+    professionalLevel: asString(payload.professionalLevel) as ProfessionalLevel | null,
+    contractType: asString(payload.contractType) as ContractType | null,
+    professionalSummary: asString(payload.professionalSummary),
+    educations: asArray(payload.educations).map((item) => ({
+      id: Number(item.id),
+      degree: asString(item.degree),
+      educationInstitution: asString(item.educationInstitution) ?? "",
+      academicLevel: item.academicLevel as AcademicLevel,
+      status: item.status as EducationStatus,
+      startDate: asString(item.startDate) ?? "",
+      endDate: asString(item.endDate),
+    })),
+    courses: asArray(payload.courses).map((item) => ({
+      id: Number(item.id),
+      courseName: asString(item.courseName) ?? "",
+      courseInstitution: asString(item.courseInstitution),
+      workloadHours: typeof item.workloadHours === "number" ? item.workloadHours : null,
+      status: (item.status === "EM_ANDAMENTO" ? "EM_ANDAMENTO" : "CONCLUIDO") as CourseStatus,
+      startDate: asString(item.startDate),
+      completedAt: asString(item.completedAt),
+    })),
+    experiences: asArray(payload.experiences).map((item) => ({
+      id: Number(item.id),
+      companyName: asString(item.companyName) ?? "",
+      jobRole: asString(item.jobRole) ?? "",
+      startDate: asString(item.startDate) ?? "",
+      endDate: asString(item.endDate),
+      isCurrent: item.isCurrent === true,
+      description: asString(item.description),
+    })),
+    technicalSkills: asArray(payload.technicalSkills).map((item) => ({
+      id: Number(item.id),
+      name: asString(item.name) ?? "",
+    })),
+    behavioralSkills: asArray(payload.behavioralSkills).map((item) => ({
+      id: Number(item.id),
+      name: asString(item.name) ?? "",
+    })),
+    declarations: {
+      noCourses: declarations.noCourses === true,
+      noExperience: declarations.noExperience === true,
+      noTechnicalSkills: declarations.noTechnicalSkills === true,
+    },
+    isComplete: payload.isComplete,
+    missingSections: payload.missingSections.filter((item): item is ProfileSectionKey =>
+      SECTION_KEYS.includes(item as ProfileSectionKey),
+    ),
+    missingObjectiveFields: Array.isArray(payload.missingObjectiveFields)
+      ? payload.missingObjectiveFields.filter((item): item is ObjectiveFieldKey =>
+          OBJECTIVE_KEYS.includes(item as ObjectiveFieldKey),
+        )
+      : [],
+    updatedAt: asString(payload.updatedAt) ?? "",
   };
-
-  saveStorage({
-    version: CANDIDATE_PROFILE_VERSION,
-    profiles: [
-      ...storage.profiles.filter((profile) => profile.candidateId !== candidateId),
-      next,
-    ],
-  });
-
-  return next;
 }
 
-export function getCandidateProfileCompleteness(profile: CandidateProfile) {
-  const fields = [
-    profile.professionalSummary,
-    profile.areaId,
-    profile.subareaId,
-    profile.desiredRole,
-    profile.seniority,
-    profile.contractType,
-    profile.formations.some((item) => hasAnyText([item.title, item.institution, item.level, item.startDate, item.endDate, item.status])) ? "filled" : "",
-    profile.courses.some((item) => hasAnyText([item.name, item.institution, item.workload, item.completedAt])) ? "filled" : "",
-    profile.experiences.some((item) => hasAnyText([item.company, item.role, item.startDate, item.endDate, item.description])) ? "filled" : "",
-    profile.technicalSkills.some((value) => value.trim().length > 0) ? "filled" : "",
-    profile.behavioralSkills.some((value) => value.trim().length > 0) ? "filled" : "",
-  ];
+// ── API pública ─────────────────────────────────────────────────────────────
 
-  const filled = fields.filter((value) => value.trim().length > 0).length;
-  return Math.round((filled / fields.length) * 100);
-}
+export const getCandidateProfile = () => run("GET", "");
 
-export function isCandidateProfileReadyForInterview(profile: CandidateProfile) {
-  return [
-    profile.areaId,
-    profile.subareaId,
-    profile.desiredRole,
-    profile.seniority,
-    profile.contractType,
-    profile.professionalSummary,
-  ].every((value) => value.trim().length > 0);
-}
+export const updateCandidateObjective = (patch: ObjectivePatch) => run("PATCH", "", patch);
+
+export const addEducation = (payload: EducationPayload) => run("POST", "/educations", payload);
+export const updateEducation = (id: number, payload: EducationPayload) =>
+  run("PATCH", `/educations/${id}`, payload);
+export const removeEducation = (id: number) => run("DELETE", `/educations/${id}`);
+
+export const addCourse = (payload: CoursePayload) => run("POST", "/courses", payload);
+export const updateCourse = (id: number, payload: CoursePayload) =>
+  run("PATCH", `/courses/${id}`, payload);
+export const removeCourse = (id: number) => run("DELETE", `/courses/${id}`);
+
+export const addExperience = (payload: ExperiencePayload) => run("POST", "/experiences", payload);
+export const updateExperience = (id: number, payload: ExperiencePayload) =>
+  run("PATCH", `/experiences/${id}`, payload);
+export const removeExperience = (id: number) => run("DELETE", `/experiences/${id}`);
+
+export const addSkill = (type: SkillType, name: string) =>
+  run("POST", "/skills", { type, name });
+export const removeSkill = (id: number) => run("DELETE", `/skills/${id}`);
+
+const DECLARATION_PATH: Record<DeclarationSection, string> = {
+  courses: "/declarations/courses",
+  experience: "/declarations/experience",
+  technicalSkills: "/declarations/technical-skills",
+};
+
+/** "Não possuo…": a API recusa (409) se já houver registros na seção. */
+export const declareNone = (section: DeclarationSection) =>
+  run("PUT", DECLARATION_PATH[section]);
+export const removeDeclaration = (section: DeclarationSection) =>
+  run("DELETE", DECLARATION_PATH[section]);

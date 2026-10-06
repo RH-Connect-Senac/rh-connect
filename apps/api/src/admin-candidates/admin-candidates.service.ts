@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { CandidateProfileService } from '../candidate-profile/candidate-profile.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 // Limite de segurança da listagem. A tela do Admin filtra no Front; quando a
@@ -52,7 +53,10 @@ function toAdminCandidate(record: CandidateRecord) {
 
 @Injectable()
 export class AdminCandidatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly candidateProfileService: CandidateProfileService,
+  ) {}
 
   async list() {
     const where: Prisma.app_userWhereInput = { user_role: 'CANDIDATE' };
@@ -90,5 +94,27 @@ export class AdminCandidatesService {
     }
 
     return toAdminCandidate(record);
+  }
+
+  /**
+   * Perfil Profissional completo, SOMENTE LEITURA. Reaproveita a serialização
+   * e a completude do CandidateProfileService (sem upsert). Id de conta que
+   * não é CANDIDATE responde 404.
+   */
+  async getProfile(id: number) {
+    if (!Number.isInteger(id) || id < 1 || id > MAX_USER_ID) {
+      throw new NotFoundException('Candidato não encontrado');
+    }
+
+    const user = await this.prisma.app_user.findFirst({
+      where: { user_id: id, user_role: 'CANDIDATE' },
+      select: { user_id: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Candidato não encontrado');
+    }
+
+    return this.candidateProfileService.getProfileReadOnly(user.user_id);
   }
 }

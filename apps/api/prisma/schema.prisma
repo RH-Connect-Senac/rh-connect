@@ -45,16 +45,90 @@ model app_user {
 }
 
 model candidate_profile {
-  candidate_profile_id Int      @id @default(autoincrement())
-  user_id              Int      @unique
-  professional_title   String?  @db.VarChar(120)
-  city                 String?  @db.VarChar(100)
-  state                String?  @db.Char(2)
-  created_at           DateTime @default(now()) @db.Timestamptz(6)
-  updated_at           DateTime @default(now()) @db.Timestamptz(6)
-  app_user             app_user @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_candidate_profile_user")
+  candidate_profile_id              Int                    @id @default(autoincrement())
+  user_id                           Int                    @unique
+  professional_title                String?                @db.VarChar(60)
+  desired_position                  String?                @db.VarChar(60)
+  professional_area                 String?                @db.VarChar(50)
+  professional_subarea              String?                @db.VarChar(50)
+  professional_level                professional_level?
+  contract_type                     contract_type?
+  professional_summary              String?                @db.VarChar(600)
+  city                              String?                @db.VarChar(100)
+  state                             String?                @db.Char(2)
+  courses_none_declared_at          DateTime?              @db.Timestamptz(6)
+  experience_none_declared_at       DateTime?              @db.Timestamptz(6)
+  technical_skills_none_declared_at DateTime?              @db.Timestamptz(6)
+  created_at                        DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at                        DateTime               @default(now()) @db.Timestamptz(6)
+  app_user                          app_user               @relation(fields: [user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_candidate_profile_user")
+  candidate_education               candidate_education[]
+  candidate_course                  candidate_course[]
+  candidate_experience              candidate_experience[]
+  candidate_skill                   candidate_skill[]
 
   @@index([user_id], map: "idx_candidate_profile_user_id")
+}
+
+model candidate_education {
+  education_id          Int               @id @default(autoincrement())
+  candidate_profile_id  Int
+  degree                String?           @db.VarChar(80)
+  education_institution String            @db.VarChar(80)
+  academic_level        academic_level
+  education_status      education_status
+  start_date            DateTime          @db.Date
+  end_date              DateTime?         @db.Date
+  created_at            DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime          @default(now()) @db.Timestamptz(6)
+  candidate_profile     candidate_profile @relation(fields: [candidate_profile_id], references: [candidate_profile_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_candidate_education_profile")
+
+  @@index([candidate_profile_id], map: "idx_candidate_education_profile_id")
+}
+
+model candidate_course {
+  course_id            Int               @id @default(autoincrement())
+  candidate_profile_id Int
+  course_name          String            @db.VarChar(80)
+  course_institution   String?           @db.VarChar(80)
+  workload_hours       Int?
+  course_status        course_status
+  start_date           DateTime?         @db.Date
+  completed_at         DateTime?         @db.Date
+  created_at           DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime          @default(now()) @db.Timestamptz(6)
+  candidate_profile    candidate_profile @relation(fields: [candidate_profile_id], references: [candidate_profile_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_candidate_course_profile")
+
+  @@index([candidate_profile_id], map: "idx_candidate_course_profile_id")
+}
+
+model candidate_experience {
+  experience_id        Int               @id @default(autoincrement())
+  candidate_profile_id Int
+  company_name         String            @db.VarChar(80)
+  job_role             String            @db.VarChar(60)
+  start_date           DateTime          @db.Date
+  end_date             DateTime?         @db.Date
+  is_current           Boolean           @default(false)
+  description          String?           @db.VarChar(800)
+  created_at           DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime          @default(now()) @db.Timestamptz(6)
+  candidate_profile    candidate_profile @relation(fields: [candidate_profile_id], references: [candidate_profile_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_candidate_experience_profile")
+
+  @@index([candidate_profile_id], map: "idx_candidate_experience_profile_id")
+}
+
+// A unicidade case-insensitive (candidate_profile_id, skill_type, lower(skill_name))
+// vive em um índice funcional criado na migration (o Prisma não o expressa).
+model candidate_skill {
+  skill_id             Int               @id @default(autoincrement())
+  candidate_profile_id Int
+  skill_type           skill_type
+  skill_name           String            @db.VarChar(60)
+  created_at           DateTime          @default(now()) @db.Timestamptz(6)
+  candidate_profile    candidate_profile @relation(fields: [candidate_profile_id], references: [candidate_profile_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_candidate_skill_profile")
+
+  @@index([candidate_profile_id, skill_type], map: "idx_candidate_skill_profile_type")
 }
 
 model evaluator_profile {
@@ -71,19 +145,19 @@ model evaluator_profile {
 }
 
 model external_learning_resource {
-  resource_id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  source                String   @db.VarChar(50)
-  external_key          String   @unique @db.VarChar(128)
-  title                 String   @db.VarChar(400)
-  resource_type         String   @db.VarChar(50)
-  section               String?  @db.VarChar(200)
-  area                  String?  @db.VarChar(120)
-  url                   String?  @db.Text
-  cover_url             String?  @db.Text
-  direct_link_available Boolean  @default(false)
-  is_active             Boolean  @default(true)
-  created_at            DateTime @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime @default(now()) @db.Timestamptz(6)
+  resource_id           String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source                String                            @db.VarChar(50)
+  external_key          String                            @unique @db.VarChar(128)
+  title                 String                            @db.VarChar(400)
+  resource_type         String                            @db.VarChar(50)
+  section               String?                           @db.VarChar(200)
+  area                  String?                           @db.VarChar(120)
+  url                   String?                           @db.Text
+  cover_url             String?                           @db.Text
+  direct_link_available Boolean                           @default(false)
+  is_active             Boolean                           @default(true)
+  created_at            DateTime                          @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                          @default(now()) @db.Timestamptz(6)
   category_links        external_resource_category_link[]
 
   @@index([source], map: "idx_external_learning_resource_source")
@@ -93,13 +167,13 @@ model external_learning_resource {
 }
 
 model external_resource_category {
-  category_id   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  source        String   @db.VarChar(50)
-  external_code String   @db.VarChar(50)
-  name          String   @db.VarChar(150)
-  slug          String   @db.VarChar(150)
-  created_at    DateTime @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+  category_id   String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source        String                            @db.VarChar(50)
+  external_code String                            @db.VarChar(50)
+  name          String                            @db.VarChar(150)
+  slug          String                            @db.VarChar(150)
+  created_at    DateTime                          @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                          @default(now()) @db.Timestamptz(6)
   links         external_resource_category_link[]
 
   @@unique([source, external_code])
@@ -108,12 +182,12 @@ model external_resource_category {
 }
 
 model external_resource_category_link {
-  link_id     String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  resource_id String                      @db.Uuid
-  category_id String                      @db.Uuid
-  created_at  DateTime                    @default(now()) @db.Timestamptz(6)
-  resource    external_learning_resource  @relation(fields: [resource_id], references: [resource_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_external_resource_category_link_resource")
-  category    external_resource_category  @relation(fields: [category_id], references: [category_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_external_resource_category_link_category")
+  link_id     String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resource_id String                     @db.Uuid
+  category_id String                     @db.Uuid
+  created_at  DateTime                   @default(now()) @db.Timestamptz(6)
+  resource    external_learning_resource @relation(fields: [resource_id], references: [resource_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_external_resource_category_link_resource")
+  category    external_resource_category @relation(fields: [category_id], references: [category_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_external_resource_category_link_category")
 
   @@unique([resource_id, category_id])
   @@index([resource_id], map: "idx_external_resource_category_link_resource_id")
@@ -154,6 +228,48 @@ model tester_feedback {
   created_at             DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([created_at], map: "idx_tester_feedback_created_at")
+}
+
+enum academic_level {
+  ENSINO_FUNDAMENTAL
+  ENSINO_MEDIO
+  TECNICO
+  TECNOLOGO
+  GRADUACAO
+  POS_GRADUACAO
+  MESTRADO
+  DOUTORADO
+}
+
+enum contract_type {
+  CLT
+  ESTAGIO
+  PJ
+  TEMPORARIO
+}
+
+enum course_status {
+  EM_ANDAMENTO
+  CONCLUIDO
+}
+
+enum education_status {
+  EM_ANDAMENTO
+  CONCLUIDO
+  TRANCADO
+  INTERROMPIDO
+}
+
+enum professional_level {
+  TRAINEE
+  JUNIOR
+  PLENO
+  SENIOR
+}
+
+enum skill_type {
+  TECHNICAL
+  BEHAVIORAL
 }
 
 enum account_status {
