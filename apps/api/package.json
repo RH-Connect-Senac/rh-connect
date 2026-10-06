@@ -21,7 +21,8 @@
     "test:e2e:run": "dotenv -e .env.test -- jest --config ./test/jest-e2e.config.js",
     "db:test:migrate": "dotenv -e .env.test -- npx prisma migrate deploy",
     "seed:cachola": "ts-node prisma/seed-cachola.ts",
-    "seed:orango": "ts-node prisma/seed-orango.ts"
+    "seed:orango": "ts-node prisma/seed-orango.ts",
+    "seed:accounts": "ts-node prisma/seed-accounts.ts"
   },
   "dependencies": {
     "@esbuild/linux-x64": "^0.28.2",
