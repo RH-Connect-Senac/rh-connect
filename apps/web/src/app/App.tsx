@@ -1,7 +1,7 @@
 /** RH Connect — Aplicação Front-end */
 
 import { useState, useRef, useEffect, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
   ChevronRight, ChevronLeft, Check, CheckCircle, User, Briefcase,
@@ -95,7 +95,6 @@ import {
 import {
   PROFESSIONAL_AREAS,
   type ProfessionalAreaId,
-  SENIORITY_LEVEL_OPTIONS,
   getProfessionalSubareasByArea,
 } from "./domain/professional-catalog";
 import type { MaterialStatus, MaterialUserState, SupportMaterial } from "./domain/materials";
@@ -150,20 +149,54 @@ import {
   logoutRealSession,
   restoreRealSession,
 } from "./services/real-session-service";
-import {
-  getCandidateProfile,
-  getCandidateProfileCompleteness,
-  isCandidateProfileReadyForInterview,
-  saveCandidateProfile,
-} from "./services/candidate-profile-service";
+import * as profileApi from "./services/candidate-profile-service";
+import type { ProfileResult } from "./services/candidate-profile-service";
+import { useCandidateProfile } from "./hooks/use-candidate-profile";
 import type { EvaluationMode } from "./domain/interviews";
-import type {
-  CandidateCourse,
-  CandidateExperience,
-  CandidateFormation,
-  CandidateProfile,
-  CandidateProfilePatch,
-} from "./domain/candidate-profile";
+import {
+  ACADEMIC_LEVEL_OPTIONS,
+  CONTRACT_TYPE_OPTIONS,
+  EDUCATION_STATUS_OPTIONS,
+  COURSE_STATUS_OPTIONS,
+  PROFESSIONAL_LEVEL_OPTIONS,
+  PROFILE_FIELD_LIMITS,
+  academicLevelLabel,
+  apiMonthToMonthYear,
+  describeMissingSections,
+  formatCoursePeriod,
+  formatEducationPeriod,
+  formatProfilePeriod,
+  getNoneDeclarationState,
+  educationStatusLabel,
+  getProfileCompletionPercent,
+  maskMonthYear,
+  type AcademicLevel,
+  type ContractType,
+  type CourseStatus,
+  type DeclarationSection,
+  type EducationStatus,
+  type ProfessionalLevel,
+  type ProfessionalProfile,
+  type ProfileCourse,
+  type ProfileEducation,
+  type ProfileExperience,
+  type ProfileSectionKey,
+  type SkillType,
+} from "./domain/professional-profile";
+import {
+  EMPTY_COURSE_FORM,
+  EMPTY_EDUCATION_FORM,
+  EMPTY_EXPERIENCE_FORM,
+  validateCourseForm,
+  isDegreeRequired,
+  validateEducationForm,
+  validateExperienceForm,
+  validateSkillName,
+  type CourseForm,
+  type EducationForm,
+  type ExperienceForm,
+  type FormErrors,
+} from "./domain/professional-profile-forms";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
@@ -1009,8 +1042,8 @@ function DashboardScreen({
   const candidateId = candidateIdentity.id;
   const account = getCandidateAccountConfig(candidateUser);
   const firstName = (candidateUser?.name ?? CANDIDATE_ACCOUNT.name).trim().split(/\s+/)[0] ?? "candidato";
-  const candidateProfile = getCandidateProfile(candidateId, candidateUser);
-  const profileCompleteness = getCandidateProfileCompleteness(candidateProfile);
+  const { status: profileStatus, profile: candidateProfile, reload: reloadProfile } = useCandidateProfile();
+  const profileCompleteness = candidateProfile ? getProfileCompletionPercent(candidateProfile) : 0;
   const candidateInterviews = getCandidateInterviews(candidateId);
   const availableReports = getAvailableCandidateReports(candidateId);
   const pendingCount = candidateInterviews.filter((item) => item.status !== "EVALUATED").length;
@@ -1058,24 +1091,36 @@ function DashboardScreen({
 
   return (
     <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
-      {/* Profile incomplete banner */}
-      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center gap-4">
-          <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
-            <User className="w-5 h-5 text-blue-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-foreground">Perfil {profileCompleteness}% completo</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Complete seu perfil para obter perguntas mais relevantes.</p>
-            <div className="mt-2 w-full max-w-xs bg-blue-100 rounded-full h-1.5">
-              <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${profileCompleteness}%` }} />
+      {/* Aviso de perfil incompleto — dados reais da API (some quando o perfil está completo) */}
+      {profileStatus === "ready" && candidateProfile && !candidateProfile.isComplete && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
+              <User className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-foreground">Perfil {profileCompleteness}% completo</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Para realizar entrevistas, falta completar: {describeMissingSections(candidateProfile.missingSections).join(", ")}.
+              </p>
+              <div className="mt-2 w-full max-w-xs bg-blue-100 rounded-full h-1.5">
+                <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${profileCompleteness}%` }} />
+              </div>
             </div>
           </div>
+          <Btn variant="secondary" size="sm" onClick={() => onNavigate("profile")} className="self-start sm:self-auto shrink-0">
+            Completar perfil
+          </Btn>
         </div>
-        <Btn variant="secondary" size="sm" onClick={() => onNavigate("profile")} className="self-start sm:self-auto shrink-0">
-          Completar perfil
-        </Btn>
-      </div>
+      )}
+      {profileStatus === "error" && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p className="text-sm text-amber-800">Não foi possível verificar o status do seu perfil profissional.</p>
+          <Btn variant="outline" size="sm" onClick={() => void reloadProfile()} className="self-start sm:self-auto shrink-0">
+            Tentar novamente
+          </Btn>
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
@@ -1184,214 +1229,397 @@ function DashboardScreen({
 
 // ─── Screen 4: Perfil Profissional ────────────────────────────────────────────
 
+function ProfileField({ error, ...props }: FieldProps & { error?: string }) {
+  return (
+    <div>
+      <Field {...props} />
+      {error && <p role="alert" className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function ProfileSelect({ label, options, required, error, ...props }: {
+  label: string;
+  options: { value: string; label: string }[];
+  required?: boolean;
+  error?: string;
+} & React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <div>
+      <label className="block text-sm font-semibold text-foreground mb-1.5">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      <div className="relative">
+        <NativeSelect {...props}>
+          <option value="">Selecione...</option>
+          {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </NativeSelect>
+        <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+      </div>
+      {error && <p role="alert" className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function CharCounter({ value, limit }: { value: string; limit: number }) {
+  return <p className="mt-1 text-right text-[11px] text-muted-foreground">{value.length}/{limit}</p>;
+}
+
+function NoneDeclarationBox({ checked, disabled, label, hint, onToggle }: {
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  hint?: string;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="bg-muted/40 rounded-xl p-4 border border-border">
+      <label className={`flex items-start gap-2 text-sm ${disabled ? "text-muted-foreground" : "text-foreground"}`}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={onToggle}
+          className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary"
+        />
+        <span className="font-medium">{label}</span>
+      </label>
+      {hint && <p className="mt-1 ml-6 text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+const PROFILE_ITEM_CARD = "bg-muted/50 rounded-xl p-4 border border-border flex items-start justify-between gap-3";
+const PROFILE_ADD_BUTTON = "w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed";
+
+function ProfileItemActions({ onEdit, onRemove, label, disabled }: {
+  onEdit?: () => void;
+  onRemove: () => void;
+  label: string;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex gap-1 shrink-0">
+      {onEdit && (
+        <button onClick={onEdit} disabled={disabled} className="p-1.5 text-muted-foreground hover:bg-muted rounded-lg transition-colors disabled:opacity-50" aria-label={`Editar ${label}`}>
+          <Edit2 className="w-3.5 h-3.5" />
+        </button>
+      )}
+      <button onClick={onRemove} disabled={disabled} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50" aria-label={`Remover ${label}`}>
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
+type ObjectiveForm = {
+  professionalTitle: string;
+  professionalArea: string;
+  professionalSubarea: string;
+  desiredPosition: string;
+  professionalLevel: string;
+  contractType: string;
+  professionalSummary: string;
+};
+
+const EMPTY_OBJECTIVE_FORM: ObjectiveForm = {
+  professionalTitle: "",
+  professionalArea: "",
+  professionalSubarea: "",
+  desiredPosition: "",
+  professionalLevel: "",
+  contractType: "",
+  professionalSummary: "",
+};
+
+function toObjectiveForm(profile: ProfessionalProfile): ObjectiveForm {
+  return {
+    professionalTitle: profile.professionalTitle ?? "",
+    professionalArea: profile.professionalArea ?? "",
+    professionalSubarea: profile.professionalSubarea ?? "",
+    desiredPosition: profile.desiredPosition ?? "",
+    professionalLevel: profile.professionalLevel ?? "",
+    contractType: profile.contractType ?? "",
+    professionalSummary: profile.professionalSummary ?? "",
+  };
+}
+
 function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
   const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
   const candidateIdentity = getCandidateIdentity(session);
   const account = getCandidateAccountConfig(candidateUser);
-  const [profile, setProfile] = useState<CandidateProfile>(() => getCandidateProfile(candidateIdentity.id, candidateUser));
+  const { status, profile, error: loadError, reason: loadReason, reload, setProfile } = useCandidateProfile();
   const [openSection, setOpenSection] = useState<string | null>("objetivo");
-  const [selectedAreaId, setSelectedAreaId] = useState<ProfessionalAreaId | "">((profile.areaId as ProfessionalAreaId | "") || "");
-  const [selectedSubareaId, setSelectedSubareaId] = useState(profile.subareaId);
-  const [newFormation, setNewFormation] = useState<Omit<CandidateFormation, "id">>({
-    title: "",
-    institution: "",
-    level: "",
-    status: "",
-    startDate: "",
-    endDate: "",
-  });
-  const [newCourse, setNewCourse] = useState<Omit<CandidateCourse, "id">>({
-    name: "",
-    institution: "",
-    workload: "",
-    completedAt: "",
-  });
-  const [newExperience, setNewExperience] = useState<Omit<CandidateExperience, "id">>({
-    company: "",
-    role: "",
-    startDate: "",
-    endDate: "",
-    current: false,
-    description: "",
-  });
+  // Chave da ação em andamento (uma por vez): desabilita botões e evita duplo envio.
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const [objective, setObjective] = useState<ObjectiveForm>(EMPTY_OBJECTIVE_FORM);
+  const objectiveSyncedRef = useRef(false);
+
+  const [educationForm, setEducationForm] = useState<EducationForm>(EMPTY_EDUCATION_FORM);
+  const [educationErrors, setEducationErrors] = useState<FormErrors<EducationForm>>({});
+  const [editingEducationId, setEditingEducationId] = useState<number | null>(null);
+
+  const [courseForm, setCourseForm] = useState<CourseForm>(EMPTY_COURSE_FORM);
+  const [courseErrors, setCourseErrors] = useState<FormErrors<CourseForm>>({});
+  const [editingCourseId, setEditingCourseId] = useState<number | null>(null);
+
+  const [experienceForm, setExperienceForm] = useState<ExperienceForm>(EMPTY_EXPERIENCE_FORM);
+  const [experienceErrors, setExperienceErrors] = useState<FormErrors<ExperienceForm>>({});
+  const [editingExperienceId, setEditingExperienceId] = useState<number | null>(null);
+
   const [newTechnicalSkill, setNewTechnicalSkill] = useState("");
   const [newBehavioralSkill, setNewBehavioralSkill] = useState("");
-  const availableSubareas = selectedAreaId ? getProfessionalSubareasByArea(selectedAreaId) : [];
-  const profileCompleteness = getCandidateProfileCompleteness(profile);
 
+  // O formulário do objetivo é preenchido UMA vez com o que veio do banco (e
+  // de novo só após salvar o próprio objetivo) — assim, ações em outras seções
+  // não sobrescrevem edições ainda não salvas.
   useEffect(() => {
-    const nextProfile = getCandidateProfile(candidateIdentity.id, candidateUser);
-    setProfile(nextProfile);
-    setSelectedAreaId((nextProfile.areaId as ProfessionalAreaId | "") || "");
-    setSelectedSubareaId(nextProfile.subareaId);
-  }, [candidateIdentity.id, candidateUser?.id]);
+    if (status === "ready" && profile && !objectiveSyncedRef.current) {
+      objectiveSyncedRef.current = true;
+      setObjective(toObjectiveForm(profile));
+    }
+  }, [status, profile]);
 
-  const updateProfile = (patch: CandidateProfilePatch) => {
-    setProfile((current) => ({ ...current, ...patch }));
+  const availableSubareas = objective.professionalArea
+    ? getProfessionalSubareasByArea(objective.professionalArea as ProfessionalAreaId)
+    : [];
+  const profileCompleteness = profile ? getProfileCompletionPercent(profile) : 0;
+  const missing = new Set<ProfileSectionKey>(profile?.missingSections ?? []);
+
+  // Toda escrita passa por aqui: só reflete na tela o que a API confirmou.
+  const runAction = async (
+    key: string,
+    action: () => Promise<ProfileResult<ProfessionalProfile>>,
+    successMessage: string,
+  ): Promise<boolean> => {
+    if (busy) return false;
+    setBusy(key);
+    const result = await action();
+    setBusy(null);
+    if (!result.ok) {
+      toast.error(result.message);
+      // Registro removido em outra aba/dispositivo: recarrega o estado real.
+      if (result.reason === "not_found") void reload();
+      return false;
+    }
+    setProfile(result.data);
+    toast.success(successMessage);
+    return true;
   };
 
-  const persistProfile = (patch: CandidateProfilePatch, message = "Perfil profissional salvo.") => {
-    const saved = saveCandidateProfile(candidateIdentity.id, {
-      ...profile,
-      ...patch,
+  // ── Objetivo profissional ─────────────────────────────────────────────────
+  const handleSaveObjective = async () => {
+    const saved = await runAction(
+      "objective",
+      () => profileApi.updateCandidateObjective({
+        professionalTitle: objective.professionalTitle,
+        professionalArea: objective.professionalArea || null,
+        professionalSubarea: objective.professionalSubarea || null,
+        desiredPosition: objective.desiredPosition,
+        professionalLevel: (objective.professionalLevel || null) as ProfessionalLevel | null,
+        contractType: (objective.contractType || null) as ContractType | null,
+        professionalSummary: objective.professionalSummary,
+      }),
+      "Objetivo profissional salvo.",
+    );
+    if (saved) objectiveSyncedRef.current = false; // re-sincroniza com o que o banco devolveu
+  };
+
+  // ── Formação ──────────────────────────────────────────────────────────────
+  const resetEducation = () => {
+    setEducationForm(EMPTY_EDUCATION_FORM);
+    setEducationErrors({});
+    setEditingEducationId(null);
+  };
+
+  const startEditEducation = (item: ProfileEducation) => {
+    setEditingEducationId(item.id);
+    setEducationErrors({});
+    setEducationForm({
+      academicLevel: item.academicLevel,
+      status: item.status,
+      degree: item.degree ?? "",
+      educationInstitution: item.educationInstitution,
+      startDate: apiMonthToMonthYear(item.startDate),
+      endDate: apiMonthToMonthYear(item.endDate),
     });
-    setProfile(saved);
-    setSelectedAreaId((saved.areaId as ProfessionalAreaId | "") || "");
-    setSelectedSubareaId(saved.subareaId);
-    toast.success(message);
-    return saved;
   };
 
-  const handleSaveProfile = () => {
-    persistProfile({
-      ...profile,
-      areaId: selectedAreaId,
-      subareaId: selectedSubareaId,
-    });
-  };
-
-  const handleSaveObjective = () => {
-    persistProfile({
-      areaId: selectedAreaId,
-      subareaId: selectedSubareaId,
-      desiredRole: profile.desiredRole,
-      seniority: profile.seniority,
-      contractType: profile.contractType,
-      professionalSummary: profile.professionalSummary,
-    }, "Objetivo profissional salvo.");
-  };
-
-  const hasText = (...values: string[]) => values.some((value) => value.trim().length > 0);
-
-  const updateFormation = (id: string, patch: Partial<CandidateFormation>) => {
-    updateProfile({ formations: profile.formations.map((item) => item.id === id ? { ...item, ...patch } : item) });
-  };
-
-  const addFormation = () => {
-    if (!hasText(newFormation.title, newFormation.institution, newFormation.level, newFormation.startDate, newFormation.endDate, newFormation.status)) {
-      toast.error("Preencha pelo menos um dado da formação antes de adicionar.");
+  const submitEducation = async () => {
+    const result = validateEducationForm(educationForm);
+    if (!result.ok) {
+      setEducationErrors(result.errors);
+      toast.error("Revise os campos da formação.");
       return;
     }
-    const formations = [...profile.formations, { ...newFormation, id: `formation-${Date.now()}` }];
-    const saved = saveCandidateProfile(candidateIdentity.id, { formations });
-    setProfile((current) => ({ ...current, formations: saved.formations, updatedAt: saved.updatedAt }));
-    setNewFormation({ title: "", institution: "", level: "", status: "", startDate: "", endDate: "" });
-    toast.success("Formação adicionada.");
+    setEducationErrors({});
+    const editingId = editingEducationId;
+    const ok = await runAction(
+      "education",
+      () => editingId === null ? profileApi.addEducation(result.payload) : profileApi.updateEducation(editingId, result.payload),
+      editingId === null ? "Formação adicionada." : "Formação atualizada.",
+    );
+    if (ok) resetEducation();
   };
 
-  const removeFormation = (id: string) => {
-    const saved = saveCandidateProfile(candidateIdentity.id, {
-      formations: profile.formations.filter((item) => item.id !== id),
+  const handleRemoveEducation = async (id: number) => {
+    const ok = await runAction(`education-remove-${id}`, () => profileApi.removeEducation(id), "Formação removida.");
+    if (ok && editingEducationId === id) resetEducation();
+  };
+
+  // ── Cursos ────────────────────────────────────────────────────────────────
+  const resetCourse = () => {
+    setCourseForm(EMPTY_COURSE_FORM);
+    setCourseErrors({});
+    setEditingCourseId(null);
+  };
+
+  const startEditCourse = (item: ProfileCourse) => {
+    setEditingCourseId(item.id);
+    setCourseErrors({});
+    setCourseForm({
+      courseName: item.courseName,
+      courseInstitution: item.courseInstitution ?? "",
+      workloadHours: item.workloadHours === null ? "" : String(item.workloadHours),
+      status: item.status,
+      startDate: apiMonthToMonthYear(item.startDate),
+      completedAt: apiMonthToMonthYear(item.completedAt),
     });
-    setProfile((current) => ({ ...current, formations: saved.formations, updatedAt: saved.updatedAt }));
-    toast.success("Formação removida.");
   };
 
-  const updateCourse = (id: string, patch: Partial<CandidateCourse>) => {
-    updateProfile({ courses: profile.courses.map((item) => item.id === id ? { ...item, ...patch } : item) });
-  };
-
-  const addCourse = () => {
-    if (!hasText(newCourse.name, newCourse.institution, newCourse.workload, newCourse.completedAt)) {
-      toast.error("Preencha pelo menos um dado do curso antes de adicionar.");
+  const submitCourse = async () => {
+    const result = validateCourseForm(courseForm);
+    if (!result.ok) {
+      setCourseErrors(result.errors);
+      toast.error("Revise os campos do curso.");
       return;
     }
-    const courses = [...profile.courses, { ...newCourse, id: `course-${Date.now()}` }];
-    const saved = saveCandidateProfile(candidateIdentity.id, { courses });
-    setProfile((current) => ({ ...current, courses: saved.courses, updatedAt: saved.updatedAt }));
-    setNewCourse({ name: "", institution: "", workload: "", completedAt: "" });
-    toast.success("Curso adicionado.");
+    setCourseErrors({});
+    const editingId = editingCourseId;
+    const ok = await runAction(
+      "course",
+      () => editingId === null ? profileApi.addCourse(result.payload) : profileApi.updateCourse(editingId, result.payload),
+      editingId === null ? "Curso adicionado." : "Curso atualizado.",
+    );
+    if (ok) resetCourse();
   };
 
-  const removeCourse = (id: string) => {
-    const saved = saveCandidateProfile(candidateIdentity.id, {
-      courses: profile.courses.filter((item) => item.id !== id),
+  const handleRemoveCourse = async (id: number) => {
+    const ok = await runAction(`course-remove-${id}`, () => profileApi.removeCourse(id), "Curso removido.");
+    if (ok && editingCourseId === id) resetCourse();
+  };
+
+  // ── Experiência ───────────────────────────────────────────────────────────
+  const resetExperience = () => {
+    setExperienceForm(EMPTY_EXPERIENCE_FORM);
+    setExperienceErrors({});
+    setEditingExperienceId(null);
+  };
+
+  const startEditExperience = (item: ProfileExperience) => {
+    setEditingExperienceId(item.id);
+    setExperienceErrors({});
+    setExperienceForm({
+      companyName: item.companyName,
+      jobRole: item.jobRole,
+      startDate: apiMonthToMonthYear(item.startDate),
+      endDate: apiMonthToMonthYear(item.endDate),
+      isCurrent: item.isCurrent,
+      description: item.description ?? "",
     });
-    setProfile((current) => ({ ...current, courses: saved.courses, updatedAt: saved.updatedAt }));
-    toast.success("Curso removido.");
   };
 
-  const updateExperience = (id: string, patch: Partial<CandidateExperience>) => {
-    updateProfile({ experiences: profile.experiences.map((item) => item.id === id ? { ...item, ...patch } : item) });
-  };
-
-  const addExperience = () => {
-    if (!hasText(newExperience.company, newExperience.role, newExperience.startDate, newExperience.endDate, newExperience.description)) {
-      toast.error("Preencha pelo menos um dado da experiência antes de adicionar.");
+  const submitExperience = async () => {
+    const result = validateExperienceForm(experienceForm);
+    if (!result.ok) {
+      setExperienceErrors(result.errors);
+      toast.error("Revise os campos da experiência.");
       return;
     }
-    const experiences = [...profile.experiences, { ...newExperience, id: `experience-${Date.now()}` }];
-    const saved = saveCandidateProfile(candidateIdentity.id, { experiences });
-    setProfile((current) => ({ ...current, experiences: saved.experiences, updatedAt: saved.updatedAt }));
-    setNewExperience({ company: "", role: "", startDate: "", endDate: "", current: false, description: "" });
-    toast.success("Experiência adicionada.");
+    setExperienceErrors({});
+    const editingId = editingExperienceId;
+    const ok = await runAction(
+      "experience",
+      () => editingId === null ? profileApi.addExperience(result.payload) : profileApi.updateExperience(editingId, result.payload),
+      editingId === null ? "Experiência adicionada." : "Experiência atualizada.",
+    );
+    if (ok) resetExperience();
   };
 
-  const removeExperience = (id: string) => {
-    const saved = saveCandidateProfile(candidateIdentity.id, {
-      experiences: profile.experiences.filter((item) => item.id !== id),
-    });
-    setProfile((current) => ({ ...current, experiences: saved.experiences, updatedAt: saved.updatedAt }));
-    toast.success("Experiência removida.");
+  const handleRemoveExperience = async (id: number) => {
+    const ok = await runAction(`experience-remove-${id}`, () => profileApi.removeExperience(id), "Experiência removida.");
+    if (ok && editingExperienceId === id) resetExperience();
   };
 
-  const addSkill = (kind: "technicalSkills" | "behavioralSkills", value: string) => {
-    const skill = value.trim();
-    if (!skill) {
-      toast.error("Digite uma habilidade antes de adicionar.");
+  // ── Habilidades ───────────────────────────────────────────────────────────
+  const handleAddSkill = async (type: SkillType, raw: string) => {
+    const validation = validateSkillName(raw);
+    if (!validation.ok) {
+      toast.error(validation.error);
       return;
     }
-    const normalized = skill.toLocaleLowerCase("pt-BR");
-    if (profile[kind].some((item) => item.trim().toLocaleLowerCase("pt-BR") === normalized)) {
-      toast.error("Essa habilidade já foi adicionada.");
-      return;
+    const ok = await runAction(`skill-${type}`, () => profileApi.addSkill(type, validation.name), "Habilidade adicionada.");
+    if (ok) {
+      if (type === "TECHNICAL") setNewTechnicalSkill("");
+      else setNewBehavioralSkill("");
     }
-    const patch = kind === "technicalSkills"
-      ? { technicalSkills: [...profile.technicalSkills, skill] }
-      : { behavioralSkills: [...profile.behavioralSkills, skill] };
-    const saved = saveCandidateProfile(candidateIdentity.id, patch);
-    setProfile((current) => ({
-      ...current,
-      technicalSkills: saved.technicalSkills,
-      behavioralSkills: saved.behavioralSkills,
-      updatedAt: saved.updatedAt,
-    }));
-    if (kind === "technicalSkills") setNewTechnicalSkill("");
-    if (kind === "behavioralSkills") setNewBehavioralSkill("");
-    toast.success("Habilidade adicionada.");
   };
 
-  const removeSkill = (kind: "technicalSkills" | "behavioralSkills", value: string) => {
-    const patch = kind === "technicalSkills"
-      ? { technicalSkills: profile.technicalSkills.filter((item) => item !== value) }
-      : { behavioralSkills: profile.behavioralSkills.filter((item) => item !== value) };
-    const saved = saveCandidateProfile(candidateIdentity.id, patch);
-    setProfile((current) => ({
-      ...current,
-      technicalSkills: saved.technicalSkills,
-      behavioralSkills: saved.behavioralSkills,
-      updatedAt: saved.updatedAt,
-    }));
-    toast.success("Habilidade removida.");
-  };
+  const handleRemoveSkill = (id: number) =>
+    runAction(`skill-remove-${id}`, () => profileApi.removeSkill(id), "Habilidade removida.");
+
+  // ── Declarações "não possuo" ──────────────────────────────────────────────
+  const handleToggleDeclaration = (section: DeclarationSection, declared: boolean) =>
+    runAction(
+      `declaration-${section}`,
+      () => declared ? profileApi.removeDeclaration(section) : profileApi.declareNone(section),
+      declared ? "Declaração removida." : "Declaração registrada.",
+    );
 
   const sections = [
-    {
-      id: "objetivo",
-      label: "Objetivo profissional",
-      icon: Target,
-      filled: Boolean(selectedAreaId || selectedSubareaId || profile.desiredRole || profile.seniority || profile.contractType || profile.professionalSummary),
-    },
-    { id: "formacao",    label: "Formação acadêmica",        icon: GraduationCap,filled: profile.formations.some((item) => hasText(item.title, item.institution, item.level, item.startDate, item.endDate, item.status)) },
-    { id: "cursos",      label: "Cursos complementares",     icon: BookOpen,     filled: profile.courses.some((item) => hasText(item.name, item.institution, item.workload, item.completedAt)) },
-    { id: "experiencia", label: "Experiência profissional",  icon: Briefcase,    filled: profile.experiences.some((item) => hasText(item.company, item.role, item.startDate, item.endDate, item.description)) },
-    {
-      id: "habilidades",
-      label: "Habilidades e competências",
-      icon: Star,
-      filled: profile.technicalSkills.some((value) => value.trim().length > 0) || profile.behavioralSkills.some((value) => value.trim().length > 0),
-    },
+    { id: "objetivo", label: "Objetivo profissional", icon: Target, filled: !missing.has("objective") },
+    { id: "formacao", label: "Formação acadêmica", icon: GraduationCap, filled: !missing.has("education") },
+    { id: "cursos", label: "Cursos complementares", icon: BookOpen, filled: !missing.has("courses") },
+    { id: "experiencia", label: "Experiência profissional", icon: Briefcase, filled: !missing.has("experience") },
+    { id: "habilidades", label: "Habilidades e competências", icon: Star, filled: !missing.has("technicalSkills") && !missing.has("behavioralSkills") },
   ];
+
+  if (status !== "ready" || !profile) {
+    return (
+      <AuthLayout
+        current="profile"
+        onNavigate={onNavigate}
+        title="Perfil Profissional"
+        subtitle="Preencha seu perfil para receber perguntas mais relevantes"
+        account={account}
+      >
+        <Card className="w-full p-6 sm:p-8">
+          {status === "loading" ? (
+            <div role="status" aria-live="polite" className="flex items-center justify-center gap-3 text-sm text-muted-foreground">
+              <Spinner size="md" /> Carregando seu perfil profissional...
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 text-center">
+              <AlertCircle className="w-10 h-10 text-amber-500" />
+              <h3 className="font-bold text-foreground">Não foi possível carregar seu perfil</h3>
+              <p className="text-sm text-muted-foreground max-w-md">{loadError}</p>
+              {loadReason === "unauthorized" ? (
+                <Btn variant="primary" onClick={() => window.location.reload()}>Recarregar página</Btn>
+              ) : (
+                <Btn variant="primary" onClick={() => void reload()}>Tentar novamente</Btn>
+              )}
+            </div>
+          )}
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  const isBusy = busy !== null;
+  const hasCourses = profile.courses.length > 0;
+  const hasExperiences = profile.experiences.length > 0;
+  const hasTechnicalSkills = profile.technicalSkills.length > 0;
 
   return (
     <AuthLayout
@@ -1419,14 +1647,25 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
             <div className="flex-1 min-w-0">
               <h2 className="font-bold text-foreground text-lg">{candidateIdentity.name}</h2>
               <p className="text-muted-foreground text-sm">{candidateIdentity.email}</p>
-              <p className="text-xs text-muted-foreground mt-1 italic">
+              {profile.professionalTitle && (
+                <p className="text-sm font-medium text-foreground mt-1 break-words">{profile.professionalTitle}</p>
+              )}
+              <p className="text-xs text-muted-foreground mt-1 italic break-words">
                 {profile.professionalSummary ? `"${profile.professionalSummary}"` : "Resumo profissional ainda não preenchido."}
               </p>
             </div>
-            <Btn variant="outline" size="sm" className="self-start sm:self-auto shrink-0" onClick={handleSaveProfile}>
+            <Btn variant="outline" size="sm" className="self-start sm:self-auto shrink-0" onClick={() => void handleSaveObjective()} disabled={isBusy}>
               <Check className="w-3.5 h-3.5" /> Salvar perfil
             </Btn>
           </div>
+          {!profile.isComplete && (
+            <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <p>
+                Para realizar entrevistas, falta completar: {describeMissingSections(profile.missingSections).join(", ")}.
+              </p>
+            </div>
+          )}
         </Card>
 
         {/* Accordion sections */}
@@ -1458,290 +1697,472 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                 {sec.id === "objetivo" && (
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                      <div>
-                        <label className="block text-sm font-semibold text-foreground mb-1.5">
-                          Área de interesse<span className="text-red-500 ml-0.5">*</span>
-                        </label>
-                        <div className="relative">
-                          <NativeSelect
-                            value={selectedAreaId}
-                            onChange={event => {
-                              setSelectedAreaId(event.target.value as ProfessionalAreaId | "");
-                              setSelectedSubareaId("");
-                            }}
-                            required
-                          >
-                            <option value="">Selecione...</option>
-                            {PROFESSIONAL_AREAS.map(area => <option key={area.id} value={area.id}>{area.name}</option>)}
-                          </NativeSelect>
-                          <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-semibold text-foreground mb-1.5">
-                          Subárea de interesse<span className="text-red-500 ml-0.5">*</span>
-                        </label>
-                        <div className="relative">
-                          <NativeSelect
-                            value={selectedSubareaId}
-                            onChange={event => setSelectedSubareaId(event.target.value)}
-                            disabled={!selectedAreaId}
-                            required
-                          >
-                            <option value="">Selecione...</option>
-                            {availableSubareas.map(subarea => <option key={subarea.id} value={subarea.id}>{subarea.name}</option>)}
-                          </NativeSelect>
-                          <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                        </div>
-                      </div>
+                      <Field
+                        label="Título profissional"
+                        placeholder="Ex: Desenvolvedora Front-end"
+                        hint="Como você se apresenta hoje."
+                        maxLength={PROFILE_FIELD_LIMITS.professionalTitle}
+                        value={objective.professionalTitle}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalTitle: event.target.value }))}
+                        required
+                      />
+                      <ProfileSelect
+                        label="Área de interesse"
+                        required
+                        options={PROFESSIONAL_AREAS.map((area) => ({ value: area.id, label: area.name }))}
+                        value={objective.professionalArea}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalArea: event.target.value, professionalSubarea: "" }))}
+                      />
+                      <ProfileSelect
+                        label="Subárea de interesse"
+                        required
+                        options={availableSubareas.map((subarea) => ({ value: subarea.id, label: subarea.name }))}
+                        value={objective.professionalSubarea}
+                        disabled={!objective.professionalArea}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalSubarea: event.target.value }))}
+                      />
                       <Field
                         label="Cargo desejado"
                         placeholder="Ex: Desenvolvedor Front-end"
-                        value={profile.desiredRole}
-                        onChange={(event) => updateProfile({ desiredRole: event.target.value })}
+                        hint="A posição que você está buscando."
+                        maxLength={PROFILE_FIELD_LIMITS.desiredPosition}
+                        value={objective.desiredPosition}
+                        onChange={(event) => setObjective((current) => ({ ...current, desiredPosition: event.target.value }))}
                         required
                       />
-                      <FieldSelect
+                      <ProfileSelect
                         label="Senioridade profissional"
-                        options={SENIORITY_LEVEL_OPTIONS}
-                        value={profile.seniority}
-                        onChange={(event) => updateProfile({ seniority: event.target.value })}
                         required
+                        options={PROFESSIONAL_LEVEL_OPTIONS}
+                        value={objective.professionalLevel}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
                       />
-                      <FieldSelect
+                      <ProfileSelect
                         label="Tipo de contrato"
-                        options={["CLT", "Estágio", "PJ", "Temporário"]}
-                        value={profile.contractType}
-                        onChange={(event) => updateProfile({ contractType: event.target.value })}
+                        required
+                        options={CONTRACT_TYPE_OPTIONS}
+                        value={objective.contractType}
+                        onChange={(event) => setObjective((current) => ({ ...current, contractType: event.target.value }))}
                       />
                     </div>
-                    <FieldArea
-                      label="Resumo profissional"
-                      placeholder="Escreva um breve texto sobre sua trajetória, objetivos e diferenciais..."
-                      rows={3}
-                      value={profile.professionalSummary}
-                      onChange={(event) => updateProfile({ professionalSummary: event.target.value })}
-                      required
-                    />
+                    <div>
+                      <FieldArea
+                        label="Resumo profissional"
+                        placeholder="Escreva um breve texto sobre sua trajetória, objetivos e diferenciais..."
+                        rows={3}
+                        maxLength={PROFILE_FIELD_LIMITS.professionalSummary}
+                        value={objective.professionalSummary}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalSummary: event.target.value }))}
+                        required
+                      />
+                      <CharCounter value={objective.professionalSummary} limit={PROFILE_FIELD_LIMITS.professionalSummary} />
+                    </div>
+                    <div className="flex justify-end pt-2 border-t border-border">
+                      <Btn variant="primary" size="sm" onClick={() => void handleSaveObjective()} disabled={isBusy}>
+                        {busy === "objective" ? "Salvando..." : "Salvar alterações"}
+                      </Btn>
+                    </div>
                   </>
                 )}
+
                 {sec.id === "formacao" && (
                   <>
-                    {profile.formations.length > 0 ? (
-                      profile.formations.map((formation) => (
-                        <div key={formation.id} className="bg-muted/50 rounded-xl p-4 border border-border space-y-3">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                            <Field label="Curso" value={formation.title} onChange={(event) => updateFormation(formation.id, { title: event.target.value })} />
-                            <Field label="Instituição" value={formation.institution} onChange={(event) => updateFormation(formation.id, { institution: event.target.value })} />
-                            <Field label="Nível/tipo" value={formation.level} onChange={(event) => updateFormation(formation.id, { level: event.target.value })} />
-                            <Field label="Início" value={formation.startDate} onChange={(event) => updateFormation(formation.id, { startDate: event.target.value })} />
-                            <Field label="Conclusão" value={formation.endDate} onChange={(event) => updateFormation(formation.id, { endDate: event.target.value })} />
-                            <FieldSelect
-                              label="Situação"
-                              options={["Em andamento", "Concluído", "Trancado", "Interrompido"]}
-                              value={formation.status}
-                              onChange={(event) => updateFormation(formation.id, { status: event.target.value })}
-                            />
+                    {profile.educations.length > 0 ? (
+                      profile.educations.map((item) => (
+                        <div key={item.id} className={PROFILE_ITEM_CARD}>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-foreground break-words">{item.degree ?? item.educationInstitution}</p>
+                            {item.degree && item.educationInstitution && (
+                              <p className="text-xs text-muted-foreground break-words">{item.educationInstitution}</p>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {[academicLevelLabel(item.academicLevel), educationStatusLabel(item.status), formatEducationPeriod(item)].filter(Boolean).join(" · ")}
+                            </p>
                           </div>
-                          <div className="flex justify-end">
-                            <button onClick={() => removeFormation(formation.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors" aria-label="Remover formação">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <ProfileItemActions
+                            label="formação"
+                            disabled={isBusy}
+                            onEdit={() => startEditEducation(item)}
+                            onRemove={() => void handleRemoveEducation(item.id)}
+                          />
                         </div>
                       ))
                     ) : (
                       <div className="bg-muted/40 rounded-xl p-4 border border-border">
                         <p className="text-sm font-semibold text-foreground">Nenhuma formação adicionada</p>
-                        <p className="text-xs text-muted-foreground mt-1">Adicione formações quando quiser completar seu perfil profissional.</p>
+                        <p className="text-xs text-muted-foreground mt-1">Adicione pelo menos uma formação para completar seu perfil profissional.</p>
                       </div>
                     )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 border-2 border-dashed border-border rounded-xl p-4">
-                      <Field label="Curso" value={newFormation.title} onChange={(event) => setNewFormation((current) => ({ ...current, title: event.target.value }))} />
-                      <Field label="Instituição" value={newFormation.institution} onChange={(event) => setNewFormation((current) => ({ ...current, institution: event.target.value }))} />
-                      <Field label="Nível/tipo" value={newFormation.level} onChange={(event) => setNewFormation((current) => ({ ...current, level: event.target.value }))} />
-                      <Field label="Início" value={newFormation.startDate} onChange={(event) => setNewFormation((current) => ({ ...current, startDate: event.target.value }))} />
-                      <Field label="Conclusão" value={newFormation.endDate} onChange={(event) => setNewFormation((current) => ({ ...current, endDate: event.target.value }))} />
-                      <FieldSelect
+                      <ProfileSelect
+                        label="Nível/tipo"
+                        required
+                        options={ACADEMIC_LEVEL_OPTIONS}
+                        value={educationForm.academicLevel}
+                        error={educationErrors.academicLevel}
+                        onChange={(event) => setEducationForm((current) => ({ ...current, academicLevel: event.target.value as AcademicLevel | "" }))}
+                      />
+                      <ProfileSelect
                         label="Situação"
-                        options={["Em andamento", "Concluído", "Trancado", "Interrompido"]}
-                        value={newFormation.status}
-                        onChange={(event) => setNewFormation((current) => ({ ...current, status: event.target.value }))}
+                        required
+                        options={EDUCATION_STATUS_OPTIONS}
+                        value={educationForm.status}
+                        error={educationErrors.status}
+                        onChange={(event) => {
+                          const nextStatus = event.target.value as EducationStatus | "";
+                          setEducationForm((current) => ({ ...current, status: nextStatus }));
+                        }}
+                      />
+                      <ProfileField
+                        label="Curso/formação"
+                        required={isDegreeRequired(educationForm.academicLevel)}
+                        maxLength={PROFILE_FIELD_LIMITS.degree}
+                        value={educationForm.degree}
+                        error={educationErrors.degree}
+                        onChange={(event) => setEducationForm((current) => ({ ...current, degree: event.target.value }))}
+                      />
+                      <ProfileField
+                        label="Instituição"
+                        required
+                        maxLength={PROFILE_FIELD_LIMITS.educationInstitution}
+                        value={educationForm.educationInstitution}
+                        error={educationErrors.educationInstitution}
+                        onChange={(event) => setEducationForm((current) => ({ ...current, educationInstitution: event.target.value }))}
+                      />
+                      <ProfileField
+                        label="Início"
+                        required
+                        placeholder="MM/AAAA"
+                        inputMode="numeric"
+                        maxLength={7}
+                        value={educationForm.startDate}
+                        error={educationErrors.startDate}
+                        onChange={(event) => setEducationForm((current) => ({ ...current, startDate: maskMonthYear(event.target.value) }))}
+                      />
+                      <ProfileField
+                        label={educationForm.status === "EM_ANDAMENTO" ? "Previsão de conclusão" : "Conclusão"}
+                        required={educationForm.status === "CONCLUIDO"}
+                        placeholder="MM/AAAA"
+                        inputMode="numeric"
+                        maxLength={7}
+                        value={educationForm.endDate}
+                        error={educationErrors.endDate}
+                        onChange={(event) => setEducationForm((current) => ({ ...current, endDate: maskMonthYear(event.target.value) }))}
                       />
                     </div>
-                    <button onClick={addFormation} className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
-                      <Plus className="w-4 h-4" /> Adicionar formação
+                    <button onClick={() => void submitEducation()} disabled={isBusy} className={PROFILE_ADD_BUTTON}>
+                      {editingEducationId === null ? <><Plus className="w-4 h-4" /> Adicionar formação</> : <><Check className="w-4 h-4" /> Salvar formação</>}
                     </button>
+                    {editingEducationId !== null && (
+                      <button onClick={resetEducation} disabled={isBusy} className="w-full text-sm text-muted-foreground hover:text-foreground">Cancelar edição</button>
+                    )}
                   </>
                 )}
+
                 {sec.id === "cursos" && (
                   <>
-                    {profile.courses.length > 0 ? (
-                      profile.courses.map((course) => (
-                        <div key={course.id} className="bg-muted/50 rounded-xl p-4 border border-border space-y-3">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                            <Field label="Curso" value={course.name} onChange={(event) => updateCourse(course.id, { name: event.target.value })} />
-                            <Field label="Instituição/plataforma" value={course.institution} onChange={(event) => updateCourse(course.id, { institution: event.target.value })} />
-                            <Field label="Carga horária" value={course.workload} onChange={(event) => updateCourse(course.id, { workload: event.target.value })} />
-                            <Field label="Conclusão" value={course.completedAt} onChange={(event) => updateCourse(course.id, { completedAt: event.target.value })} />
-                          </div>
-                          <div className="flex justify-end">
-                            <button onClick={() => removeCourse(course.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors" aria-label="Remover curso">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))
+                    {profile.declarations.noCourses ? (
+                      <NoneDeclarationBox
+                        checked
+                        disabled={isBusy}
+                        label="Não possuo cursos complementares"
+                        hint="Declaração registrada. Desmarque para voltar a adicionar cursos."
+                        onToggle={() => void handleToggleDeclaration("courses", true)}
+                      />
                     ) : (
-                      <div className="bg-muted/40 rounded-xl p-4 border border-border">
-                        <p className="text-sm font-semibold text-foreground">Nenhum curso complementar adicionado</p>
-                        <p className="text-xs text-muted-foreground mt-1">Adicione cursos quando quiser enriquecer seu perfil profissional.</p>
-                      </div>
+                      <>
+                        {hasCourses ? (
+                          profile.courses.map((item) => (
+                            <div key={item.id} className={PROFILE_ITEM_CARD}>
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-foreground break-words">{item.courseName}</p>
+                                {item.courseInstitution && <p className="text-xs text-muted-foreground break-words">{item.courseInstitution}</p>}
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {[
+                                    item.workloadHours !== null ? `${item.workloadHours} h` : "",
+                                    formatCoursePeriod(item),
+                                  ].filter(Boolean).join(" · ")}
+                                </p>
+                              </div>
+                              <ProfileItemActions
+                                label="curso"
+                                disabled={isBusy}
+                                onEdit={() => startEditCourse(item)}
+                                onRemove={() => void handleRemoveCourse(item.id)}
+                              />
+                            </div>
+                          ))
+                        ) : (
+                          <div className="bg-muted/40 rounded-xl p-4 border border-border">
+                            <p className="text-sm font-semibold text-foreground">Nenhum curso complementar adicionado</p>
+                            <p className="text-xs text-muted-foreground mt-1">Adicione um curso ou declare que não possui cursos complementares.</p>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 border-2 border-dashed border-border rounded-xl p-4">
+                          <ProfileField
+                            label="Curso"
+                            required
+                            maxLength={PROFILE_FIELD_LIMITS.courseName}
+                            value={courseForm.courseName}
+                            error={courseErrors.courseName}
+                            onChange={(event) => setCourseForm((current) => ({ ...current, courseName: event.target.value }))}
+                          />
+                          <ProfileField
+                            label="Instituição/plataforma"
+                            maxLength={PROFILE_FIELD_LIMITS.courseInstitution}
+                            value={courseForm.courseInstitution}
+                            error={courseErrors.courseInstitution}
+                            onChange={(event) => setCourseForm((current) => ({ ...current, courseInstitution: event.target.value }))}
+                          />
+                          <ProfileField
+                            label="Carga horária (horas)"
+                            inputMode="numeric"
+                            maxLength={5}
+                            value={courseForm.workloadHours}
+                            error={courseErrors.workloadHours}
+                            onChange={(event) => setCourseForm((current) => ({ ...current, workloadHours: event.target.value.replace(/\D/g, "") }))}
+                          />
+                          <ProfileSelect
+                            label="Situação"
+                            required
+                            options={COURSE_STATUS_OPTIONS}
+                            value={courseForm.status}
+                            error={courseErrors.status}
+                            onChange={(event) => setCourseForm((current) => ({ ...current, status: event.target.value as CourseStatus | "" }))}
+                          />
+                          <ProfileField
+                            label="Data de início"
+                            placeholder="MM/AAAA"
+                            inputMode="numeric"
+                            maxLength={7}
+                            value={courseForm.startDate}
+                            error={courseErrors.startDate}
+                            onChange={(event) => setCourseForm((current) => ({ ...current, startDate: maskMonthYear(event.target.value) }))}
+                          />
+                          <ProfileField
+                            label={courseForm.status === "EM_ANDAMENTO" ? "Previsão de conclusão" : "Conclusão"}
+                            required={courseForm.status === "CONCLUIDO"}
+                            placeholder="MM/AAAA"
+                            inputMode="numeric"
+                            maxLength={7}
+                            value={courseForm.completedAt}
+                            error={courseErrors.completedAt}
+                            onChange={(event) => setCourseForm((current) => ({ ...current, completedAt: maskMonthYear(event.target.value) }))}
+                          />
+                        </div>
+                        <button onClick={() => void submitCourse()} disabled={isBusy} className={PROFILE_ADD_BUTTON}>
+                          {editingCourseId === null ? <><Plus className="w-4 h-4" /> Adicionar curso</> : <><Check className="w-4 h-4" /> Salvar curso</>}
+                        </button>
+                        {editingCourseId !== null && (
+                          <button onClick={resetCourse} disabled={isBusy} className="w-full text-sm text-muted-foreground hover:text-foreground">Cancelar edição</button>
+                        )}
+                        {getNoneDeclarationState({ recordCount: profile.courses.length, declared: false }).showOption && (
+                          <NoneDeclarationBox
+                            checked={false}
+                            disabled={isBusy}
+                            label="Não possuo cursos complementares"
+                            onToggle={() => void handleToggleDeclaration("courses", false)}
+                          />
+                        )}
+                      </>
                     )}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 border-2 border-dashed border-border rounded-xl p-4">
-                      <Field label="Curso" value={newCourse.name} onChange={(event) => setNewCourse((current) => ({ ...current, name: event.target.value }))} />
-                      <Field label="Instituição/plataforma" value={newCourse.institution} onChange={(event) => setNewCourse((current) => ({ ...current, institution: event.target.value }))} />
-                      <Field label="Carga horária" value={newCourse.workload} onChange={(event) => setNewCourse((current) => ({ ...current, workload: event.target.value }))} />
-                      <Field label="Conclusão" value={newCourse.completedAt} onChange={(event) => setNewCourse((current) => ({ ...current, completedAt: event.target.value }))} />
-                    </div>
-                    <button onClick={addCourse} className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
-                      <Plus className="w-4 h-4" /> Adicionar curso
-                    </button>
                   </>
                 )}
+
                 {sec.id === "experiencia" && (
                   <>
-                    {profile.experiences.length > 0 ? (
-                      profile.experiences.map((experience) => (
-                        <div key={experience.id} className="bg-muted/50 rounded-xl p-4 border border-border space-y-3">
+                    {profile.declarations.noExperience ? (
+                      <NoneDeclarationBox
+                        checked
+                        disabled={isBusy}
+                        label="Eu ainda não possuo experiência profissional"
+                        hint="Declaração registrada. Desmarque para voltar a adicionar experiências."
+                        onToggle={() => void handleToggleDeclaration("experience", true)}
+                      />
+                    ) : (
+                      <>
+                        {hasExperiences ? (
+                          profile.experiences.map((item) => (
+                            <div key={item.id} className={PROFILE_ITEM_CARD}>
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-foreground break-words">{item.jobRole} · {item.companyName}</p>
+                                <p className="text-xs text-muted-foreground mt-1">{formatProfilePeriod(item.startDate, item.endDate, item.isCurrent)}</p>
+                                {item.description && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line break-words">{item.description}</p>}
+                              </div>
+                              <ProfileItemActions
+                                label="experiência"
+                                disabled={isBusy}
+                                onEdit={() => startEditExperience(item)}
+                                onRemove={() => void handleRemoveExperience(item.id)}
+                              />
+                            </div>
+                          ))
+                        ) : (
+                          <div className="bg-muted/40 rounded-xl p-4 border border-border">
+                            <p className="text-sm font-semibold text-foreground">Nenhuma experiência profissional adicionada</p>
+                            <p className="text-xs text-muted-foreground mt-1">Adicione uma experiência ou declare que ainda não possui experiência profissional.</p>
+                          </div>
+                        )}
+                        <div className="border-2 border-dashed border-border rounded-xl p-4 space-y-3">
                           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                            <Field label="Empresa" value={experience.company} onChange={(event) => updateExperience(experience.id, { company: event.target.value })} />
-                            <Field label="Cargo" value={experience.role} onChange={(event) => updateExperience(experience.id, { role: event.target.value })} />
-                            <Field label="Início" value={experience.startDate} onChange={(event) => updateExperience(experience.id, { startDate: event.target.value })} />
-                            <Field label="Fim" value={experience.endDate} disabled={experience.current} onChange={(event) => updateExperience(experience.id, { endDate: event.target.value })} />
+                            <ProfileField
+                              label="Empresa"
+                              required
+                              maxLength={PROFILE_FIELD_LIMITS.companyName}
+                              value={experienceForm.companyName}
+                              error={experienceErrors.companyName}
+                              onChange={(event) => setExperienceForm((current) => ({ ...current, companyName: event.target.value }))}
+                            />
+                            <ProfileField
+                              label="Cargo"
+                              required
+                              maxLength={PROFILE_FIELD_LIMITS.jobRole}
+                              value={experienceForm.jobRole}
+                              error={experienceErrors.jobRole}
+                              onChange={(event) => setExperienceForm((current) => ({ ...current, jobRole: event.target.value }))}
+                            />
+                            <ProfileField
+                              label="Início"
+                              required
+                              placeholder="MM/AAAA"
+                              inputMode="numeric"
+                              maxLength={7}
+                              value={experienceForm.startDate}
+                              error={experienceErrors.startDate}
+                              onChange={(event) => setExperienceForm((current) => ({ ...current, startDate: maskMonthYear(event.target.value) }))}
+                            />
+                            <ProfileField
+                              label="Fim"
+                              required={!experienceForm.isCurrent}
+                              placeholder="MM/AAAA"
+                              inputMode="numeric"
+                              maxLength={7}
+                              disabled={experienceForm.isCurrent}
+                              value={experienceForm.endDate}
+                              error={experienceErrors.endDate}
+                              onChange={(event) => setExperienceForm((current) => ({ ...current, endDate: maskMonthYear(event.target.value) }))}
+                            />
                           </div>
                           <label className="flex items-center gap-2 text-sm text-muted-foreground">
                             <input
                               type="checkbox"
-                              checked={experience.current}
-                              onChange={(event) => updateExperience(experience.id, { current: event.target.checked, endDate: event.target.checked ? "" : experience.endDate })}
+                              checked={experienceForm.isCurrent}
+                              onChange={(event) => setExperienceForm((current) => ({ ...current, isCurrent: event.target.checked, endDate: event.target.checked ? "" : current.endDate }))}
                               className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
                             />
                             Trabalho atualmente nesta experiência
                           </label>
-                          <FieldArea label="Descrição/responsabilidades" rows={3} value={experience.description} onChange={(event) => updateExperience(experience.id, { description: event.target.value })} />
-                          <div className="flex justify-end">
-                            <button onClick={() => removeExperience(experience.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg transition-colors" aria-label="Remover experiência">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                          <div>
+                            <FieldArea
+                              label="Descrição/responsabilidades"
+                              rows={3}
+                              maxLength={PROFILE_FIELD_LIMITS.description}
+                              value={experienceForm.description}
+                              onChange={(event) => setExperienceForm((current) => ({ ...current, description: event.target.value }))}
+                            />
+                            <CharCounter value={experienceForm.description} limit={PROFILE_FIELD_LIMITS.description} />
+                            {experienceErrors.description && <p role="alert" className="mt-1 text-xs text-red-600">{experienceErrors.description}</p>}
                           </div>
                         </div>
-                      ))
-                    ) : (
-                      <div className="bg-muted/40 rounded-xl p-4 border border-border">
-                        <p className="text-sm font-semibold text-foreground">Nenhuma experiência profissional adicionada</p>
-                        <p className="text-xs text-muted-foreground mt-1">Adicione experiências quando quiser completar seu histórico profissional.</p>
-                      </div>
+                        <button onClick={() => void submitExperience()} disabled={isBusy} className={PROFILE_ADD_BUTTON}>
+                          {editingExperienceId === null ? <><Plus className="w-4 h-4" /> Adicionar experiência</> : <><Check className="w-4 h-4" /> Salvar experiência</>}
+                        </button>
+                        {editingExperienceId !== null && (
+                          <button onClick={resetExperience} disabled={isBusy} className="w-full text-sm text-muted-foreground hover:text-foreground">Cancelar edição</button>
+                        )}
+                        {getNoneDeclarationState({ recordCount: profile.experiences.length, declared: false }).showOption && (
+                          <NoneDeclarationBox
+                            checked={false}
+                            disabled={isBusy}
+                            label="Eu ainda não possuo experiência profissional"
+                            onToggle={() => void handleToggleDeclaration("experience", false)}
+                          />
+                        )}
+                      </>
                     )}
-                    <div className="border-2 border-dashed border-border rounded-xl p-4 space-y-3">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                        <Field label="Empresa" value={newExperience.company} onChange={(event) => setNewExperience((current) => ({ ...current, company: event.target.value }))} />
-                        <Field label="Cargo" value={newExperience.role} onChange={(event) => setNewExperience((current) => ({ ...current, role: event.target.value }))} />
-                        <Field label="Início" value={newExperience.startDate} onChange={(event) => setNewExperience((current) => ({ ...current, startDate: event.target.value }))} />
-                        <Field label="Fim" value={newExperience.endDate} disabled={newExperience.current} onChange={(event) => setNewExperience((current) => ({ ...current, endDate: event.target.value }))} />
-                      </div>
-                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <input
-                          type="checkbox"
-                          checked={newExperience.current}
-                          onChange={(event) => setNewExperience((current) => ({ ...current, current: event.target.checked, endDate: event.target.checked ? "" : current.endDate }))}
-                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                        />
-                        Trabalho atualmente nesta experiência
-                      </label>
-                      <FieldArea label="Descrição/responsabilidades" rows={3} value={newExperience.description} onChange={(event) => setNewExperience((current) => ({ ...current, description: event.target.value }))} />
-                    </div>
-                    <button onClick={addExperience} className="w-full border-2 border-dashed border-border rounded-xl py-3 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2">
-                      <Plus className="w-4 h-4" /> Adicionar experiência
-                    </button>
                   </>
                 )}
+
                 {sec.id === "habilidades" && (
                   <>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Habilidades técnicas</p>
-                      <div className="flex flex-wrap gap-2">
-                        {profile.technicalSkills.map(s => (
-                          <UIBadge key={s} variant="primary" className="px-3 py-1 font-medium">
-                            {s}
-                            <button onClick={() => removeSkill("technicalSkills", s)} className="ml-1 text-blue-700/70 hover:text-blue-900" aria-label={`Remover ${s}`}>
-                              <X className="w-3 h-3" />
-                            </button>
-                          </UIBadge>
-                        ))}
-                        {profile.technicalSkills.length === 0 && (
-                          <span className="text-xs text-muted-foreground">Nenhuma habilidade técnica adicionada.</span>
-                        )}
-                      </div>
-                      <div className="mt-3 flex flex-col sm:flex-row gap-2">
-                        <Input value={newTechnicalSkill} onChange={(event) => setNewTechnicalSkill(event.target.value)} placeholder="Adicionar habilidade técnica" />
-                        <Btn variant="secondary" size="sm" onClick={() => addSkill("technicalSkills", newTechnicalSkill)}>
-                          <Plus className="w-3.5 h-3.5" /> Adicionar
-                        </Btn>
-                      </div>
+                      {profile.declarations.noTechnicalSkills ? (
+                        <NoneDeclarationBox
+                          checked
+                          disabled={isBusy}
+                          label="Eu ainda não possuo habilidades técnicas cadastradas"
+                          hint="Declaração registrada. Desmarque para voltar a adicionar habilidades técnicas."
+                          onToggle={() => void handleToggleDeclaration("technicalSkills", true)}
+                        />
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {profile.technicalSkills.map(s => (
+                              <UIBadge key={s.id} variant="primary" className="px-3 py-1 font-medium">
+                                {s.name}
+                                <button onClick={() => void handleRemoveSkill(s.id)} disabled={isBusy} className="ml-1 text-blue-700/70 hover:text-blue-900 disabled:opacity-50" aria-label={`Remover ${s.name}`}>
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </UIBadge>
+                            ))}
+                            {!hasTechnicalSkills && (
+                              <span className="text-xs text-muted-foreground">Nenhuma habilidade técnica adicionada.</span>
+                            )}
+                          </div>
+                          <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                            <Input
+                              value={newTechnicalSkill}
+                              maxLength={PROFILE_FIELD_LIMITS.skillName}
+                              onChange={(event) => setNewTechnicalSkill(event.target.value)}
+                              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleAddSkill("TECHNICAL", newTechnicalSkill); } }}
+                              placeholder="Adicionar habilidade técnica"
+                            />
+                            <Btn variant="secondary" size="sm" disabled={isBusy} onClick={() => void handleAddSkill("TECHNICAL", newTechnicalSkill)}>
+                              <Plus className="w-3.5 h-3.5" /> Adicionar
+                            </Btn>
+                          </div>
+                          <div className="mt-3">
+                            <NoneDeclarationBox
+                              checked={false}
+                              disabled={isBusy || hasTechnicalSkills}
+                              label="Eu ainda não possuo habilidades técnicas cadastradas"
+                              hint={hasTechnicalSkills ? "Remova as habilidades técnicas adicionadas para poder fazer esta declaração." : undefined}
+                              onToggle={() => void handleToggleDeclaration("technicalSkills", false)}
+                            />
+                          </div>
+                        </>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Competências comportamentais</p>
                       <div className="flex flex-wrap gap-2">
                         {profile.behavioralSkills.map(s => (
-                          <UIBadge key={s} variant="neutral" className="border-green-100 bg-green-50 px-3 py-1 font-medium text-green-700">
-                            {s}
-                            <button onClick={() => removeSkill("behavioralSkills", s)} className="ml-1 text-green-700/70 hover:text-green-900" aria-label={`Remover ${s}`}>
+                          <UIBadge key={s.id} variant="neutral" className="border-green-100 bg-green-50 px-3 py-1 font-medium text-green-700">
+                            {s.name}
+                            <button onClick={() => void handleRemoveSkill(s.id)} disabled={isBusy} className="ml-1 text-green-700/70 hover:text-green-900 disabled:opacity-50" aria-label={`Remover ${s.name}`}>
                               <X className="w-3 h-3" />
                             </button>
                           </UIBadge>
                         ))}
                         {profile.behavioralSkills.length === 0 && (
-                          <span className="text-xs text-muted-foreground">Nenhuma competência adicionada.</span>
+                          <span className="text-xs text-muted-foreground">Nenhuma competência adicionada (pelo menos uma é necessária).</span>
                         )}
                       </div>
                       <div className="mt-3 flex flex-col sm:flex-row gap-2">
-                        <Input value={newBehavioralSkill} onChange={(event) => setNewBehavioralSkill(event.target.value)} placeholder="Adicionar competência comportamental" />
-                        <Btn variant="secondary" size="sm" onClick={() => addSkill("behavioralSkills", newBehavioralSkill)}>
+                        <Input
+                          value={newBehavioralSkill}
+                          maxLength={PROFILE_FIELD_LIMITS.skillName}
+                          onChange={(event) => setNewBehavioralSkill(event.target.value)}
+                          onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleAddSkill("BEHAVIORAL", newBehavioralSkill); } }}
+                          placeholder="Adicionar competência comportamental"
+                        />
+                        <Btn variant="secondary" size="sm" disabled={isBusy} onClick={() => void handleAddSkill("BEHAVIORAL", newBehavioralSkill)}>
                           <Plus className="w-3.5 h-3.5" /> Adicionar
                         </Btn>
                       </div>
                     </div>
                   </>
-                )}
-                {(
-                  sec.id === "objetivo"
-                  || sec.id === "formacao"
-                  || sec.id === "cursos"
-                  || sec.id === "experiencia"
-                  || sec.id === "habilidades"
-                ) && (
-                  <div className="flex justify-end pt-2 border-t border-border">
-                    <Btn
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        if (sec.id === "objetivo") {
-                          handleSaveObjective();
-                          return;
-                        }
-                        persistProfile({
-                          formations: profile.formations,
-                          courses: profile.courses,
-                          experiences: profile.experiences,
-                          technicalSkills: profile.technicalSkills,
-                          behavioralSkills: profile.behavioralSkills,
-                        }, "Alterações salvas.");
-                      }}
-                    >
-                      Salvar alterações
-                    </Btn>
-                  </div>
                 )}
               </div>
             )}
@@ -1762,6 +2183,78 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
 }
 
 // ─── Screen 6: Preparação ─────────────────────────────────────────────────────
+
+// Protege TODAS as etapas do fluxo de realização da entrevista (setup,
+// consentimento, modo de avaliação, preparação, perguntas, revisão e envio):
+// rota por URL, continuação de rascunho e qualquer outro caminho passam por
+// aqui. A decisão vem de `isComplete`/`missingSections` da API — o Front não
+// reimplementa a regra de completude. (A checagem equivalente no Back da
+// entrevista será feita junto com o Fluxo 03.)
+function InterviewProfileGuard({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const { status, profile, error, reason, reload } = useCandidateProfile();
+
+  if (status === "ready" && profile?.isComplete) {
+    return <Outlet />;
+  }
+
+  return (
+    <AuthLayout
+      current="interview-setup"
+      onNavigate={onNavigate}
+      title="Nova entrevista"
+      subtitle="Complete seu contexto profissional para começar"
+    >
+      <Card className="w-full max-w-2xl p-5 sm:p-6">
+        {status === "loading" && (
+          <div role="status" aria-live="polite" className="flex items-center justify-center gap-3 text-sm text-muted-foreground">
+            <Spinner size="md" /> Verificando seu perfil profissional...
+          </div>
+        )}
+        {status === "error" && (
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+              <AlertCircle className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="font-bold text-foreground">Não foi possível verificar seu perfil</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{error}</p>
+              <div className="mt-5">
+                {reason === "unauthorized" ? (
+                  <Btn variant="primary" onClick={() => window.location.reload()}>Recarregar página</Btn>
+                ) : (
+                  <Btn variant="primary" onClick={() => void reload()}>Tentar novamente</Btn>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {status === "ready" && profile && !profile.isComplete && (
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+              <AlertCircle className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="font-bold text-foreground">Complete seu perfil profissional para iniciar uma entrevista</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Precisamos de algumas informações profissionais para contextualizar melhor sua entrevista. Ainda falta completar:
+              </p>
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-foreground">
+                {describeMissingSections(profile.missingSections).map((label) => (
+                  <li key={label}>{label}</li>
+                ))}
+              </ul>
+              <div className="mt-5">
+                <Btn variant="primary" onClick={() => onNavigate("profile")}>
+                  Completar perfil
+                </Btn>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+    </AuthLayout>
+  );
+}
 
 function DraftWizardGuard({ current, onNavigate }: { current: Screen; onNavigate: (s: Screen) => void }) {
   return (
@@ -3066,10 +3559,6 @@ function InterviewSetupScreen({
   onCancelInterview?: () => void;
   onCancelPreparation?: () => void;
 }) {
-  const candidateUser = session.user?.role === "CANDIDATE" ? session.user : null;
-  const candidateIdentity = getCandidateIdentity(session);
-  const candidateProfile = getCandidateProfile(candidateIdentity.id, candidateUser);
-  const profileReadyForInterview = isCandidateProfileReadyForInterview(candidateProfile);
   const [url, setUrl] = useState(draft.context?.sourceUrl ?? "");
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
   const [error, setError] = useState("");
@@ -3139,36 +3628,6 @@ function InterviewSetupScreen({
     }
     hadContextRef.current = Boolean(draft.context);
   }, [draft.context]);
-
-  if (!profileReadyForInterview) {
-    return (
-      <AuthLayout
-        current="interview-setup"
-        onNavigate={onNavigate}
-        title="Nova entrevista"
-        subtitle="Complete seu contexto profissional para começar"
-      >
-        <Card className="w-full max-w-2xl p-5 sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <AlertCircle className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="font-bold text-foreground">Complete as informações essenciais do seu perfil</h3>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Precisamos de algumas informações profissionais para contextualizar melhor sua entrevista.
-              </p>
-              <div className="mt-5">
-                <Btn variant="primary" onClick={() => onNavigate("profile")}>
-                  Completar perfil
-                </Btn>
-              </div>
-            </div>
-          </div>
-        </Card>
-      </AuthLayout>
-    );
-  }
 
   if (savedDraftAvailable && draft.context) {
     return (
@@ -5811,6 +6270,8 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/agenda" element={protect("CANDIDATE", <InterviewAgendaScreen onNavigate={navigate} session={session} />)} />
+          {/* Todas as etapas da entrevista exigem perfil profissional completo (API). */}
+          <Route element={protect("CANDIDATE", <InterviewProfileGuard onNavigate={navigate} />)}>
           <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onDiscardSavedDraft={discardSavedDraft} onCancelInterview={() => setConfirmCancelInterview(true)} onCancelPreparation={cancelInterviewPreparation} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
@@ -5818,6 +6279,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} onQuestionIndexChange={(index) => setDraftProgress((current) => current.currentQuestionIndex === index ? current : { ...current, currentQuestionIndex: index })} />)} />
           <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} />)} />
+          </Route>
           <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
           <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />

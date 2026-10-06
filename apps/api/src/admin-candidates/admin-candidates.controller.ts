@@ -30,4 +30,12 @@ export class AdminCandidatesController {
   getById(@Param('id', ParseIntPipe) id: number) {
     return this.adminCandidatesService.getById(id);
   }
+
+  // Somente leitura: o Admin nunca edita o perfil do candidato e este endpoint
+  // não reutiliza `/candidate/profile` (exclusivo do próprio candidato).
+  @Get(':id/profile')
+  @Roles('ADMIN')
+  getProfile(@Param('id', ParseIntPipe) id: number) {
+    return this.adminCandidatesService.getProfile(id);
+  }
 }

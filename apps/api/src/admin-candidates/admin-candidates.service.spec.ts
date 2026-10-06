@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { AdminCandidatesService } from './admin-candidates.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import type { CandidateProfileService } from '../candidate-profile/candidate-profile.service';
 
 const createdAt = new Date('2026-09-14T12:00:00.000Z');
 
@@ -27,11 +28,14 @@ function makeService() {
     },
   };
 
+  const profileService = { getProfileReadOnly: jest.fn() };
+
   const service = new AdminCandidatesService(
     prisma as unknown as PrismaService,
+    profileService as unknown as CandidateProfileService,
   );
 
-  return { service, prisma };
+  return { service, prisma, profileService };
 }
 
 describe('AdminCandidatesService', () => {
@@ -114,5 +118,44 @@ describe('AdminCandidatesService', () => {
       NotFoundException,
     );
     expect(prisma.app_user.findFirst).not.toHaveBeenCalled();
+  });
+
+  describe('getProfile (Perfil Profissional, somente leitura)', () => {
+    it('confere o role CANDIDATE e delega ao CandidateProfileService', async () => {
+      const { service, prisma, profileService } = makeService();
+      prisma.app_user.findFirst.mockResolvedValue({ user_id: 7 });
+      const profile = { professionalTitle: 'Dev', isComplete: false };
+      profileService.getProfileReadOnly.mockResolvedValue(profile);
+
+      await expect(service.getProfile(7)).resolves.toBe(profile);
+
+      const args = prisma.app_user.findFirst.mock.calls[0][0];
+      expect(args.where).toEqual({ user_id: 7, user_role: 'CANDIDATE' });
+      expect(args.select).toEqual({ user_id: true });
+      expect(profileService.getProfileReadOnly).toHaveBeenCalledWith(7);
+    });
+
+    it('responde 404 quando o id não pertence a um CANDIDATE', async () => {
+      const { service, prisma, profileService } = makeService();
+      prisma.app_user.findFirst.mockResolvedValue(null);
+
+      await expect(service.getProfile(99)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(profileService.getProfileReadOnly).not.toHaveBeenCalled();
+    });
+
+    it('responde 404 para ids inválidos sem consultar o banco', async () => {
+      const { service, prisma, profileService } = makeService();
+
+      await expect(service.getProfile(0)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(service.getProfile(2147483648)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.app_user.findFirst).not.toHaveBeenCalled();
+      expect(profileService.getProfileReadOnly).not.toHaveBeenCalled();
+    });
   });
 });

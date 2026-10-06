@@ -1,14 +1,17 @@
 /**
  * Candidatos REAIS para o Admin (Etapa 2 da limpeza de mocks de candidato).
  *
- * Lê os endpoints `GET /admin/candidates` e `GET /admin/candidates/:id` da API
- * (protegidos por `@Roles('ADMIN')` no Back). Não existe fallback: se a API
+ * Lê os endpoints `GET /admin/candidates`, `GET /admin/candidates/:id` e
+ * `GET /admin/candidates/:id/profile` (Perfil Profissional, somente leitura)
+ * da API (protegidos por `@Roles('ADMIN')` no Back). Não existe fallback: se a API
  * falhar, o resultado é um erro explícito — nunca uma lista fictícia.
  *
  * Nenhum dado é lido ou gravado em localStorage.
  */
 
+import type { ProfessionalProfile } from "../domain/professional-profile";
 import type { MockAccountStatus } from "./auth-service";
+import { parseProfessionalProfile } from "./candidate-profile-service";
 
 const API_BASE_URL = (
   (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
@@ -17,8 +20,6 @@ const API_BASE_URL = (
 
 export type AdminCandidateProfileSummary = {
   professionalTitle: string | null;
-  city: string | null;
-  state: string | null;
 };
 
 export type AdminCandidate = {
@@ -103,8 +104,6 @@ function toAdminCandidate(payload: unknown): AdminCandidate | null {
     profile: rawProfile
       ? {
           professionalTitle: nullableString(rawProfile.professionalTitle),
-          city: nullableString(rawProfile.city),
-          state: nullableString(rawProfile.state),
         }
       : null,
   };
@@ -150,6 +149,7 @@ const NETWORK_ERROR_MESSAGE =
 function failureFromStatus(
   status: number,
   fallbackMessage: string,
+  forbiddenMessage = "Você não tem permissão para ver os candidatos.",
 ): { ok: false; reason: AdminCandidatesFailure; message: string } {
   if (status === 404) {
     return {
@@ -171,7 +171,7 @@ function failureFromStatus(
     return {
       ok: false,
       reason: "forbidden",
-      message: "Você não tem permissão para ver os candidatos.",
+      message: forbiddenMessage,
     };
   }
 
@@ -276,4 +276,51 @@ export async function getAdminCandidate(
   }
 
   return { ok: true, data: candidate };
+}
+
+/**
+ * Perfil Profissional REAL do candidato (somente leitura). Não usa
+ * `/candidate/profile`, que é exclusivo do próprio candidato autenticado.
+ */
+export async function getAdminCandidateProfile(
+  id: string,
+): Promise<AdminCandidatesResult<ProfessionalProfile>> {
+  if (!/^\d+$/.test(id)) {
+    return failureFromStatus(404, "");
+  }
+
+  const response = await requestAdminApi(
+    `/admin/candidates/${encodeURIComponent(id)}/profile`,
+  );
+
+  if (!response) {
+    return { ok: false, reason: "error", message: NETWORK_ERROR_MESSAGE };
+  }
+
+  if (!response.ok) {
+    return failureFromStatus(
+      response.status,
+      "Não foi possível carregar o perfil profissional. Tente novamente.",
+      "Você não tem permissão para ver o perfil deste candidato.",
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  const profile = parseProfessionalProfile(payload);
+
+  if (!profile) {
+    return {
+      ok: false,
+      reason: "error",
+      message: "Resposta inválida do servidor. Tente novamente.",
+    };
+  }
+
+  return { ok: true, data: profile };
 }

@@ -8,7 +8,7 @@
     "build": "vite build",
     "typecheck": "echo \"Typecheck temporariamente ignorado na base importada do Figma Make\"",
     "lint": "echo \"Lint temporariamente ignorado na base importada do Figma Make\"",
-    "test:run": "echo \"Testes temporariamente ignorados na base importada do Figma Make\"",
+    "test:run": "vitest run",
     "format": "echo \"Formatacao temporariamente ignorada na base importada do Figma Make\"",
     "format:check": "echo \"Checagem de formatacao temporariamente ignorada na base importada do Figma Make\""
   },
@@ -76,7 +76,8 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
-    "vite": "6.3.5"
+    "vite": "6.3.5",
+    "vitest": "^3.2.7"
   },
   "peerDependencies": {
     "react": "18.3.1",
