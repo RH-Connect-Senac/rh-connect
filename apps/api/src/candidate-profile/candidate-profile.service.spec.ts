@@ -282,6 +282,133 @@ describe('CandidateProfileService — atualização do perfil', () => {
     });
   });
 
+  describe('contrato x senioridade', () => {
+    it.each([
+      ['ESTAGIO', 'JUNIOR'],
+      ['ESTAGIO', 'PLENO'],
+      ['ESTAGIO', 'SENIOR'],
+      ['ESTAGIO', 'TRAINEE'],
+      ['PJ', 'TRAINEE'],
+      ['TEMPORARIO', 'TRAINEE'],
+    ])('rejeita %s + %s enviados no mesmo payload (400)', async (contractType, professionalLevel) => {
+      const { service, prisma } = makeService();
+      await expect(
+        service.updateProfile(9, { contractType, professionalLevel }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.candidate_profile.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['CLT', 'TRAINEE'],
+      ['CLT', 'JUNIOR'],
+      ['CLT', 'PLENO'],
+      ['CLT', 'SENIOR'],
+      ['PJ', 'JUNIOR'],
+      ['PJ', 'PLENO'],
+      ['PJ', 'SENIOR'],
+      ['TEMPORARIO', 'JUNIOR'],
+      ['TEMPORARIO', 'PLENO'],
+      ['TEMPORARIO', 'SENIOR'],
+    ])('aceita %s + %s', async (contractType, professionalLevel) => {
+      const { service, prisma } = makeService();
+      await service.updateProfile(9, { contractType, professionalLevel });
+      expect(profileUpdateData(prisma)).toMatchObject({
+        contract_type: contractType,
+        professional_level: professionalLevel,
+      });
+    });
+
+    it('ESTAGIO com senioridade null é válido', async () => {
+      const { service, prisma } = makeService();
+      await service.updateProfile(9, {
+        contractType: 'ESTAGIO',
+        professionalLevel: null,
+      });
+      expect(profileUpdateData(prisma)).toMatchObject({
+        contract_type: 'ESTAGIO',
+        professional_level: null,
+      });
+    });
+
+    it.each(['ESTAGIO', 'PJ', 'TEMPORARIO'])(
+      'CLT + TRAINEE -> mudar só o contrato para %s limpa a senioridade',
+      async (contractType) => {
+        const { service, prisma } = makeService({
+          contract_type: 'CLT',
+          professional_level: 'TRAINEE',
+        });
+        await service.updateProfile(9, { contractType });
+        expect(profileUpdateData(prisma)).toMatchObject({
+          contract_type: contractType,
+          professional_level: null,
+        });
+      },
+    );
+
+    it('qualquer senioridade + mudar para ESTAGIO limpa a senioridade', async () => {
+      const { service, prisma } = makeService({
+        contract_type: 'CLT',
+        professional_level: 'SENIOR',
+      });
+      await service.updateProfile(9, { contractType: 'ESTAGIO' });
+      expect(profileUpdateData(prisma)).toMatchObject({
+        professional_level: null,
+      });
+    });
+
+    it('mudar o contrato para um que continua compatível preserva a senioridade', async () => {
+      const { service, prisma } = makeService({
+        contract_type: 'CLT',
+        professional_level: 'PLENO',
+      });
+      await service.updateProfile(9, { contractType: 'PJ' });
+      const data = profileUpdateData(prisma);
+      expect(data.contract_type).toBe('PJ');
+      expect(data).not.toHaveProperty('professional_level');
+    });
+
+    it('enviar só a senioridade valida contra o contrato atual (400)', async () => {
+      const { service } = makeService({
+        contract_type: 'ESTAGIO',
+        professional_level: null,
+      });
+      await expect(
+        service.updateProfile(9, { professionalLevel: 'SENIOR' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('enviar só a senioridade compatível com o contrato atual é aceito', async () => {
+      const { service, prisma } = makeService({ contract_type: 'PJ' });
+      await service.updateProfile(9, { professionalLevel: 'SENIOR' });
+      expect(profileUpdateData(prisma)).toMatchObject({
+        professional_level: 'SENIOR',
+      });
+    });
+
+    it('atualizar outro campo não mexe no par (dado legado inválido não bloqueia)', async () => {
+      const { service, prisma } = makeService({
+        contract_type: 'ESTAGIO',
+        professional_level: 'JUNIOR',
+      });
+      await service.updateProfile(9, { professionalTitle: 'Dev' });
+      const data = profileUpdateData(prisma);
+      expect(data).not.toHaveProperty('professional_level');
+      expect(data).not.toHaveProperty('contract_type');
+    });
+
+    it('a regra é a mesma nas três áreas', async () => {
+      for (const area of ['information-technology', 'hr-management', 'secretariat']) {
+        const { service } = makeService({ professional_area: area });
+        await expect(
+          service.updateProfile(9, {
+            contractType: 'ESTAGIO',
+            professionalLevel: 'JUNIOR',
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      }
+    });
+  });
+
   it('não altera campos ausentes', async () => {
     const { service, prisma } = makeService();
     await service.updateProfile(9, { professionalTitle: 'Dev' });

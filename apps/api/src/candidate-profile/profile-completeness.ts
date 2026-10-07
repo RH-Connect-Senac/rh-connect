@@ -1,4 +1,4 @@
-import { isSubareaOfArea } from './profile-catalog';
+import { isLevelApplicable, isSubareaOfArea } from './profile-catalog';
 
 // Regra de completude do Perfil Profissional — fonte da verdade no backend.
 // Função pura: recebe o estado do perfil e devolve o que falta. O front só
@@ -69,7 +69,10 @@ export function getMissingObjectiveFields(
     missing.push('professionalSubarea');
   }
   if (!hasText(input.desiredPosition)) missing.push('desiredPosition');
-  if (!input.professionalLevel) missing.push('professionalLevel');
+  // Estágio: senioridade não se aplica, então não é exigida.
+  if (isLevelApplicable(input.contractType) && !input.professionalLevel) {
+    missing.push('professionalLevel');
+  }
   if (!input.contractType) missing.push('contractType');
   if (!hasText(input.professionalSummary)) missing.push('professionalSummary');
   return missing;

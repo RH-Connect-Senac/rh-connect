@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, monthYearToApi } from "./professional-profile";
+import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, getProfileCompletionPercent, monthYearToApi } from "./professional-profile";
 
 describe("getNoneDeclarationState", () => {
   it("sem registros e sem declaração: mostra formulário e a opção de declarar", () => {
@@ -70,5 +70,42 @@ describe("formatCoursePeriod", () => {
         expect(text.trim()).toBe(text);
       }
     }
+  });
+});
+
+describe("getProfileCompletionPercent com senioridade x contrato", () => {
+  const base = { isComplete: false, missingSections: [] as never[], missingObjectiveFields: [] as never[] };
+
+  it("perfil completo (API) exibe 100% em qualquer contrato, inclusive ESTAGIO", () => {
+    for (const contractType of ["ESTAGIO", "CLT", "PJ", "TEMPORARIO", null] as const) {
+      expect(getProfileCompletionPercent({ ...base, isComplete: true, contractType })).toBe(100);
+    }
+  });
+
+  it("ESTAGIO: senioridade não entra no total (11 unidades)", () => {
+    // falta só a seção de formação: 10 de 11 preenchidas
+    const percent = getProfileCompletionPercent({ ...base, contractType: "ESTAGIO", missingSections: ["education"] });
+    expect(percent).toBe(Math.round((10 / 11) * 100));
+  });
+
+  it("CLT/PJ/TEMPORARIO: senioridade continua no total (12 unidades)", () => {
+    for (const contractType of ["CLT", "PJ", "TEMPORARIO", null] as const) {
+      const percent = getProfileCompletionPercent({ ...base, contractType, missingSections: ["education"] });
+      expect(percent).toBe(Math.round((11 / 12) * 100));
+    }
+  });
+
+  it("ESTAGIO: objetivo pendente nunca desconta mais que os 6 campos aplicáveis", () => {
+    const percent = getProfileCompletionPercent({
+      ...base,
+      contractType: "ESTAGIO",
+      missingSections: ["objective"],
+      missingObjectiveFields: ["professionalTitle", "professionalArea", "professionalSubarea", "desiredPosition", "contractType", "professionalSummary"] as never[],
+    });
+    expect(percent).toBe(Math.round((5 / 11) * 100));
+  });
+
+  it("nunca chega a 100% com perfil incompleto", () => {
+    expect(getProfileCompletionPercent({ ...base, contractType: "ESTAGIO", missingSections: ["behavioralSkills"] })).toBeLessThan(100);
   });
 });

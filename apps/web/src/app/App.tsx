@@ -158,7 +158,11 @@ import {
   CONTRACT_TYPE_OPTIONS,
   EDUCATION_STATUS_OPTIONS,
   COURSE_STATUS_OPTIONS,
-  PROFESSIONAL_LEVEL_OPTIONS,
+  LEVEL_NOT_APPLICABLE_LABEL,
+  getLevelOptionsForContract,
+  isLevelApplicable,
+  levelAfterContractChange,
+  levelForApi,
   PROFILE_FIELD_LIMITS,
   academicLevelLabel,
   apiMonthToMonthYear,
@@ -175,7 +179,6 @@ import {
   type CourseStatus,
   type DeclarationSection,
   type EducationStatus,
-  type ProfessionalLevel,
   type ProfessionalProfile,
   type ProfileCourse,
   type ProfileEducation,
@@ -1238,11 +1241,12 @@ function ProfileField({ error, ...props }: FieldProps & { error?: string }) {
   );
 }
 
-function ProfileSelect({ label, options, required, error, ...props }: {
+function ProfileSelect({ label, options, required, error, placeholder = "Selecione...", ...props }: {
   label: string;
   options: { value: string; label: string }[];
   required?: boolean;
   error?: string;
+  placeholder?: string;
 } & React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div>
@@ -1251,7 +1255,7 @@ function ProfileSelect({ label, options, required, error, ...props }: {
       </label>
       <div className="relative">
         <NativeSelect {...props}>
-          <option value="">Selecione...</option>
+          <option value="">{placeholder}</option>
           {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </NativeSelect>
         <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
@@ -1417,7 +1421,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
         professionalArea: objective.professionalArea || null,
         professionalSubarea: objective.professionalSubarea || null,
         desiredPosition: objective.desiredPosition,
-        professionalLevel: (objective.professionalLevel || null) as ProfessionalLevel | null,
+        professionalLevel: levelForApi(objective.contractType, objective.professionalLevel),
         contractType: (objective.contractType || null) as ContractType | null,
         professionalSummary: objective.professionalSummary,
       }),
@@ -1731,18 +1735,27 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                         required
                       />
                       <ProfileSelect
-                        label="Senioridade profissional"
-                        required
-                        options={PROFESSIONAL_LEVEL_OPTIONS}
-                        value={objective.professionalLevel}
-                        onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
-                      />
-                      <ProfileSelect
                         label="Tipo de contrato"
                         required
                         options={CONTRACT_TYPE_OPTIONS}
                         value={objective.contractType}
-                        onChange={(event) => setObjective((current) => ({ ...current, contractType: event.target.value }))}
+                        onChange={(event) => {
+                          const contractType = event.target.value;
+                          setObjective((current) => ({
+                            ...current,
+                            contractType,
+                            professionalLevel: levelAfterContractChange(contractType, current.professionalLevel),
+                          }));
+                        }}
+                      />
+                      <ProfileSelect
+                        label="Senioridade profissional"
+                        required={isLevelApplicable(objective.contractType)}
+                        disabled={!isLevelApplicable(objective.contractType)}
+                        placeholder={isLevelApplicable(objective.contractType) ? undefined : LEVEL_NOT_APPLICABLE_LABEL}
+                        options={getLevelOptionsForContract(objective.contractType)}
+                        value={objective.professionalLevel}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
                       />
                     </div>
                     <div>

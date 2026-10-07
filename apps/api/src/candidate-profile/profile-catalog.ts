@@ -49,6 +49,38 @@ export const PROFESSIONAL_LEVELS = [
 
 export const CONTRACT_TYPES = ['CLT', 'ESTAGIO', 'PJ', 'TEMPORARIO'] as const;
 
+export type ContractType = (typeof CONTRACT_TYPES)[number];
+export type ProfessionalLevel = (typeof PROFESSIONAL_LEVELS)[number];
+
+// Regra ÚNICA contrato x senioridade (vale igual para todas as áreas):
+// estágio não tem senioridade; PJ e temporário não têm trainee.
+export const ALLOWED_LEVELS_BY_CONTRACT: Readonly<
+  Record<ContractType, readonly ProfessionalLevel[]>
+> = {
+  ESTAGIO: [],
+  CLT: ['TRAINEE', 'JUNIOR', 'PLENO', 'SENIOR'],
+  PJ: ['JUNIOR', 'PLENO', 'SENIOR'],
+  TEMPORARIO: ['JUNIOR', 'PLENO', 'SENIOR'],
+};
+
+/** Estágio: senioridade não se aplica (fica null e não é exigida). */
+export function isLevelApplicable(contract: string | null | undefined) {
+  return contract !== 'ESTAGIO';
+}
+
+/**
+ * true se a combinação é aceita. Sem contrato ou sem senioridade não há
+ * combinação a validar (a obrigatoriedade é tratada pela completude).
+ */
+export function isLevelAllowedForContract(
+  contract: string | null | undefined,
+  level: string | null | undefined,
+): boolean {
+  if (!contract || !level) return true;
+  const allowed = ALLOWED_LEVELS_BY_CONTRACT[contract as ContractType];
+  return !!allowed && (allowed as readonly string[]).includes(level);
+}
+
 export const ACADEMIC_LEVELS = [
   'ENSINO_FUNDAMENTAL',
   'ENSINO_MEDIO',

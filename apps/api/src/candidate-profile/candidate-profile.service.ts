@@ -24,7 +24,11 @@ import {
   evaluateProfileCompleteness,
   type CompletenessResult,
 } from './profile-completeness';
-import { RECORD_LIMITS, isSubareaOfArea } from './profile-catalog';
+import {
+  RECORD_LIMITS,
+  isLevelAllowedForContract,
+  isSubareaOfArea,
+} from './profile-catalog';
 import {
   validateCourseRules,
   validateEducationRules,
@@ -198,13 +202,34 @@ export class CandidateProfileService {
       if (position !== undefined) data.desired_position = position;
       const summary = normalizeOptionalText(dto.professionalSummary);
       if (summary !== undefined) data.professional_summary = summary;
-      if (dto.professionalLevel !== undefined) {
-        data.professional_level =
-          dto.professionalLevel as Prisma.candidate_profileUncheckedUpdateInput['professional_level'];
-      }
       if (dto.contractType !== undefined) {
         data.contract_type =
           dto.contractType as Prisma.candidate_profileUncheckedUpdateInput['contract_type'];
+      }
+
+      // Contrato x senioridade: valida o ESTADO RESULTANTE (campo ausente
+      // herda o atual). Combinação enviada de forma explícita e inválida é
+      // 400; se só o contrato mudou e a senioridade já salva deixou de ser
+      // compatível, ela é limpa (o candidato escolhe outra).
+      const nextContract =
+        dto.contractType !== undefined
+          ? dto.contractType
+          : profile.contract_type;
+      if (dto.professionalLevel !== undefined) {
+        if (!isLevelAllowedForContract(nextContract, dto.professionalLevel)) {
+          throw new BadRequestException(
+            nextContract === 'ESTAGIO'
+              ? 'Senioridade não se aplica para estágio.'
+              : 'A senioridade escolhida não é compatível com o tipo de contrato.',
+          );
+        }
+        data.professional_level =
+          dto.professionalLevel as Prisma.candidate_profileUncheckedUpdateInput['professional_level'];
+      } else if (
+        dto.contractType !== undefined &&
+        !isLevelAllowedForContract(nextContract, profile.professional_level)
+      ) {
+        data.professional_level = null;
       }
 
       // Área x subárea: valida o ESTADO RESULTANTE (campo ausente herda o atual).
