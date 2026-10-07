@@ -40,7 +40,13 @@ export interface CompletenessInput {
 }
 
 export interface CompletenessResult {
+  /** Perfil Profissional INTEIRO completo (todas as seções). */
   isComplete: boolean;
+  /**
+   * Objetivo Profissional completo: é o ÚNICO requisito do perfil para iniciar
+   * uma entrevista. Independe de formação, cursos, experiência e habilidades.
+   */
+  isInterviewReady: boolean;
   missingSections: ProfileSection[];
   missingObjectiveFields: ObjectiveField[];
 }
@@ -99,6 +105,7 @@ export function evaluateProfileCompleteness(
 
   return {
     isComplete: missingSections.length === 0,
+    isInterviewReady: missingObjectiveFields.length === 0,
     missingSections,
     missingObjectiveFields,
   };

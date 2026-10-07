@@ -16,6 +16,7 @@ const profilePayload = {
   behavioralSkills: [],
   declarations: { noCourses: true, noExperience: false, noTechnicalSkills: false },
   isComplete: false,
+  isInterviewReady: true,
   missingSections: ["education"],
   missingObjectiveFields: [],
   updatedAt: "2026-10-06T12:00:00.000Z",
