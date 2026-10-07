@@ -9,6 +9,8 @@ import {
   MAX_WORKLOAD_HOURS,
   PROFILE_FIELD_LIMITS,
   currentApiMonth,
+  MIN_YEAR,
+  isWellFormedMonthYear,
   monthYearToApi,
   type AcademicLevel,
   type CourseStatus,
@@ -33,13 +35,25 @@ type MonthCheck = { api: string | null; error: string | null };
 
 // Aceita valor ausente (undefined/null) além de string: campos opcionais podem
 // nem chegar no payload. Ausente/vazio => "não informado".
-function checkMonth(value: string | null | undefined, { required, allowFuture }: { required: boolean; allowFuture: boolean }, now: Date): MonthCheck {
+// Formato correto porém abaixo do piso técnico (1900) gera mensagem específica
+// de data antiga (nunca "Use o formato MM/AAAA."). Antiguidade acima do piso não
+// é erro: vira aviso em professional-plausibility.ts.
+function checkMonth(
+  value: string | null | undefined,
+  { required, allowFuture }: { required: boolean; allowFuture: boolean },
+  now: Date,
+): MonthCheck {
   const trimmed = (value ?? "").trim();
   if (!trimmed) {
     return { api: null, error: required ? "Informe a data (MM/AAAA)." : null };
   }
   const api = monthYearToApi(trimmed);
-  if (!api) return { api: null, error: FORMAT_ERROR };
+  if (!api) {
+    if (isWellFormedMonthYear(trimmed)) {
+      return { api: null, error: `A data não pode ser anterior a 01/${MIN_YEAR}.` };
+    }
+    return { api: null, error: FORMAT_ERROR };
+  }
   if (!allowFuture && api > currentApiMonth(now)) {
     return { api, error: "A data não pode ser futura." };
   }

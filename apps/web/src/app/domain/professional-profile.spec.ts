@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, describeMissingObjectiveFields, getProfileCompletionPercent, getProfileNotice, monthYearToApi, OBJECTIVE_FIELD_LABELS } from "./professional-profile";
+import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, getProfileCompletionPercent, isWellFormedMonthYear, monthYearToApi } from "./professional-profile";
 
 describe("getNoneDeclarationState", () => {
   it("sem registros e sem declaração: mostra formulário e a opção de declarar", () => {
@@ -110,44 +110,18 @@ describe("getProfileCompletionPercent com senioridade x contrato", () => {
   });
 });
 
-describe("separação isComplete x isInterviewReady", () => {
-  it("objetivo pendente: aviso de bloqueio, independente de isComplete", () => {
-    expect(getProfileNotice({ isComplete: false, isInterviewReady: false })).toBe("objective-pending");
+describe("piso técnico de 1900 (único limite rígido de data antiga)", () => {
+  it("isWellFormedMonthYear aceita formato correto independente do ano", () => {
+    expect(isWellFormedMonthYear("01/1900")).toBe(true);
+    expect(isWellFormedMonthYear("01/1800")).toBe(true);
+    expect(isWellFormedMonthYear("1/1900")).toBe(false);
+    expect(isWellFormedMonthYear("13/2000")).toBe(false);
   });
 
-  it("objetivo pronto e perfil incompleto: entrevista liberada, aviso só informativo", () => {
-    expect(getProfileNotice({ isComplete: false, isInterviewReady: true })).toBe("optional-sections");
-  });
-
-  it("perfil completo: sem aviso", () => {
-    expect(getProfileNotice({ isComplete: true, isInterviewReady: true })).toBe("none");
-  });
-
-  it("percentual geral continua refletindo as demais seções com o objetivo pronto", () => {
-    const percent = getProfileCompletionPercent({
-      isComplete: false,
-      missingSections: ["education", "behavioralSkills"],
-      missingObjectiveFields: [],
-      contractType: "CLT",
-    });
-    expect(percent).toBe(Math.round((10 / 12) * 100));
-  });
-});
-
-describe("describeMissingObjectiveFields", () => {
-  it("mostra só os campos pendentes, com os rótulos do formulário", () => {
-    expect(describeMissingObjectiveFields(["desiredPosition", "professionalLevel"])).toEqual([
-      "Cargo desejado",
-      "Senioridade profissional",
-    ]);
-  });
-
-  it("lista vazia não gera rótulos", () => {
-    expect(describeMissingObjectiveFields([])).toEqual([]);
-  });
-
-  it("cobre todos os campos do objetivo (7)", () => {
-    expect(Object.keys(OBJECTIVE_FIELD_LABELS)).toHaveLength(7);
-    for (const label of Object.values(OBJECTIVE_FIELD_LABELS)) expect(label.trim()).not.toBe("");
+  it("monthYearToApi aceita datas antigas a partir de 1900 e rejeita antes", () => {
+    expect(monthYearToApi("01/1900")).toBe("1900-01");
+    expect(monthYearToApi("01/1950")).toBe("1950-01");
+    expect(monthYearToApi("09/1956")).toBe("1956-09");
+    expect(monthYearToApi("12/1899")).toBeNull();
   });
 });

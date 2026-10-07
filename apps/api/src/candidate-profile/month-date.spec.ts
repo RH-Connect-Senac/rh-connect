@@ -2,6 +2,7 @@ import {
   currentMonth,
   dateToMonth,
   isValidMonthString,
+  isWellFormedMonth,
   monthToDate,
   nullableDateToMonth,
 } from './month-date';
@@ -44,7 +45,23 @@ describe('month-date', () => {
     expect(isValidMonthString('1899-12')).toBe(false);
   });
 
+  it('aceita datas antigas acima do piso técnico (antiguidade não é erro na API)', () => {
+    expect(isValidMonthString('1900-01')).toBe(true);
+    expect(isValidMonthString('1950-01')).toBe(true);
+    expect(isValidMonthString('1956-09')).toBe(true);
+    expect(monthToDate('1900-01').toISOString()).toBe('1900-01-01T00:00:00.000Z');
+  });
+
   it('currentMonth usa o mês da data informada', () => {
     expect(currentMonth(new Date('2026-10-06T10:00:00.000Z'))).toBe('2026-10');
+  });
+
+  describe('isWellFormedMonth', () => {
+    it('aceita formato correto mesmo abaixo do piso técnico; rejeita formato errado', () => {
+      expect(isWellFormedMonth('1899-12')).toBe(true);
+      expect(isWellFormedMonth('2024-03')).toBe(true);
+      expect(isWellFormedMonth('2024-13')).toBe(false);
+      expect(isWellFormedMonth(202403)).toBe(false);
+    });
   });
 });

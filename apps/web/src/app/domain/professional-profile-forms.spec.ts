@@ -266,3 +266,75 @@ describe("validateSkillName", () => {
     expect(validateSkillName("x".repeat(61)).ok).toBe(false);
   });
 });
+
+describe("datas antigas: só o piso técnico de 1900 bloqueia (now fixo = 10/2026)", () => {
+  const OLD_MSG = "A data não pode ser anterior a 01/1900.";
+  const FORMAT_MSG = "Use o formato MM/AAAA.";
+  const VALID_OLD = ["10/1956", "09/1956", "01/1950", "01/1900"];
+
+  const education = {
+    academicLevel: "TECNOLOGO" as const,
+    status: "CONCLUIDO" as const,
+    degree: "ADS",
+    educationInstitution: "Senac",
+    startDate: "10/1956",
+    endDate: "12/2023",
+  };
+  const experience = {
+    companyName: "Acme",
+    jobRole: "Dev",
+    startDate: "10/1956",
+    endDate: "06/2023",
+    isCurrent: false,
+    description: "",
+  };
+  const course = { ...EMPTY_COURSE_FORM, courseName: "Node.js", status: "CONCLUIDO" as const };
+
+  const errorsOf = (r: { ok: boolean; errors?: Record<string, string | undefined> }) => (r.ok ? {} : r.errors ?? {});
+
+  it.each(VALID_OLD)("formação com início %s é válida e o payload é o mesmo de sempre", (startDate) => {
+    const [month, year] = startDate.split("/");
+    const result = validateEducationForm({ ...education, startDate }, NOW);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.payload.startDate).toBe(`${year}-${month}`);
+  });
+
+  it.each(VALID_OLD)("experiência com início %s é válida (encerrada e atual)", (startDate) => {
+    expect(validateExperienceForm({ ...experience, startDate }, NOW).ok).toBe(true);
+    expect(validateExperienceForm({ ...experience, startDate, isCurrent: true, endDate: "" }, NOW).ok).toBe(true);
+  });
+
+  it.each(VALID_OLD)("curso com início %s e conclusão posterior é válido", (startDate) => {
+    expect(validateCourseForm({ ...course, startDate, completedAt: "10/2000" }, NOW).ok).toBe(true);
+  });
+
+  it.each(VALID_OLD)("curso sem início com conclusão %s é válido (antiguidade é só aviso)", (completedAt) => {
+    expect(validateCourseForm({ ...course, completedAt }, NOW).ok).toBe(true);
+  });
+
+  it("curso em andamento sem início com previsão antiga é válido", () => {
+    expect(validateCourseForm({ ...course, status: "EM_ANDAMENTO", completedAt: "01/1900" }, NOW).ok).toBe(true);
+  });
+
+  it("12/1899 e 01/1800 continuam inválidos, com mensagem de data antiga (não de formato)", () => {
+    expect(errorsOf(validateEducationForm({ ...education, startDate: "12/1899" }, NOW)).startDate).toBe(OLD_MSG);
+    expect(errorsOf(validateEducationForm({ ...education, startDate: "01/1800" }, NOW)).startDate).toBe(OLD_MSG);
+    expect(errorsOf(validateExperienceForm({ ...experience, startDate: "12/1899" }, NOW)).startDate).toBe(OLD_MSG);
+    expect(errorsOf(validateCourseForm({ ...course, startDate: "12/1899", completedAt: "10/2000" }, NOW)).startDate).toBe(OLD_MSG);
+    expect(errorsOf(validateCourseForm({ ...course, completedAt: "12/1899" }, NOW)).completedAt).toBe(OLD_MSG);
+  });
+
+  it("formato inválido continua com a mensagem de formato", () => {
+    expect(errorsOf(validateEducationForm({ ...education, startDate: "1956" }, NOW)).startDate).toBe(FORMAT_MSG);
+    expect(errorsOf(validateEducationForm({ ...education, startDate: "13/1980" }, NOW)).startDate).toBe(FORMAT_MSG);
+  });
+
+  it("cronologia e status continuam bloqueando", () => {
+    expect(errorsOf(validateCourseForm({ ...course, startDate: "10/1960", completedAt: "10/1959" }, NOW)).completedAt).toBe(
+      "A conclusão não pode ser anterior ao início.",
+    );
+    expect(errorsOf(validateEducationForm({ ...education, endDate: "" }, NOW)).endDate).toBeTruthy();
+    expect(errorsOf(validateExperienceForm({ ...experience, endDate: "" }, NOW)).endDate).toBeTruthy();
+    expect(errorsOf(validateEducationForm({ ...education, startDate: "10/2027" }, NOW)).startDate).toBe("A data não pode ser futura.");
+  });
+});
