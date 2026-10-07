@@ -166,7 +166,8 @@ import {
   PROFILE_FIELD_LIMITS,
   academicLevelLabel,
   apiMonthToMonthYear,
-  describeMissingSections,
+  describeMissingObjectiveFields,
+  getProfileNotice,
   formatCoursePeriod,
   formatEducationPeriod,
   formatProfilePeriod,
@@ -1094,26 +1095,33 @@ function DashboardScreen({
 
   return (
     <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
-      {/* Aviso de perfil incompleto — dados reais da API (some quando o perfil está completo) */}
-      {profileStatus === "ready" && candidateProfile && !candidateProfile.isComplete && (
+      {/* Aviso do perfil — dados reais da API. A entrevista depende só do Objetivo Profissional (`isInterviewReady`). */}
+      {profileStatus === "ready" && candidateProfile && getProfileNotice(candidateProfile) === "objective-pending" && (
         <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center gap-4">
             <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
               <User className="w-5 h-5 text-blue-600" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-foreground">Perfil {profileCompleteness}% completo</p>
+              <p className="text-sm font-bold text-foreground">Complete seu Objetivo Profissional</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Para realizar entrevistas, falta completar: {describeMissingSections(candidateProfile.missingSections).join(", ")}.
+                Para realizar entrevistas, falta preencher: {describeMissingObjectiveFields(candidateProfile.missingObjectiveFields).join(", ")}.
               </p>
-              <div className="mt-2 w-full max-w-xs bg-blue-100 rounded-full h-1.5">
-                <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${profileCompleteness}%` }} />
-              </div>
             </div>
           </div>
           <Btn variant="secondary" size="sm" onClick={() => onNavigate("profile")} className="self-start sm:self-auto shrink-0">
-            Completar perfil
+            Completar objetivo
           </Btn>
+        </div>
+      )}
+      {profileStatus === "ready" && candidateProfile && getProfileNotice(candidateProfile) === "optional-sections" && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-border bg-muted/30 px-4 py-3 mb-6">
+          <p className="text-xs text-muted-foreground">
+            Seu perfil está {profileCompleteness}% completo. Preencher as demais seções é opcional para iniciar entrevistas.
+          </p>
+          <button type="button" onClick={() => onNavigate("profile")} className="self-start sm:self-auto shrink-0 text-xs font-semibold text-primary hover:underline">
+            Ver perfil
+          </button>
         </div>
       )}
       {profileStatus === "error" && (
@@ -1662,11 +1670,11 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
               <Check className="w-3.5 h-3.5" /> Salvar perfil
             </Btn>
           </div>
-          {!profile.isComplete && (
+          {!profile.isInterviewReady && (
             <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <p>
-                Para realizar entrevistas, falta completar: {describeMissingSections(profile.missingSections).join(", ")}.
+                Para realizar entrevistas, complete o Objetivo Profissional. Falta preencher: {describeMissingObjectiveFields(profile.missingObjectiveFields).join(", ")}.
               </p>
             </div>
           )}
@@ -2200,13 +2208,14 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
 // Protege TODAS as etapas do fluxo de realização da entrevista (setup,
 // consentimento, modo de avaliação, preparação, perguntas, revisão e envio):
 // rota por URL, continuação de rascunho e qualquer outro caminho passam por
-// aqui. A decisão vem de `isComplete`/`missingSections` da API — o Front não
-// reimplementa a regra de completude. (A checagem equivalente no Back da
+// aqui. A decisão vem de `isInterviewReady`/`missingObjectiveFields` da API (só o
+// Objetivo Profissional libera a entrevista; as demais seções do perfil não
+// bloqueiam) — o Front não reimplementa a regra de completude. (A checagem equivalente no Back da
 // entrevista será feita junto com o Fluxo 03.)
 function InterviewProfileGuard({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const { status, profile, error, reason, reload } = useCandidateProfile();
 
-  if (status === "ready" && profile?.isComplete) {
+  if (status === "ready" && profile?.isInterviewReady) {
     return <Outlet />;
   }
 
@@ -2241,18 +2250,18 @@ function InterviewProfileGuard({ onNavigate }: { onNavigate: (s: Screen) => void
             </div>
           </div>
         )}
-        {status === "ready" && profile && !profile.isComplete && (
+        {status === "ready" && profile && !profile.isInterviewReady && (
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
               <AlertCircle className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="font-bold text-foreground">Complete seu perfil profissional para iniciar uma entrevista</h3>
+              <h3 className="font-bold text-foreground">Complete seu Objetivo Profissional para iniciar uma entrevista</h3>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Precisamos de algumas informações profissionais para contextualizar melhor sua entrevista. Ainda falta completar:
+                Precisamos do seu objetivo profissional para contextualizar melhor sua entrevista. Ainda falta preencher:
               </p>
               <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-foreground">
-                {describeMissingSections(profile.missingSections).map((label) => (
+                {describeMissingObjectiveFields(profile.missingObjectiveFields).map((label) => (
                   <li key={label}>{label}</li>
                 ))}
               </ul>

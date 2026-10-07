@@ -84,12 +84,24 @@ function profileUpdateData(prisma: any, index = 0) {
   return prisma.candidate_profile.update.mock.calls[index][0].data;
 }
 
+/** Objetivo Profissional completo e nenhuma outra seção preenchida. */
+const OBJECTIVE_ONLY = {
+  professional_title: 'Dev',
+  desired_position: 'Dev React',
+  professional_area: 'information-technology',
+  professional_subarea: 'frontend-development',
+  professional_level: 'JUNIOR',
+  contract_type: 'CLT',
+  professional_summary: 'Resumo',
+};
+
 describe('CandidateProfileService — leitura e completude', () => {
   it('perfil recém-criado (vazio) volta incompleto com todas as seções pendentes', async () => {
     const { service } = makeService();
     const result = await service.getProfile(9);
 
     expect(result.isComplete).toBe(false);
+    expect(result.isInterviewReady).toBe(false);
     expect(result.missingSections).toEqual([
       'objective',
       'education',
@@ -158,7 +170,47 @@ describe('CandidateProfileService — leitura e completude', () => {
     const { service } = makeService();
     const result = await service.getCompleteness(9);
     expect(result.isComplete).toBe(false);
+    expect(result.isInterviewReady).toBe(false);
     expect(result.missingSections).toContain('objective');
+  });
+
+  it('getCompleteness: objetivo pronto libera a entrevista mesmo com o perfil incompleto', async () => {
+    const { service } = makeService(OBJECTIVE_ONLY);
+    const result = await service.getCompleteness(9);
+    expect(result.isInterviewReady).toBe(true);
+    expect(result.isComplete).toBe(false);
+    expect(result.missingSections).toContain('education');
+    expect(result.missingSections).not.toContain('objective');
+  });
+
+  it('GET do perfil devolve isInterviewReady separado de isComplete', async () => {
+    const { service } = makeService(OBJECTIVE_ONLY);
+    const result = await service.getProfile(9);
+    expect(result.isInterviewReady).toBe(true);
+    expect(result.isComplete).toBe(false);
+    expect(result.missingObjectiveFields).toEqual([]);
+  });
+
+  it('ESTAGIO sem senioridade e objetivo válido: isInterviewReady = true', async () => {
+    const { service } = makeService({
+      ...OBJECTIVE_ONLY,
+      contract_type: 'ESTAGIO',
+      professional_level: null,
+    });
+    const result = await service.getProfile(9);
+    expect(result.isInterviewReady).toBe(true);
+    expect(result.missingObjectiveFields).not.toContain('professionalLevel');
+  });
+
+  it('CLT sem senioridade: isInterviewReady = false com professionalLevel pendente', async () => {
+    const { service } = makeService({
+      ...OBJECTIVE_ONLY,
+      contract_type: 'CLT',
+      professional_level: null,
+    });
+    const result = await service.getProfile(9);
+    expect(result.isInterviewReady).toBe(false);
+    expect(result.missingObjectiveFields).toEqual(['professionalLevel']);
   });
 });
 
@@ -200,6 +252,7 @@ describe('CandidateProfileService — leitura somente leitura (Admin)', () => {
         noTechnicalSkills: false,
       },
       isComplete: false,
+      isInterviewReady: false,
     });
     expect(result.missingSections).toContain('objective');
   });

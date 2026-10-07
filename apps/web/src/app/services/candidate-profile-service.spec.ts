@@ -18,6 +18,7 @@ const profilePayload = {
   behavioralSkills: [{ id: 4, name: "Empatia" }],
   declarations: { noCourses: false, noExperience: true, noTechnicalSkills: false },
   isComplete: true,
+  isInterviewReady: true,
   missingSections: [],
   missingObjectiveFields: [],
   updatedAt: "2026-10-06T12:00:00.000Z",
@@ -177,6 +178,7 @@ describe("candidate-profile-service (API real)", () => {
       educations: [], courses: [], technicalSkills: [], behavioralSkills: [],
       declarations: { noCourses: false, noExperience: false, noTechnicalSkills: false },
       isComplete: false,
+      isInterviewReady: false,
       missingSections: ["objective", "education", "courses", "experience", "technicalSkills", "behavioralSkills"],
       missingObjectiveFields: ["professionalTitle"],
     };
@@ -191,5 +193,31 @@ describe("candidate-profile-service (API real)", () => {
     await api.addSkill("TECHNICAL", "React");
     await api.declareNone("courses");
     Object.values(storage).forEach((fn) => expect(fn).not.toHaveBeenCalled());
+  });
+
+  it("isInterviewReady vem separado de isComplete (objetivo pronto, perfil incompleto)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        ...profilePayload,
+        isComplete: false,
+        isInterviewReady: true,
+        missingSections: ["education", "behavioralSkills"],
+        missingObjectiveFields: [],
+      }),
+    );
+    const result = await api.getCandidateProfile();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.isComplete).toBe(false);
+      expect(result.data.isInterviewReady).toBe(true);
+      expect(result.data.missingObjectiveFields).toEqual([]);
+    }
+  });
+
+  it("payload sem isInterviewReady é inválido (contrato exige o campo)", async () => {
+    const { isInterviewReady: _omitted, ...withoutFlag } = profilePayload;
+    fetchMock.mockResolvedValue(jsonResponse(200, withoutFlag));
+    const result = await api.getCandidateProfile();
+    expect(result.ok).toBe(false);
   });
 });

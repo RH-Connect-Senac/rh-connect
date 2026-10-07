@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, getProfileCompletionPercent, monthYearToApi } from "./professional-profile";
+import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, describeMissingObjectiveFields, getProfileCompletionPercent, getProfileNotice, monthYearToApi, OBJECTIVE_FIELD_LABELS } from "./professional-profile";
 
 describe("getNoneDeclarationState", () => {
   it("sem registros e sem declaração: mostra formulário e a opção de declarar", () => {
@@ -107,5 +107,47 @@ describe("getProfileCompletionPercent com senioridade x contrato", () => {
 
   it("nunca chega a 100% com perfil incompleto", () => {
     expect(getProfileCompletionPercent({ ...base, contractType: "ESTAGIO", missingSections: ["behavioralSkills"] })).toBeLessThan(100);
+  });
+});
+
+describe("separação isComplete x isInterviewReady", () => {
+  it("objetivo pendente: aviso de bloqueio, independente de isComplete", () => {
+    expect(getProfileNotice({ isComplete: false, isInterviewReady: false })).toBe("objective-pending");
+  });
+
+  it("objetivo pronto e perfil incompleto: entrevista liberada, aviso só informativo", () => {
+    expect(getProfileNotice({ isComplete: false, isInterviewReady: true })).toBe("optional-sections");
+  });
+
+  it("perfil completo: sem aviso", () => {
+    expect(getProfileNotice({ isComplete: true, isInterviewReady: true })).toBe("none");
+  });
+
+  it("percentual geral continua refletindo as demais seções com o objetivo pronto", () => {
+    const percent = getProfileCompletionPercent({
+      isComplete: false,
+      missingSections: ["education", "behavioralSkills"],
+      missingObjectiveFields: [],
+      contractType: "CLT",
+    });
+    expect(percent).toBe(Math.round((10 / 12) * 100));
+  });
+});
+
+describe("describeMissingObjectiveFields", () => {
+  it("mostra só os campos pendentes, com os rótulos do formulário", () => {
+    expect(describeMissingObjectiveFields(["desiredPosition", "professionalLevel"])).toEqual([
+      "Cargo desejado",
+      "Senioridade profissional",
+    ]);
+  });
+
+  it("lista vazia não gera rótulos", () => {
+    expect(describeMissingObjectiveFields([])).toEqual([]);
+  });
+
+  it("cobre todos os campos do objetivo (7)", () => {
+    expect(Object.keys(OBJECTIVE_FIELD_LABELS)).toHaveLength(7);
+    for (const label of Object.values(OBJECTIVE_FIELD_LABELS)) expect(label.trim()).not.toBe("");
   });
 });

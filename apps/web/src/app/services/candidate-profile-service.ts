@@ -185,6 +185,7 @@ const asArray = (value: unknown): Record<string, unknown>[] =>
 export function parseProfessionalProfile(payload: unknown): ProfessionalProfile | null {
   if (!isRecord(payload)) return null;
   if (typeof payload.isComplete !== "boolean") return null;
+  if (typeof payload.isInterviewReady !== "boolean") return null;
   if (!Array.isArray(payload.missingSections)) return null;
   if (!isRecord(payload.declarations)) return null;
 
@@ -239,6 +240,7 @@ export function parseProfessionalProfile(payload: unknown): ProfessionalProfile 
       noTechnicalSkills: declarations.noTechnicalSkills === true,
     },
     isComplete: payload.isComplete,
+    isInterviewReady: payload.isInterviewReady,
     missingSections: payload.missingSections.filter((item): item is ProfileSectionKey =>
       SECTION_KEYS.includes(item as ProfileSectionKey),
     ),

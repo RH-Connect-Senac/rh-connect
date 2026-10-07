@@ -30,6 +30,7 @@ describe('evaluateProfileCompleteness', () => {
   it('perfil totalmente preenchido está completo', () => {
     expect(evaluateProfileCompleteness(complete())).toEqual({
       isComplete: true,
+      isInterviewReady: true,
       missingSections: [],
       missingObjectiveFields: [],
     });
@@ -53,6 +54,7 @@ describe('evaluateProfileCompleteness', () => {
       }),
     );
     expect(result.isComplete).toBe(false);
+    expect(result.isInterviewReady).toBe(false);
     expect(result.missingSections).toEqual([
       'objective',
       'education',
@@ -87,6 +89,7 @@ describe('evaluateProfileCompleteness', () => {
       );
       expect(result).toEqual({
         isComplete: true,
+        isInterviewReady: true,
         missingSections: [],
         missingObjectiveFields: [],
       });
@@ -112,6 +115,100 @@ describe('evaluateProfileCompleteness', () => {
         'professionalLevel',
         'contractType',
       ]);
+    });
+  });
+
+  describe('prontidão para entrevista (isInterviewReady) x completude geral', () => {
+    const noOtherSections = {
+      educationCount: 0,
+      courseCount: 0,
+      experienceCount: 0,
+      technicalSkillCount: 0,
+      behavioralSkillCount: 0,
+    };
+
+    it('objetivo completo + demais seções vazias: pronto para entrevista, perfil incompleto', () => {
+      const result = evaluateProfileCompleteness(complete(noOtherSections));
+      expect(result.isInterviewReady).toBe(true);
+      expect(result.isComplete).toBe(false);
+      expect(result.missingObjectiveFields).toEqual([]);
+      // as demais seções continuam em missingSections
+      expect(result.missingSections).toEqual([
+        'education',
+        'courses',
+        'experience',
+        'technicalSkills',
+        'behavioralSkills',
+      ]);
+    });
+
+    it('declarações de ausência não alteram a prontidão (só a completude)', () => {
+      const result = evaluateProfileCompleteness(
+        complete({
+          ...noOtherSections,
+          coursesNoneDeclaredAt: declared,
+          experienceNoneDeclaredAt: declared,
+          technicalSkillsNoneDeclaredAt: declared,
+        }),
+      );
+      expect(result.isInterviewReady).toBe(true);
+      expect(result.missingSections).toEqual(['education', 'behavioralSkills']);
+      expect(result.isComplete).toBe(false);
+    });
+
+    it.each([
+      ['professionalTitle', { professionalTitle: null }],
+      ['professionalTitle', { professionalTitle: '  ' }],
+      ['professionalArea', { professionalArea: null, professionalSubarea: null }],
+      ['professionalSubarea', { professionalSubarea: null }],
+      ['desiredPosition', { desiredPosition: null }],
+      ['professionalLevel', { professionalLevel: null }],
+      ['contractType', { contractType: null }],
+      ['professionalSummary', { professionalSummary: '' }],
+    ])('sem %s não está pronto para entrevista', (field, overrides) => {
+      const result = evaluateProfileCompleteness(complete(overrides));
+      expect(result.isInterviewReady).toBe(false);
+      expect(result.isComplete).toBe(false);
+      expect(result.missingObjectiveFields).toContain(field);
+    });
+
+    it('subárea incompatível com a área não está pronto', () => {
+      const result = evaluateProfileCompleteness(
+        complete({
+          professionalArea: 'secretariat',
+          professionalSubarea: 'frontend-development',
+        }),
+      );
+      expect(result.isInterviewReady).toBe(false);
+    });
+
+    it('ESTAGIO sem senioridade e demais campos válidos: pronto, mesmo sem outras seções', () => {
+      const result = evaluateProfileCompleteness(
+        complete({
+          ...noOtherSections,
+          contractType: 'ESTAGIO',
+          professionalLevel: null,
+        }),
+      );
+      expect(result.isInterviewReady).toBe(true);
+      expect(result.isComplete).toBe(false);
+    });
+
+    it.each(['CLT', 'PJ', 'TEMPORARIO'])(
+      '%s sem senioridade não está pronto',
+      (contractType) => {
+        const result = evaluateProfileCompleteness(
+          complete({ contractType, professionalLevel: null }),
+        );
+        expect(result.isInterviewReady).toBe(false);
+        expect(result.missingObjectiveFields).toEqual(['professionalLevel']);
+      },
+    );
+
+    it('isComplete exige tudo e implica isInterviewReady', () => {
+      const result = evaluateProfileCompleteness(complete());
+      expect(result.isComplete).toBe(true);
+      expect(result.isInterviewReady).toBe(true);
     });
   });
 

@@ -23,6 +23,7 @@ function makeProfile(overrides: Partial<ProfessionalProfile> = {}): Professional
     behavioralSkills: [],
     declarations: { noCourses: false, noExperience: false, noTechnicalSkills: false },
     isComplete: false,
+    isInterviewReady: false,
     missingSections: ["objective", "education"],
     missingObjectiveFields: [],
     updatedAt: "",
