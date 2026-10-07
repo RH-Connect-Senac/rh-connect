@@ -200,6 +200,7 @@ import {
   type ExperienceForm,
   type FormErrors,
 } from "./domain/professional-profile-forms";
+import { getCourseWarnings, getEducationWarnings, getExperienceWarnings } from "./domain/professional-plausibility";
 
 // ─── Types & Constants ────────────────────────────────────────────────────────
 
@@ -1232,11 +1233,12 @@ function DashboardScreen({
 
 // ─── Screen 4: Perfil Profissional ────────────────────────────────────────────
 
-function ProfileField({ error, ...props }: FieldProps & { error?: string }) {
+function ProfileField({ error, warning, ...props }: FieldProps & { error?: string; warning?: string }) {
   return (
     <div>
       <Field {...props} />
       {error && <p role="alert" className="mt-1 text-xs text-red-600">{error}</p>}
+      {!error && warning && <p role="status" className="mt-1 text-xs text-amber-700">{warning}</p>}
     </div>
   );
 }
@@ -1371,6 +1373,11 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
   const [experienceForm, setExperienceForm] = useState<ExperienceForm>(EMPTY_EXPERIENCE_FORM);
   const [experienceErrors, setExperienceErrors] = useState<FormErrors<ExperienceForm>>({});
   const [editingExperienceId, setEditingExperienceId] = useState<number | null>(null);
+
+  // Avisos de plausibilidade (duração): só apresentação, nunca bloqueiam o salvamento.
+  const educationWarnings = getEducationWarnings(educationForm);
+  const courseWarnings = getCourseWarnings(courseForm);
+  const experienceWarnings = getExperienceWarnings(experienceForm);
 
   const [newTechnicalSkill, setNewTechnicalSkill] = useState("");
   const [newBehavioralSkill, setNewBehavioralSkill] = useState("");
@@ -1850,6 +1857,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                         maxLength={7}
                         value={educationForm.startDate}
                         error={educationErrors.startDate}
+                        warning={educationWarnings.startDate}
                         onChange={(event) => setEducationForm((current) => ({ ...current, startDate: maskMonthYear(event.target.value) }))}
                       />
                       <ProfileField
@@ -1860,6 +1868,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                         maxLength={7}
                         value={educationForm.endDate}
                         error={educationErrors.endDate}
+                        warning={educationWarnings.endDate}
                         onChange={(event) => setEducationForm((current) => ({ ...current, endDate: maskMonthYear(event.target.value) }))}
                       />
                     </div>
@@ -1950,6 +1959,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                             maxLength={7}
                             value={courseForm.startDate}
                             error={courseErrors.startDate}
+                            warning={courseWarnings.startDate}
                             onChange={(event) => setCourseForm((current) => ({ ...current, startDate: maskMonthYear(event.target.value) }))}
                           />
                           <ProfileField
@@ -1960,6 +1970,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                             maxLength={7}
                             value={courseForm.completedAt}
                             error={courseErrors.completedAt}
+                            warning={courseWarnings.completedAt}
                             onChange={(event) => setCourseForm((current) => ({ ...current, completedAt: maskMonthYear(event.target.value) }))}
                           />
                         </div>
@@ -2042,6 +2053,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                               maxLength={7}
                               value={experienceForm.startDate}
                               error={experienceErrors.startDate}
+                              warning={experienceWarnings.startDate}
                               onChange={(event) => setExperienceForm((current) => ({ ...current, startDate: maskMonthYear(event.target.value) }))}
                             />
                             <ProfileField
@@ -2053,6 +2065,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                               disabled={experienceForm.isCurrent}
                               value={experienceForm.endDate}
                               error={experienceErrors.endDate}
+                              warning={experienceWarnings.endDate}
                               onChange={(event) => setExperienceForm((current) => ({ ...current, endDate: maskMonthYear(event.target.value) }))}
                             />
                           </div>

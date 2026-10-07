@@ -298,7 +298,8 @@ export function getProfileCompletionPercent(
 
 const MONTH_YEAR_PATTERN = /^(0[1-9]|1[0-2])\/(\d{4})$/;
 const API_MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
-const MIN_YEAR = 1900;
+/** Piso técnico de parsing/formato: único limite RÍGIDO de data antiga. */
+export const MIN_YEAR = 1900;
 
 /** Máscara de digitação: só dígitos, formato MM/AAAA. */
 export function maskMonthYear(raw: string): string {
@@ -312,6 +313,11 @@ export function monthYearToApi(value: string): string | null {
   const match = MONTH_YEAR_PATTERN.exec(value.trim());
   if (!match || Number(match[2]) < MIN_YEAR) return null;
   return `${match[2]}-${match[1]}`;
+}
+
+/** True quando o texto está no formato MM/AAAA (independente do ano mínimo). */
+export function isWellFormedMonthYear(value: string): boolean {
+  return MONTH_YEAR_PATTERN.test(value.trim());
 }
 
 /** "2024-03" -> "03/2024"; null/inválido -> "". */

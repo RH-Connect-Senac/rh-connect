@@ -172,3 +172,58 @@ describe('validateExperienceRules', () => {
     ).toHaveLength(1);
   });
 });
+
+// Antiguidade (> 70 anos) NÃO é erro na API: só um aviso de plausibilidade no
+// frontend. O único piso rígido de data antiga é o técnico (1900), validado no DTO.
+describe('datas muito antigas não geram erro (now = 2026-10)', () => {
+  const OLD = ['1956-10', '1956-09', '1950-01', '1900-01'];
+
+  it.each(OLD)('formação com início %s é válida', (startDate) => {
+    expect(validateEducationRules(edu({ startDate, endDate: '1960-12' }), now)).toEqual([]);
+  });
+
+  it.each(OLD)('experiência com início %s é válida (encerrada e atual)', (startDate) => {
+    expect(validateExperienceRules({ isCurrent: false, startDate, endDate: '2000-01' }, now)).toEqual([]);
+    expect(validateExperienceRules({ isCurrent: true, startDate, endDate: null }, now)).toEqual([]);
+  });
+
+  describe('curso complementar', () => {
+    const course = (overrides: Record<string, unknown> = {}) => ({
+      status: 'CONCLUIDO',
+      startDate: null as string | null,
+      completedAt: '2000-01' as string | null,
+      ...overrides,
+    });
+
+    it.each(OLD)('início %s é válido', (startDate) => {
+      expect(validateCourseRules(course({ startDate, completedAt: '2000-01' }), now)).toEqual([]);
+    });
+
+    it.each(OLD)('sem início, conclusão %s é válida (concluído)', (completedAt) => {
+      expect(validateCourseRules(course({ completedAt }), now)).toEqual([]);
+    });
+
+    it('sem início, previsão antiga de curso em andamento é válida', () => {
+      expect(validateCourseRules(course({ status: 'EM_ANDAMENTO', completedAt: '1900-01' }), now)).toEqual([]);
+    });
+
+    it('conclusão continua não podendo ser anterior ao início', () => {
+      expect(validateCourseRules(course({ startDate: '1956-10', completedAt: '1956-09' }), now)).toHaveLength(1);
+      expect(validateCourseRules(course({ startDate: '1956-10', completedAt: '1956-10' }), now)).toEqual([]);
+    });
+
+    it('curso concluído sem conclusão ou com conclusão futura continua inválido', () => {
+      expect(validateCourseRules(course({ completedAt: null }), now)).toHaveLength(1);
+      expect(validateCourseRules(course({ completedAt: '2027-01' }), now)).toHaveLength(1);
+    });
+  });
+
+  it('demais regras de formação e experiência permanecem', () => {
+    expect(validateEducationRules(edu({ startDate: '2020-02', endDate: '2019-01' }), now)).toEqual([
+      'A data de conclusão não pode ser anterior ao início.',
+    ]);
+    expect(validateEducationRules(edu({ startDate: '2030-01', endDate: null, status: 'EM_ANDAMENTO' }), now)).toHaveLength(1);
+    expect(validateExperienceRules({ isCurrent: false, startDate: '2020-01', endDate: null }, now)).toHaveLength(1);
+    expect(validateExperienceRules({ isCurrent: true, startDate: '2020-01', endDate: '2021-01' }, now)).toHaveLength(1);
+  });
+});

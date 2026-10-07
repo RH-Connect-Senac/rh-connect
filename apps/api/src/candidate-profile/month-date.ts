@@ -2,7 +2,10 @@
 // são persistidas como o PRIMEIRO dia do mês (coluna DATE). O dia nunca é
 // exposto. Tudo em UTC para não deslocar o mês por fuso horário.
 const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
-const MIN_YEAR = 1900;
+// Piso TÉCNICO de parsing/formato (Date.UTC trata anos 0-99 como 1900+). É o
+// único limite de data antiga na API; a antiguidade (> 70 anos) é só um aviso
+// de plausibilidade no frontend e nunca gera erro aqui.
+export const MIN_YEAR = 1900;
 
 export function isValidMonthString(value: unknown): value is string {
   if (typeof value !== 'string') return false;
@@ -33,4 +36,9 @@ export function nullableDateToMonth(date: Date | null): string | null {
 /** Mês corrente em "AAAA-MM" (UTC). `now` é injetável para testes. */
 export function currentMonth(now: Date = new Date()): string {
   return dateToMonth(now);
+}
+
+/** true se tem o formato "AAAA-MM" (mês 01-12), mesmo com ano abaixo do piso técnico. */
+export function isWellFormedMonth(value: unknown): value is string {
+  return typeof value === 'string' && MONTH_PATTERN.test(value);
 }

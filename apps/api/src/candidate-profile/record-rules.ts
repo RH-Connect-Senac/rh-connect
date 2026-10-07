@@ -79,6 +79,7 @@ export function validateCourseRules(
   // Início é sempre opcional. Conclusão/previsão nunca anterior ao início.
   // CONCLUIDO: conclusão real, obrigatória e não futura.
   // EM_ANDAMENTO: data opcional (previsão), pode ser futura.
+  // Datas muito antigas (> 70 anos) não são erro: só aviso de plausibilidade no front.
   if (
     data.startDate !== null &&
     data.completedAt !== null &&

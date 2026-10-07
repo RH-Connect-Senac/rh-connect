@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, getProfileCompletionPercent, monthYearToApi } from "./professional-profile";
+import { apiMonthToMonthYear, formatCoursePeriod, getNoneDeclarationState, getProfileCompletionPercent, isWellFormedMonthYear, monthYearToApi } from "./professional-profile";
 
 describe("getNoneDeclarationState", () => {
   it("sem registros e sem declaração: mostra formulário e a opção de declarar", () => {
@@ -107,5 +107,21 @@ describe("getProfileCompletionPercent com senioridade x contrato", () => {
 
   it("nunca chega a 100% com perfil incompleto", () => {
     expect(getProfileCompletionPercent({ ...base, contractType: "ESTAGIO", missingSections: ["behavioralSkills"] })).toBeLessThan(100);
+  });
+});
+
+describe("piso técnico de 1900 (único limite rígido de data antiga)", () => {
+  it("isWellFormedMonthYear aceita formato correto independente do ano", () => {
+    expect(isWellFormedMonthYear("01/1900")).toBe(true);
+    expect(isWellFormedMonthYear("01/1800")).toBe(true);
+    expect(isWellFormedMonthYear("1/1900")).toBe(false);
+    expect(isWellFormedMonthYear("13/2000")).toBe(false);
+  });
+
+  it("monthYearToApi aceita datas antigas a partir de 1900 e rejeita antes", () => {
+    expect(monthYearToApi("01/1900")).toBe("1900-01");
+    expect(monthYearToApi("01/1950")).toBe("1950-01");
+    expect(monthYearToApi("09/1956")).toBe("1956-09");
+    expect(monthYearToApi("12/1899")).toBeNull();
   });
 });
