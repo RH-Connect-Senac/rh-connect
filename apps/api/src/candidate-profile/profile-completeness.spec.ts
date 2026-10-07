@@ -80,6 +80,41 @@ describe('evaluateProfileCompleteness', () => {
     expect(result.missingObjectiveFields).toContain(field);
   });
 
+  describe('senioridade x tipo de contrato', () => {
+    it('ESTAGIO sem senioridade está completo e não lista professionalLevel', () => {
+      const result = evaluateProfileCompleteness(
+        complete({ contractType: 'ESTAGIO', professionalLevel: null }),
+      );
+      expect(result).toEqual({
+        isComplete: true,
+        missingSections: [],
+        missingObjectiveFields: [],
+      });
+    });
+
+    it.each(['CLT', 'PJ', 'TEMPORARIO'])(
+      '%s sem senioridade continua pendente',
+      (contractType) => {
+        const result = evaluateProfileCompleteness(
+          complete({ contractType, professionalLevel: null }),
+        );
+        expect(result.isComplete).toBe(false);
+        expect(result.missingSections).toEqual(['objective']);
+        expect(result.missingObjectiveFields).toEqual(['professionalLevel']);
+      },
+    );
+
+    it('sem contrato e sem senioridade: faltam os dois', () => {
+      const result = evaluateProfileCompleteness(
+        complete({ contractType: null, professionalLevel: null }),
+      );
+      expect(result.missingObjectiveFields).toEqual([
+        'professionalLevel',
+        'contractType',
+      ]);
+    });
+  });
+
   it('subárea incompatível com a área não conta como preenchida', () => {
     const result = evaluateProfileCompleteness(
       complete({

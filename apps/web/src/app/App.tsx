@@ -158,7 +158,11 @@ import {
   CONTRACT_TYPE_OPTIONS,
   EDUCATION_STATUS_OPTIONS,
   COURSE_STATUS_OPTIONS,
-  PROFESSIONAL_LEVEL_OPTIONS,
+  INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE,
+  getLevelOptionsForContract,
+  isLevelApplicable,
+  levelAfterContractChange,
+  levelForApi,
   PROFILE_FIELD_LIMITS,
   academicLevelLabel,
   apiMonthToMonthYear,
@@ -175,7 +179,6 @@ import {
   type CourseStatus,
   type DeclarationSection,
   type EducationStatus,
-  type ProfessionalLevel,
   type ProfessionalProfile,
   type ProfileCourse,
   type ProfileEducation,
@@ -1417,7 +1420,7 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
         professionalArea: objective.professionalArea || null,
         professionalSubarea: objective.professionalSubarea || null,
         desiredPosition: objective.desiredPosition,
-        professionalLevel: (objective.professionalLevel || null) as ProfessionalLevel | null,
+        professionalLevel: levelForApi(objective.contractType, objective.professionalLevel),
         contractType: (objective.contractType || null) as ContractType | null,
         professionalSummary: objective.professionalSummary,
       }),
@@ -1730,19 +1733,30 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                         onChange={(event) => setObjective((current) => ({ ...current, desiredPosition: event.target.value }))}
                         required
                       />
-                      <ProfileSelect
-                        label="Senioridade profissional"
-                        required
-                        options={PROFESSIONAL_LEVEL_OPTIONS}
-                        value={objective.professionalLevel}
-                        onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
-                      />
+                      {isLevelApplicable(objective.contractType) ? (
+                        <ProfileSelect
+                          label="Senioridade profissional"
+                          required
+                          options={getLevelOptionsForContract(objective.contractType)}
+                          value={objective.professionalLevel}
+                          onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
+                        />
+                      ) : (
+                        <p className="text-xs text-muted-foreground self-end pb-2">{INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE}</p>
+                      )}
                       <ProfileSelect
                         label="Tipo de contrato"
                         required
                         options={CONTRACT_TYPE_OPTIONS}
                         value={objective.contractType}
-                        onChange={(event) => setObjective((current) => ({ ...current, contractType: event.target.value }))}
+                        onChange={(event) => {
+                          const contractType = event.target.value;
+                          setObjective((current) => ({
+                            ...current,
+                            contractType,
+                            professionalLevel: levelAfterContractChange(contractType, current.professionalLevel),
+                          }));
+                        }}
                       />
                     </div>
                     <div>

@@ -163,6 +163,47 @@ export const CONTRACT_TYPE_OPTIONS: Option<ContractType>[] = [
   { value: "TEMPORARIO", label: "Temporário" },
 ];
 
+// Regra contrato x senioridade (espelha o Back, igual para todas as áreas):
+// estágio não tem senioridade; PJ e temporário não têm trainee.
+export const ALLOWED_LEVELS_BY_CONTRACT: Record<ContractType, ProfessionalLevel[]> = {
+  ESTAGIO: [],
+  CLT: ["TRAINEE", "JUNIOR", "PLENO", "SENIOR"],
+  PJ: ["JUNIOR", "PLENO", "SENIOR"],
+  TEMPORARIO: ["JUNIOR", "PLENO", "SENIOR"],
+};
+
+export const INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE = "Senioridade não se aplica para estágio.";
+
+/** Senioridade só deixa de se aplicar para estágio. */
+export function isLevelApplicable(contract: string | null | undefined): boolean {
+  return contract !== "ESTAGIO";
+}
+
+/** Opções de senioridade válidas para o contrato (sem contrato: todas). */
+export function getLevelOptionsForContract(contract: string | null | undefined): Option<ProfessionalLevel>[] {
+  const allowed = ALLOWED_LEVELS_BY_CONTRACT[contract as ContractType];
+  if (!allowed) return PROFESSIONAL_LEVEL_OPTIONS;
+  return PROFESSIONAL_LEVEL_OPTIONS.filter((option) => allowed.includes(option.value));
+}
+
+/**
+ * Valor de senioridade a manter após escolher o contrato: o atual se continuar
+ * compatível; caso contrário "" (limpa — o candidato escolhe outra; nada é
+ * selecionado automaticamente).
+ */
+export function levelAfterContractChange(contract: string | null | undefined, level: string): string {
+  if (!level) return "";
+  const allowed = ALLOWED_LEVELS_BY_CONTRACT[contract as ContractType];
+  if (!allowed) return level;
+  return (allowed as string[]).includes(level) ? level : "";
+}
+
+/** Senioridade a enviar à API: null para estágio ou vazio. */
+export function levelForApi(contract: string | null | undefined, level: string): ProfessionalLevel | null {
+  if (!isLevelApplicable(contract)) return null;
+  return levelAfterContractChange(contract, level) ? (level as ProfessionalLevel) : null;
+}
+
 function labelOf<T extends string>(options: Option<T>[], value: T | null | undefined) {
   return options.find((option) => option.value === value)?.label ?? "";
 }
@@ -234,12 +275,18 @@ const OTHER_SECTION_COUNT = 5;
  * (e nunca menos que 100% com perfil completo).
  */
 export function getProfileCompletionPercent(
-  profile: Pick<ProfessionalProfile, "isComplete" | "missingSections" | "missingObjectiveFields">,
+  profile: Pick<ProfessionalProfile, "isComplete" | "missingSections" | "missingObjectiveFields"> & {
+    contractType?: ProfessionalProfile["contractType"];
+  },
 ): number {
   if (profile.isComplete) return 100;
-  const total = OBJECTIVE_FIELD_COUNT + OTHER_SECTION_COUNT;
+  // Estágio: senioridade não se aplica, então não entra no total.
+  const objectiveFieldCount = isLevelApplicable(profile.contractType)
+    ? OBJECTIVE_FIELD_COUNT
+    : OBJECTIVE_FIELD_COUNT - 1;
+  const total = objectiveFieldCount + OTHER_SECTION_COUNT;
   const missingObjective = profile.missingSections.includes("objective")
-    ? Math.min(OBJECTIVE_FIELD_COUNT, Math.max(1, profile.missingObjectiveFields.length))
+    ? Math.min(objectiveFieldCount, Math.max(1, profile.missingObjectiveFields.length))
     : 0;
   const missingOthers = profile.missingSections.filter((section) => section !== "objective").length;
   const filled = Math.max(0, total - missingObjective - missingOthers);
