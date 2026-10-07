@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_LEVELS_BY_CONTRACT,
-  INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE,
+  LEVEL_NOT_APPLICABLE_LABEL,
   getLevelOptionsForContract,
   isLevelApplicable,
   levelAfterContractChange,
@@ -34,7 +34,7 @@ describe("regra contrato x senioridade (frontend)", () => {
     for (const contract of ["CLT", "PJ", "TEMPORARIO", "", null]) {
       expect(isLevelApplicable(contract)).toBe(true);
     }
-    expect(INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE).toBe("Senioridade não se aplica para estágio.");
+    expect(LEVEL_NOT_APPLICABLE_LABEL).toBe("Não se aplica");
   });
 
   it("CLT + SENIOR -> ESTAGIO limpa a senioridade", () => {

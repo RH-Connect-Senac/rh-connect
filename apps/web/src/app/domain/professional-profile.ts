@@ -172,7 +172,8 @@ export const ALLOWED_LEVELS_BY_CONTRACT: Record<ContractType, ProfessionalLevel[
   TEMPORARIO: ["JUNIOR", "PLENO", "SENIOR"],
 };
 
-export const INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE = "Senioridade não se aplica para estágio.";
+/** Texto exibido no select de senioridade desabilitado (estágio). */
+export const LEVEL_NOT_APPLICABLE_LABEL = "Não se aplica";
 
 /** Senioridade só deixa de se aplicar para estágio. */
 export function isLevelApplicable(contract: string | null | undefined): boolean {

@@ -158,7 +158,7 @@ import {
   CONTRACT_TYPE_OPTIONS,
   EDUCATION_STATUS_OPTIONS,
   COURSE_STATUS_OPTIONS,
-  INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE,
+  LEVEL_NOT_APPLICABLE_LABEL,
   getLevelOptionsForContract,
   isLevelApplicable,
   levelAfterContractChange,
@@ -1241,11 +1241,12 @@ function ProfileField({ error, ...props }: FieldProps & { error?: string }) {
   );
 }
 
-function ProfileSelect({ label, options, required, error, ...props }: {
+function ProfileSelect({ label, options, required, error, placeholder = "Selecione...", ...props }: {
   label: string;
   options: { value: string; label: string }[];
   required?: boolean;
   error?: string;
+  placeholder?: string;
 } & React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div>
@@ -1254,7 +1255,7 @@ function ProfileSelect({ label, options, required, error, ...props }: {
       </label>
       <div className="relative">
         <NativeSelect {...props}>
-          <option value="">Selecione...</option>
+          <option value="">{placeholder}</option>
           {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </NativeSelect>
         <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
@@ -1733,17 +1734,6 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                         onChange={(event) => setObjective((current) => ({ ...current, desiredPosition: event.target.value }))}
                         required
                       />
-                      {isLevelApplicable(objective.contractType) ? (
-                        <ProfileSelect
-                          label="Senioridade profissional"
-                          required
-                          options={getLevelOptionsForContract(objective.contractType)}
-                          value={objective.professionalLevel}
-                          onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
-                        />
-                      ) : (
-                        <p className="text-xs text-muted-foreground self-end pb-2">{INTERNSHIP_LEVEL_NOT_APPLICABLE_MESSAGE}</p>
-                      )}
                       <ProfileSelect
                         label="Tipo de contrato"
                         required
@@ -1757,6 +1747,15 @@ function ProfileScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
                             professionalLevel: levelAfterContractChange(contractType, current.professionalLevel),
                           }));
                         }}
+                      />
+                      <ProfileSelect
+                        label="Senioridade profissional"
+                        required={isLevelApplicable(objective.contractType)}
+                        disabled={!isLevelApplicable(objective.contractType)}
+                        placeholder={isLevelApplicable(objective.contractType) ? undefined : LEVEL_NOT_APPLICABLE_LABEL}
+                        options={getLevelOptionsForContract(objective.contractType)}
+                        value={objective.professionalLevel}
+                        onChange={(event) => setObjective((current) => ({ ...current, professionalLevel: event.target.value }))}
                       />
                     </div>
                     <div>
