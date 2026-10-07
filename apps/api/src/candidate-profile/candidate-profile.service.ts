@@ -177,12 +177,14 @@ export class CandidateProfileService {
 
   /**
    * Checagem server-side usada por outros fluxos (ex.: criação de entrevista
-   * do Fluxo 03) para bloquear candidato com perfil incompleto.
+   * do Fluxo 03). A entrevista depende só de `isInterviewReady` (Objetivo
+   * Profissional); `isComplete` é a completude do perfil inteiro.
    */
   async getCompleteness(userId: number): Promise<CompletenessResult> {
     const profile = await this.getProfile(userId);
     return {
       isComplete: profile.isComplete,
+      isInterviewReady: profile.isInterviewReady,
       missingSections: profile.missingSections,
       missingObjectiveFields: profile.missingObjectiveFields,
     };
@@ -813,6 +815,7 @@ export class CandidateProfileService {
         noTechnicalSkills: record.technical_skills_none_declared_at !== null,
       },
       isComplete: completeness.isComplete,
+      isInterviewReady: completeness.isInterviewReady,
       missingSections: completeness.missingSections,
       missingObjectiveFields: completeness.missingObjectiveFields,
       updatedAt: record.updated_at.toISOString(),

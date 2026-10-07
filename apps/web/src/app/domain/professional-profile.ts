@@ -116,7 +116,10 @@ export type ProfessionalProfile = {
   technicalSkills: ProfileSkill[];
   behavioralSkills: ProfileSkill[];
   declarations: ProfileDeclarations;
+  /** Perfil Profissional inteiro completo. */
   isComplete: boolean;
+  /** Objetivo Profissional completo: único requisito do perfil para entrevistar. */
+  isInterviewReady: boolean;
   missingSections: ProfileSectionKey[];
   missingObjectiveFields: ObjectiveFieldKey[];
   updatedAt: string;
@@ -264,6 +267,36 @@ export const PROFILE_SECTION_LABELS: Record<ProfileSectionKey, string> = {
 /** Rótulos legíveis das seções que a API informou como pendentes. */
 export function describeMissingSections(sections: ProfileSectionKey[]): string[] {
   return sections.map((section) => PROFILE_SECTION_LABELS[section] ?? section);
+}
+
+/** Rótulos dos campos do Objetivo Profissional (iguais aos do formulário). */
+export const OBJECTIVE_FIELD_LABELS: Record<ObjectiveFieldKey, string> = {
+  professionalTitle: "Título profissional",
+  professionalArea: "Área de interesse",
+  professionalSubarea: "Subárea de interesse",
+  desiredPosition: "Cargo desejado",
+  professionalLevel: "Senioridade profissional",
+  contractType: "Tipo de contrato",
+  professionalSummary: "Resumo profissional",
+};
+
+/** Rótulos dos campos do objetivo que a API informou como pendentes. */
+export function describeMissingObjectiveFields(fields: ObjectiveFieldKey[]): string[] {
+  return fields.map((field) => OBJECTIVE_FIELD_LABELS[field] ?? field);
+}
+
+/**
+ * Aviso do perfil (dashboard/tela de Perfil), decidido só pelos flags da API:
+ *  - "objective-pending": objetivo incompleto — entrevista bloqueada;
+ *  - "optional-sections": entrevista liberada, mas o perfil inteiro não está
+ *    completo (apenas informativo, sem relação com a liberação);
+ *  - "none": perfil completo.
+ */
+export type ProfileNotice = "objective-pending" | "optional-sections" | "none";
+
+export function getProfileNotice(profile: Pick<ProfessionalProfile, "isComplete" | "isInterviewReady">): ProfileNotice {
+  if (!profile.isInterviewReady) return "objective-pending";
+  return profile.isComplete ? "none" : "optional-sections";
 }
 
 // Unidades de progresso: 7 campos do objetivo + 5 seções restantes.
