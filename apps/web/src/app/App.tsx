@@ -44,6 +44,16 @@ import { privacyPolicy } from "./domain/legal/privacy-policy";
 import { termsOfUse } from "./domain/legal/terms-of-use";
 import { LandingScreen as LandingScreenComponent } from "./components/landing-screen";
 import { SuggestionsScreen } from "./components/suggestions-screen";
+import { SuggestedJobsSection } from "./components/suggested-jobs-section";
+import {
+  SPEECH_GENERIC_ERROR_MESSAGE,
+  SPEECH_INSECURE_CONTEXT_MESSAGE,
+  SPEECH_UNSUPPORTED_MESSAGE,
+  appendDictation,
+  getNewTranscript,
+  getSpeechErrorMessage,
+  isSpeechContextSecure,
+} from "./domain/speech-dictation";
 import {
   EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalScreenView,
   EvalReviewScreen, EvalDoneScreen, EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
@@ -71,7 +81,16 @@ import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
 import { Textarea } from "./components/ui/textarea";
 import { Checkbox } from "./components/ui/checkbox";
-import { Button as UIButton } from "./components/ui/button";
+import { Button as UIButton, buttonVariants } from "./components/ui/button";
+import { cn } from "./components/ui/utils";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog";
 import { Card as UICard } from "./components/ui/card";
 import { Badge as UIBadge } from "./components/ui/badge";
 import { StatusBadge } from "./components/ui/status-badge";
@@ -475,6 +494,14 @@ function getInterviewDraftScreenFromPath(pathname: string): InterviewDraftScreen
   return null;
 }
 
+// A janela é o container de scroll (o <main> do shell não tem overflow próprio).
+function scrollPageToTop() {
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+}
+
+const INTERVIEW_DONE_PATH_PATTERN = /^\/candidate\/interviews\/[^/]+\/success$/;
+
 function evaluationModeLabel(mode?: EvaluationMode | null) {
   if (mode === "AI") return "Avaliação por IA";
   if (mode === "HUMAN") return "Avaliação humana";
@@ -487,7 +514,7 @@ type SpeechRecognitionConstructor = new () => {
   interimResults: boolean;
   onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
   start: () => void;
   stop: () => void;
 };
@@ -2449,7 +2476,10 @@ function InterviewScreen({
   const supportsSpeech = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => {
-    return () => recognitionRef.current?.stop();
+    return () => {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -2459,6 +2489,11 @@ function InterviewScreen({
   useEffect(() => {
     onQuestionIndexChange?.(qIdx);
   }, [onQuestionIndexChange, qIdx]);
+
+  // Entrada na etapa e troca de pergunta: volta ao topo da tela.
+  useEffect(() => {
+    scrollPageToTop();
+  }, [qIdx]);
 
   const updateAnswer = (value: string) => {
     if (!question) return;
@@ -2479,7 +2514,11 @@ function InterviewScreen({
   const toggleDictation = () => {
     if (!question) return;
     if (!supportsSpeech) {
-      setSpeechError("Este navegador não oferece ditado por voz. Você pode responder digitando normalmente.");
+      setSpeechError(SPEECH_UNSUPPORTED_MESSAGE);
+      return;
+    }
+    if (!isSpeechContextSecure(window.isSecureContext)) {
+      setSpeechError(SPEECH_INSECURE_CONTEXT_MESSAGE);
       return;
     }
     if (dictating) {
@@ -2489,31 +2528,58 @@ function InterviewScreen({
 
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) return;
-    const recognition = new Recognition();
+    let recognition: InstanceType<SpeechRecognitionConstructor>;
+    try {
+      recognition = new Recognition();
+    } catch {
+      setSpeechError(SPEECH_GENERIC_ERROR_MESSAGE);
+      return;
+    }
     recognition.lang = "pt-BR";
     recognition.continuous = true;
     recognition.interimResults = false;
+    // Acrescenta SEMPRE ao valor mais recente da resposta (atualização funcional),
+    // nunca ao `answer` capturado quando o ditado começou: o que o usuário digitar
+    // durante o ditado é preservado. `event.results` é cumulativo no modo contínuo,
+    // então só os resultados novos (desde o último evento) são acrescentados.
+    const dictationQuestionId = question.id;
+    let processedResults = 0;
     recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? "")
-        .join(" ")
-        .trim();
-      if (transcript) {
-        const availableChars = Math.max(0, ANSWER_MAX_CHARS - answer.length);
-        if (availableChars === 0) return;
-        const textToAppend = `${answer ? " " : ""}${transcript}`.slice(0, availableChars);
-        updateAnswer(`${answer}${textToAppend}`.trim());
-      }
+      const { transcript, processed } = getNewTranscript(event.results, processedResults);
+      processedResults = processed;
+      if (!transcript) return;
+      setDraft((current) => {
+        const base = current.answers[dictationQuestionId] ?? "";
+        const next = normalizeInterviewAnswer(appendDictation(base, transcript, ANSWER_MAX_CHARS));
+        if (next === base) return current;
+        return { ...current, answers: { ...current.answers, [dictationQuestionId]: next } };
+      });
+      setValidationMessage("");
     };
-    recognition.onerror = () => {
-      setSpeechError("Não foi possível usar o ditado por voz agora. Nenhum áudio é armazenado.");
+    // Erro e fim sempre devolvem o estado ao normal. Eventos de uma instância
+    // antiga (já parada ou substituída) são ignorados para não afetar a atual.
+    recognition.onerror = (event) => {
+      if (recognitionRef.current !== recognition) return;
+      recognitionRef.current = null;
+      setDictating(false);
+      const message = getSpeechErrorMessage(event?.error);
+      if (message) setSpeechError(message);
+    };
+    recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return;
+      recognitionRef.current = null;
       setDictating(false);
     };
-    recognition.onend = () => setDictating(false);
     recognitionRef.current = recognition;
     setSpeechError("");
     setDictating(true);
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      setDictating(false);
+      setSpeechError(SPEECH_GENERIC_ERROR_MESSAGE);
+    }
   };
 
   const goNext = () => {
@@ -2562,10 +2628,24 @@ function InterviewScreen({
     );
   }
 
-  const requirementSections = [{ title: "Requisitos", items: draft.context.requirements }];
+  // Navegação entre perguntas: regra única, usada pelo painel detalhado (sm+) e pelo compacto (mobile).
+  const canOpenQuestionAt = (item: (typeof questions)[number], index: number) =>
+    index === qIdx || isValidInterviewAnswer(draft.answers[item.id]);
+  const openQuestion = (index: number) => {
+    stopDictation();
+    setQIdx(index);
+  };
+  const answeredCount = questions.filter((item) => isValidInterviewAnswer(draft.answers[item.id])).length;
 
   return (
     <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
+      <div className="mb-2 min-w-0 sm:hidden">
+        <p className="break-words text-sm font-bold text-foreground">{draft.context.title}</p>
+        <p className="break-words text-xs text-muted-foreground">{draft.context.company}</p>
+      </div>
+      <div className="mb-3">
+        <EvaluationModeBadge mode={draft.evaluationMode} />
+      </div>
       <div className="w-full bg-muted rounded-full h-1 mb-5">
         <div className="bg-primary h-1 rounded-full transition-all" style={{ width: `${progress}%` }} />
       </div>
@@ -2589,7 +2669,7 @@ function InterviewScreen({
               }}
               maxLength={ANSWER_MAX_CHARS}
               placeholder="Digite sua resposta. Se preferir, use o ditado por voz para preencher este campo."
-              className="min-h-56"
+              className="min-h-44 sm:min-h-56"
             />
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
               <div className={`text-xs ${answerLength >= ANSWER_MAX_CHARS ? "text-amber-700 font-semibold" : "text-muted-foreground"}`}>
@@ -2615,35 +2695,50 @@ function InterviewScreen({
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          <Card className="p-5">
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Contexto da vaga</p>
-            <h3 className="font-bold text-foreground">{draft.context.title}</h3>
-            <p className="text-sm text-muted-foreground mb-2">{draft.context.company}</p>
-            <div className="mb-3">
-              <EvaluationModeBadge mode={draft.evaluationMode} />
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed mb-4">{draft.context.summary}</p>
-            <div className="space-y-3">
-              {requirementSections.map((section) => (
-                <div key={section.title} className="space-y-2">
-                  <p className="text-[11px] font-semibold text-muted-foreground">{section.title}</p>
-                  {section.items.slice(0, 4).map((requirement) => (
-                    <div key={requirement} className="flex items-start gap-2 text-xs text-foreground">
-                      <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" />
-                      <span>{requirement}</span>
-                    </div>
-                  ))}
-                </div>
-              ))}
+          <Card className="p-4 sm:hidden">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
+              Progresso · {answeredCount} de {questions.length} respondidas
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {questions.map((item, index) => {
+                const answered = isValidInterviewAnswer(draft.answers[item.id]);
+                const current = index === qIdx;
+                const canOpenQuestion = canOpenQuestionAt(item, index);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={!canOpenQuestion}
+                    aria-current={current ? "step" : undefined}
+                    aria-label={`Pergunta ${index + 1}: ${answered ? "respondida" : "pendente"}${current ? ", atual" : ""}`}
+                    onClick={() => {
+                      if (!canOpenQuestion) return;
+                      openQuestion(index);
+                    }}
+                    className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-bold transition-colors outline-none focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)] ${
+                      current
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : answered
+                          ? "border-green-200 bg-green-50 text-green-700"
+                          : canOpenQuestion
+                            ? "border-border bg-muted text-muted-foreground"
+                            : "cursor-not-allowed border-border bg-muted text-muted-foreground opacity-60"
+                    }`}
+                  >
+                    {answered && <span aria-hidden="true">✓</span>}
+                    <span>{index + 1}</span>
+                  </button>
+                );
+              })}
             </div>
           </Card>
 
-          <Card className="p-5">
+          <Card className="hidden p-5 sm:block">
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Progresso</p>
             <div className="space-y-2">
               {questions.map((item, index) => {
                 const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const canOpenQuestion = index === qIdx || answered;
+                const canOpenQuestion = canOpenQuestionAt(item, index);
                 return (
                   <button
                     key={item.id}
@@ -2651,8 +2746,7 @@ function InterviewScreen({
                     disabled={!canOpenQuestion}
                     onClick={() => {
                       if (!canOpenQuestion) return;
-                      stopDictation();
-                      setQIdx(index);
+                      openQuestion(index);
                     }}
                     className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
                       index === qIdx
@@ -3580,6 +3674,9 @@ function InterviewSetupScreen({
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
+  const urlFieldRef = useRef<HTMLDivElement>(null);
+  const urlHighlightTimerRef = useRef<number | null>(null);
+  const [urlHighlighted, setUrlHighlighted] = useState(false);
   const requirementSections = draft.context
     ? [{ title: "Requisitos", items: draft.context.requirements }]
     : [];
@@ -3642,6 +3739,26 @@ function InterviewSetupScreen({
     hadContextRef.current = Boolean(draft.context);
   }, [draft.context]);
 
+  useEffect(() => () => {
+    if (urlHighlightTimerRef.current !== null) window.clearTimeout(urlHighlightTimerRef.current);
+  }, []);
+
+  // Após copiar um link sugerido: rola até o campo de URL e o destaca por instantes.
+  // Só foca o input com mouse/ponteiro preciso (no celular abriria o teclado).
+  const handleSuggestedLinkCopied = () => {
+    const field = urlFieldRef.current;
+    if (!field) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    field.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    const finePointer = window.matchMedia?.("(hover: hover) and (pointer: fine)").matches ?? false;
+    if (finePointer) field.querySelector("input")?.focus({ preventScroll: true });
+    setUrlHighlighted(true);
+    if (urlHighlightTimerRef.current !== null) window.clearTimeout(urlHighlightTimerRef.current);
+    urlHighlightTimerRef.current = window.setTimeout(() => setUrlHighlighted(false), 2500);
+  };
+
+  const contextReady = Boolean(draft.context && status === "success");
+
   if (savedDraftAvailable && draft.context) {
     return (
       <AuthLayout
@@ -3697,18 +3814,26 @@ function InterviewSetupScreen({
       title="Nova entrevista"
       subtitle="Cole a URL da vaga para contextualizar as perguntas"
     >
-      <div className="w-full max-w-2xl space-y-5">
+      <div
+        className={
+          contextReady
+            ? "w-full max-w-2xl space-y-5 xl:max-w-6xl xl:grid xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:items-start xl:gap-6 xl:space-y-0"
+            : "w-full max-w-2xl space-y-5"
+        }
+      >
+        <div className="min-w-0 space-y-5">
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-1">URL da vaga</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            Cole o link da vaga para preparar uma entrevista contextualizada.
+            Cole aqui o link da vaga escolhida abaixo e toque em Analisar.
           </p>
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div ref={urlFieldRef} className="flex flex-col sm:flex-row gap-3">
             <Input
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               placeholder="https://www.empregare.com/pt-br/vaga/..."
               aria-label="URL da vaga"
+              className={urlHighlighted ? "border-[#2563EB] shadow-[0_0_0_4px_rgba(37,99,235,0.2)]" : undefined}
             />
             <Btn variant="primary" onClick={handleAnalyze} disabled={status === "loading" || !url.trim()}>
               {status === "loading" ? <><Spinner /> Analisando</> : <>Analisar</>}
@@ -3722,6 +3847,10 @@ function InterviewSetupScreen({
           )}
         </Card>
 
+        <SuggestedJobsSection onLinkCopied={handleSuggestedLinkCopied} />
+        </div>
+
+        <div className="min-w-0 space-y-5">
         {draft.context && status === "success" && (
           <>
             <Card className="p-5 sm:p-6 bg-blue-50 border-blue-100">
@@ -3814,6 +3943,7 @@ function InterviewSetupScreen({
           <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
             {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
           </Btn>
+        </div>
         </div>
       </div>
     </AuthLayout>
@@ -4563,46 +4693,68 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 function ConfirmModal({
-  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, equalActionWidths = true, onConfirm, onCancel, onClose, children,
+  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, showCancel = true, onConfirm, onCancel, onClose, children,
 }: {
   title: string; message: string; confirmLabel: string;
   cancelLabel?: string;
   showCloseButton?: boolean;
+  // Informativa: false oculta a ação secundária e deixa só a ação principal.
+  showCancel?: boolean;
+  /** @deprecated Sem efeito: as ações sempre têm larguras iguais no desktop. */
   equalActionWidths?: boolean;
   danger?: boolean; onConfirm: () => void; onCancel: () => void;
   onClose?: () => void;
   children?: ReactNode;
 }) {
-  const actionButtonSizeClass = equalActionWidths ? "flex-1" : "px-6 whitespace-nowrap";
-  const actionGroupClass = equalActionWidths ? "flex gap-3" : "flex justify-center gap-3";
-  const modalWidthClass = equalActionWidths ? "max-w-sm" : "max-w-md";
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  // Esc (e o X) usam o mesmo caminho de fechamento que já existia: onClose ?? onCancel.
+  const dismiss = onClose ?? onCancel;
+  // Mobile: empilhadas, w-full. Desktop: as ações dividem a largura igualmente (sm:flex-1).
+  const actionClass = "min-h-11 w-full whitespace-normal sm:min-h-10 sm:flex-1";
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(15,27,45,0.6)" }}>
-      <div className={`relative bg-white rounded-2xl p-6 w-full ${modalWidthClass} shadow-2xl`}>
+    <AlertDialog open onOpenChange={(open) => { if (!open) dismiss(); }}>
+      <AlertDialogContent
+        className="max-h-[90dvh] overflow-y-auto overscroll-contain sm:max-w-md"
+        onOpenAutoFocus={(event) => {
+          // Foco inicial seguro: ação secundária; na informativa, a única ação.
+          event.preventDefault();
+          // preventScroll: sem isso o navegador rola a página para "revelar" o botão focalizado.
+          (showCancel ? cancelRef : confirmRef).current?.focus({ preventScroll: true });
+        }}
+      >
         {showCloseButton && (
           <button
             type="button"
-            onClick={onClose ?? onCancel}
-            className="absolute right-4 top-4 rounded-lg p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={dismiss}
+            className="absolute right-2 top-2 flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground outline-none focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)]"
             aria-label="Fechar"
             title="Fechar"
           >
             <X className="h-4 w-4" />
           </button>
         )}
-        <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${danger ? "bg-red-50" : "bg-amber-50"}`}>
-          <AlertCircle className={`w-6 h-6 ${danger ? "text-red-500" : "text-amber-500"}`} />
-        </div>
-        <h3 className="font-bold text-foreground text-center mb-2">{title}</h3>
-        <p className="text-sm text-muted-foreground text-center mb-5 leading-relaxed">{message}</p>
-        {children && <div className="mb-5">{children}</div>}
-        <div className={actionGroupClass}>
-          <button onClick={onCancel} className={`${actionButtonSizeClass} py-2.5 border border-border rounded-xl text-sm font-semibold text-foreground hover:bg-muted transition-colors`}>{cancelLabel}</button>
-          <button onClick={onConfirm} className={`${actionButtonSizeClass} py-2.5 rounded-xl text-sm font-semibold text-white transition-colors ${danger ? "bg-red-500 hover:bg-red-600" : "bg-primary hover:bg-blue-800"}`}>{confirmLabel}</button>
-        </div>
-      </div>
-    </div>
+        <AlertDialogHeader className="items-center sm:text-center">
+          <div className={`mb-2 flex h-12 w-12 items-center justify-center rounded-full ${danger ? "bg-red-50" : "bg-amber-50"}`}>
+            <AlertCircle className={`h-6 w-6 ${danger ? "text-red-500" : "text-amber-500"}`} />
+          </div>
+          <AlertDialogTitle className="text-center text-base font-bold text-foreground">{title}</AlertDialogTitle>
+          <AlertDialogDescription className="text-center text-sm leading-relaxed">{message}</AlertDialogDescription>
+        </AlertDialogHeader>
+        {children && <div>{children}</div>}
+        <AlertDialogFooter className="gap-3">
+          {showCancel && (
+            <button ref={cancelRef} type="button" onClick={onCancel} className={cn(buttonVariants({ variant: "outline" }), actionClass)}>
+              {cancelLabel}
+            </button>
+          )}
+          <button ref={confirmRef} type="button" onClick={onConfirm} className={cn(buttonVariants({ variant: danger ? "destructive" : "primary" }), actionClass)}>
+            {confirmLabel}
+          </button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -5015,6 +5167,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
           title="Senha alterada com sucesso"
           message="Sua senha foi atualizada. Use a nova senha no próximo acesso."
           confirmLabel="Entendido"
+          showCancel={false}
           danger={false}
           onConfirm={() => setModal(null)}
           onCancel={() => setModal(null)}
@@ -6021,6 +6174,17 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const candidateHasSavedDraft = session.user?.role === "CANDIDATE" && hasActiveInterviewDraft(interviewDraft);
   const candidateDraftActive = session.user?.role === "CANDIDATE" && isInterviewDraftInProgress(interviewDraft);
   const currentInterviewDraftScreen = getInterviewDraftScreenFromPath(location.pathname);
+  // Etapas do fluxo que voltam ao topo ao serem abertas. "interview-setup" e "interview" ficam de fora:
+  // o InterviewScreen já cuida da própria entrada e de cada troca de pergunta.
+  const interviewStepScrollKey =
+    currentInterviewDraftScreen && currentInterviewDraftScreen !== "interview-setup" && currentInterviewDraftScreen !== "interview"
+      ? currentInterviewDraftScreen
+      : INTERVIEW_DONE_PATH_PATTERN.test(location.pathname)
+        ? "interview-done"
+        : null;
+  useEffect(() => {
+    if (interviewStepScrollKey) scrollPageToTop();
+  }, [interviewStepScrollKey]);
   const activeDraftEntry = candidateDraftActive
     ? {
       draft: interviewDraft,
@@ -6339,7 +6503,6 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
             confirmLabel={confirmCancelInterview ? "Cancelar entrevista" : "Sair e continuar depois"}
             cancelLabel={confirmCancelInterview ? "Voltar" : "Cancelar entrevista"}
             showCloseButton={!confirmCancelInterview}
-            equalActionWidths={false}
             danger={confirmCancelInterview}
             onConfirm={() => {
               if (confirmCancelInterview) {
