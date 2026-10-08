@@ -6,8 +6,11 @@ import {
 } from "react";
 
 import bannerRhConnect from "../../../assets/banners-materiais-de-apoio/banner-rh-connect-materiais.webp";
+import bannerRhConnectMobile from "../../../assets/banners-materiais-de-apoio/banner-rh-connect-materiais-mobile.webp";
 import bannerCachola from "../../../assets/banners-materiais-de-apoio/cachola-banner-sem-textos.webp";
+import bannerCacholaMobile from "../../../assets/banners-materiais-de-apoio/cachola-banner-sem-textos-mobile.webp";
 import bannerOrango from "../../../assets/banners-materiais-de-apoio/banner-orango-rh-connect-mulher.webp";
+import bannerOrangoMobile from "../../../assets/banners-materiais-de-apoio/banner-orango-rh-connect-mulher-mobile.webp";
 
 import logoCachola from "../../../assets/logos/logo-cachola.png";
 import logoOrango from "../../../assets/logos/logo-orango.svg";
@@ -36,6 +39,11 @@ type MaterialsHeroSlideOverlay =
 export type MaterialsHeroSlide = {
   id: string;
   src: string;
+  /**
+   * Arte vertical (4:5) opcional, usada somente em telas de celular
+   * (< 600px). Sem ela, o slide usa `src` em todas as larguras.
+   */
+  mobileSrc?: string;
   alt: string;
   objectPosition?: string;
   overlay?: MaterialsHeroSlideOverlay;
@@ -45,12 +53,14 @@ const DEFAULT_SLIDES: MaterialsHeroSlide[] = [
   {
     id: "rh-connect",
     src: bannerRhConnect,
+    mobileSrc: bannerRhConnectMobile,
     alt: "RH Connect: materiais de apoio para sua preparação",
     overlay: "rh-connect",
   },
   {
     id: "cachola",
     src: bannerCachola,
+    mobileSrc: bannerCacholaMobile,
     alt: "Cachola: conteúdos de parceiros no RH Connect",
     objectPosition: "left center",
     overlay: "cachola",
@@ -58,12 +68,16 @@ const DEFAULT_SLIDES: MaterialsHeroSlide[] = [
   {
     id: "orango",
     src: bannerOrango,
+    mobileSrc: bannerOrangoMobile,
     alt: "Orango: conteúdos de parceiros no RH Connect",
     objectPosition: "42% center",
     overlay: "orango",
   },
 ];
 
+// Dimensões intrínsecas das imagens dos banners.
+// NÃO controlam a altura visual do hero na página.
+// A altura exibida é definida no container responsivo do slide.
 const BANNER_WIDTH = 1920;
 const BANNER_HEIGHT = 640;
 const AUTOPLAY_INTERVAL_MS = 6000;
@@ -87,8 +101,13 @@ function MaterialsHeroSlideOverlayContent({
           inset-0
           z-10
           flex
-          items-center
-          px-6
+          items-start
+          px-[5cqw]
+          pt-[4.2cqw]
+
+          min-[600px]:items-center
+          min-[600px]:px-6
+          min-[600px]:pt-0
 
           @min-[700px]:px-8
           @min-[850px]:px-10
@@ -100,15 +119,18 @@ function MaterialsHeroSlideOverlayContent({
         <div
           className="
             flex
-            w-[48%]
-            max-w-[18rem]
+            w-full
             flex-col
-            gap-2.5
+            gap-[2cqw]
+            max-w-[25.2rem]
             text-left
+
+            min-[600px]:w-[48%]
+            min-[600px]:max-w-[18rem]
+            min-[600px]:gap-2.5
 
             @min-[700px]:w-[46%]
             @min-[700px]:max-w-[22rem]
-            @min-[700px]:gap-3
 
             @min-[850px]:w-[44%]
             @min-[850px]:max-w-[25rem]
@@ -118,26 +140,32 @@ function MaterialsHeroSlideOverlayContent({
 
             @min-[1150px]:w-[40%]
             @min-[1150px]:max-w-[30rem]
-            @min-[1150px]:gap-4
 
             @min-[1400px]:w-[38%]
             @min-[1400px]:max-w-[34rem]
+
+            min-[768px]:gap-3
+            min-[1470px]:gap-4
+
+            lg:max-[1440px]:w-[38%]!
+            lg:max-[1440px]:max-w-[26rem]!
           "
         >
           <img
             src={logoRhConnect}
             alt="RH Connect"
             className="
-              h-7
+              h-[min(7.5cqw,33.5px)]
               w-auto
               shrink-0
               self-start
 
-              @min-[700px]:h-8
-              @min-[850px]:h-9
-              @min-[1000px]:h-10
-              @min-[1150px]:h-11
-              @min-[1400px]:h-12
+              min-[600px]:h-7
+              min-[768px]:h-8
+              min-[920px]:h-9
+              min-[1150px]:h-10
+              min-[1470px]:h-11
+              min-[1720px]:h-12
             "
             draggable={false}
           />
@@ -145,24 +173,24 @@ function MaterialsHeroSlideOverlayContent({
           <h2
             className="
               max-w-[18ch]
-              text-2xl
+              text-[length:min(6.3cqw,28px)]
               font-extrabold
               leading-[1.04]
               tracking-normal
               text-[#001640]
 
-              @min-[700px]:text-[1.75rem]
-
               @min-[850px]:max-w-[20ch]
-              @min-[850px]:text-[1.9rem]
 
               @min-[1000px]:max-w-[22ch]
-              @min-[1000px]:text-[2.1rem]
-
-              @min-[1150px]:text-[2.35rem]
 
               @min-[1400px]:max-w-[20ch]
-              @min-[1400px]:text-[3rem]
+
+              min-[600px]:text-2xl
+              min-[768px]:text-[1.75rem]
+              min-[920px]:text-[1.9rem]
+              min-[1150px]:text-[2.1rem]
+              min-[1470px]:text-[2.35rem]
+              min-[1720px]:text-[3rem]
             "
           >
             <span className="block">
@@ -180,23 +208,28 @@ function MaterialsHeroSlideOverlayContent({
 
           <p
             className="
-              max-w-[32ch]
-              text-xs
+              max-w-none
+              text-[length:clamp(11px,3.5cqw,15.6px)]
               font-normal
-              leading-snug
+              leading-tight
               text-[#16345f]
 
               @min-[700px]:max-w-[35ch]
-              @min-[700px]:text-sm
 
               @min-[850px]:max-w-[38ch]
 
               @min-[1000px]:max-w-[40ch]
 
               @min-[1150px]:max-w-[42ch]
-              @min-[1150px]:text-base
 
-              @min-[1400px]:text-lg
+              min-[600px]:max-w-[32ch]
+              min-[600px]:text-xs
+              min-[600px]:leading-snug
+              min-[768px]:text-sm
+              min-[1470px]:text-base
+              min-[1720px]:text-lg
+
+              lg:max-[1440px]:max-w-[36ch]!
             "
           >
             Materiais práticos com dicas, exemplos e orientações
@@ -221,8 +254,13 @@ function MaterialsHeroSlideOverlayContent({
           inset-0
           z-10
           flex
-          items-center
-          px-6
+          items-start
+          px-[5cqw]
+          pt-[4.2cqw]
+
+          min-[600px]:items-center
+          min-[600px]:px-6
+          min-[600px]:pt-0
 
           @min-[700px]:px-8
           @min-[850px]:px-10
@@ -234,10 +272,14 @@ function MaterialsHeroSlideOverlayContent({
         <div
           className="
             flex
-            w-[64%]
-            max-w-[20rem]
+            w-full
             flex-col
-            gap-3
+            gap-[2cqw]
+            max-w-[25.2rem]
+
+            min-[600px]:w-[64%]
+            min-[600px]:max-w-[20rem]
+            min-[600px]:gap-3
             text-left
             text-white
             drop-shadow-[0_2px_10px_rgba(0,0,0,0.20)]
@@ -257,6 +299,7 @@ function MaterialsHeroSlideOverlayContent({
             min-[1440px]:gap-5
 
             min-[1800px]:max-w-[46rem]
+            min-[600px]:max-[640px]:max-w-[17rem]!
             min-[1800px]:gap-6
           "
         >
@@ -265,7 +308,8 @@ function MaterialsHeroSlideOverlayContent({
               flex
               max-w-full
               items-center
-              gap-3
+              gap-[2.4cqw]
+              min-[600px]:gap-3
 
               sm:gap-4
               lg:gap-4
@@ -277,15 +321,17 @@ function MaterialsHeroSlideOverlayContent({
               src={logoSenacSnvSesc}
               alt="Senac, CNC e Sesc"
               className="
-                h-8
+                h-[min(9cqw,40.5px)]
                 w-auto
                 shrink-0
+                min-[600px]:h-8
 
                 sm:h-10
                 md:h-11
                 lg:h-12
                 min-[1440px]:h-[4.5rem]
                 min-[1800px]:h-24
+                min-[600px]:max-[1280px]:h-[clamp(28px,3.2cqw,46px)]!
               "
               draggable={false}
             />
@@ -293,8 +339,9 @@ function MaterialsHeroSlideOverlayContent({
             <span
               aria-hidden="true"
               className="
-                h-8
+                h-[min(9cqw,40.5px)]
                 w-px
+                min-[600px]:h-8
                 shrink-0
                 bg-white/55
 
@@ -303,6 +350,7 @@ function MaterialsHeroSlideOverlayContent({
                 lg:h-12
                 min-[1440px]:h-16
                 min-[1800px]:h-20
+                min-[600px]:max-[1280px]:h-[clamp(28px,3.2cqw,46px)]!
               "
             />
 
@@ -310,15 +358,17 @@ function MaterialsHeroSlideOverlayContent({
               src={logoCachola}
               alt="Cachola"
               className="
-                h-8
+                h-[min(9cqw,40.5px)]
                 w-auto
                 shrink-0
+                min-[600px]:h-8
 
                 sm:h-10
                 md:h-11
                 lg:h-12
                 min-[1440px]:h-16
                 min-[1800px]:h-20
+                min-[600px]:max-[1280px]:h-[clamp(28px,3.2cqw,46px)]!
               "
               draggable={false}
             />
@@ -326,8 +376,10 @@ function MaterialsHeroSlideOverlayContent({
 
           <h2
             className="
-              max-w-[16ch]
-              text-2xl
+              max-w-none
+              text-[length:min(5.8cqw,26px)]
+              min-[600px]:max-w-[16ch]
+              min-[600px]:text-2xl
               font-extrabold
               leading-[1.04]
               tracking-normal
@@ -341,6 +393,8 @@ function MaterialsHeroSlideOverlayContent({
 
               min-[1440px]:text-[3.5rem]
               min-[1800px]:text-[4rem]
+              min-[600px]:max-[1280px]:max-w-none!
+              min-[600px]:max-[1280px]:text-[length:clamp(22px,3cqw,34px)]!
             "
           >
             <span className="block">
@@ -354,10 +408,13 @@ function MaterialsHeroSlideOverlayContent({
 
           <p
             className="
-              max-w-[38ch]
-              text-xs
+              max-w-none
+              text-[length:clamp(11px,3.5cqw,15.6px)]
               font-normal
-              leading-snug
+              leading-tight
+              min-[600px]:max-w-[38ch]
+              min-[600px]:text-xs
+              min-[600px]:leading-snug
               text-white/88
 
               sm:max-w-[42ch]
@@ -371,6 +428,8 @@ function MaterialsHeroSlideOverlayContent({
 
               min-[1440px]:text-lg
               min-[1800px]:text-xl
+              min-[600px]:max-[1280px]:text-[length:clamp(12px,1.6cqw,15px)]!
+              min-[600px]:max-[1280px]:leading-[1.4]!
             "
           >
             Explore livros, audiolivros, podcasts e outros materiais
@@ -397,8 +456,13 @@ function MaterialsHeroSlideOverlayContent({
         inset-0
         z-10
         flex
-        items-center
-        px-6
+        items-start
+        px-[5cqw]
+        pt-[4.2cqw]
+
+        min-[600px]:items-center
+        min-[600px]:px-6
+        min-[600px]:pt-0
 
         sm:px-9
         md:px-12
@@ -410,10 +474,14 @@ function MaterialsHeroSlideOverlayContent({
       <div
         className="
           flex
-          w-[68%]
-          max-w-[22rem]
+          w-full
           flex-col
-          gap-3
+          gap-[2cqw]
+          max-w-[25.2rem]
+
+          min-[600px]:w-[68%]
+          min-[600px]:max-w-[22rem]
+          min-[600px]:gap-3
           text-white
           drop-shadow-[0_2px_10px_rgba(0,0,0,0.22)]
 
@@ -428,11 +496,15 @@ function MaterialsHeroSlideOverlayContent({
           lg:max-w-[40rem]
           lg:gap-4
 
+          lg:max-[1440px]:w-[46%]
+          lg:max-[1440px]:max-w-[32rem]
+
           min-[1440px]:w-[48%]
           min-[1440px]:max-w-[44rem]
           min-[1440px]:gap-5
 
           min-[1800px]:max-w-[48rem]
+          min-[600px]:max-[768px]:w-[50%]!
           min-[1800px]:gap-6
         "
       >
@@ -441,7 +513,8 @@ function MaterialsHeroSlideOverlayContent({
             flex
             max-w-full
             items-center
-            gap-3
+            gap-[2.4cqw]
+            min-[600px]:gap-3
 
             sm:gap-4
             lg:gap-4
@@ -453,15 +526,17 @@ function MaterialsHeroSlideOverlayContent({
             src={logoOrango}
             alt="Orango"
             className="
-              h-6
+              h-[min(6.5cqw,29px)]
               w-auto
               shrink-0
+              min-[600px]:h-6
 
               sm:h-8
               md:h-9
               lg:h-11
               min-[1440px]:h-16
               min-[1800px]:h-20
+              min-[600px]:max-[1280px]:h-[clamp(26px,3.4cqw,44px)]!
             "
             draggable={false}
           />
@@ -469,8 +544,9 @@ function MaterialsHeroSlideOverlayContent({
           <span
             aria-hidden="true"
             className="
-              h-8
+              h-[min(8cqw,36px)]
               w-px
+              min-[600px]:h-8
               shrink-0
               bg-white/60
 
@@ -479,6 +555,7 @@ function MaterialsHeroSlideOverlayContent({
               lg:h-12
               min-[1440px]:h-16
               min-[1800px]:h-20
+              min-[600px]:max-[1280px]:h-[clamp(30px,3.6cqw,48px)]!
             "
           />
 
@@ -486,15 +563,17 @@ function MaterialsHeroSlideOverlayContent({
             src={logoSenacSnvSesc}
             alt="Senac, CNC e Sesc"
             className="
-              h-8
+              h-[min(8cqw,36px)]
               w-auto
               shrink-0
+              min-[600px]:h-8
 
               sm:h-10
               md:h-11
               lg:h-12
               min-[1440px]:h-[4.5rem]
               min-[1800px]:h-24
+              min-[600px]:max-[1280px]:h-[clamp(30px,3.6cqw,48px)]!
             "
             draggable={false}
           />
@@ -502,8 +581,10 @@ function MaterialsHeroSlideOverlayContent({
 
         <h2
           className="
-            max-w-[15ch]
-            text-3xl
+            max-w-none
+            text-[length:min(6.2cqw,27.6px)]
+            min-[600px]:max-w-[15ch]
+            min-[600px]:text-3xl
             font-extrabold
             leading-[1.02]
             tracking-normal
@@ -516,11 +597,14 @@ function MaterialsHeroSlideOverlayContent({
 
             lg:max-w-[22ch]
             lg:text-[2.625rem]
+            lg:max-[1440px]:text-[2.25rem]
 
             min-[1440px]:max-w-[18ch]
             min-[1440px]:text-[3.25rem]
 
             min-[1800px]:text-[4rem]
+            min-[600px]:max-[1280px]:max-w-none!
+            min-[600px]:max-[1280px]:text-[length:clamp(24px,3.4cqw,36px)]!
           "
         >
           <span className="block">
@@ -537,10 +621,13 @@ function MaterialsHeroSlideOverlayContent({
 
         <p
           className="
-            max-w-[34ch]
-            text-xs
+            max-w-none
+            text-[length:clamp(11px,3.5cqw,15.6px)]
             font-normal
-            leading-snug
+            leading-tight
+            min-[600px]:max-w-[34ch]
+            min-[600px]:text-xs
+            min-[600px]:leading-snug
             text-white/90
 
             sm:max-w-[38ch]
@@ -551,9 +638,12 @@ function MaterialsHeroSlideOverlayContent({
             md:leading-normal
 
             lg:text-base
+            lg:max-[1440px]:max-w-[36ch]
 
             min-[1440px]:text-lg
             min-[1800px]:text-xl
+            min-[600px]:max-[1280px]:text-[length:clamp(12px,1.6cqw,15px)]!
+            min-[600px]:max-[1280px]:leading-[1.4]!
           "
         >
           Cursos e conteúdos para desenvolver competências profissionais,
@@ -707,7 +797,7 @@ export function MaterialsHeroSlider({
       )}
     >
       <CarouselContent
-        className="ml-0"
+        className="ml-0 cursor-grab active:cursor-grabbing"
         aria-live={
           autoplayEnabled && !paused
             ? "off"
@@ -720,18 +810,41 @@ export function MaterialsHeroSlider({
             className="pl-0"
             aria-label={`${index + 1} de ${slides.length}`}
           >
+            {/* Altura responsiva do hero/banner:
+    mobile ........ telas menores
+    tablet ........ até md
+    notebook ...... 1280–1439px
+    monitor ....... 1440–1799px
+    monitor grande  1800px+
+*/}
             <div
-              className="
-                @container
-                relative
-                h-[280px]
-                overflow-hidden
-
-                lg:h-[340px]
-                xl:h-[360px]
-                2xl:h-[480px]
-              "
+              className={cn(
+                `
+    @container
+    relative
+    overflow-hidden
+    `,
+                // Slides com arte mobile (4:5) acompanham a largura no celular;
+                // os demais mantêm a altura fixa de sempre.
+                slide.mobileSrc
+                  ? "aspect-[4/5] min-[600px]:aspect-auto min-[600px]:h-[260px]"
+                  : "h-[240px]",
+                `
+    min-[640px]:h-[260px]
+    min-[768px]:h-[300px]
+    min-[1280px]:h-[380px]
+    min-[1440px]:h-[450px]
+    min-[1800px]:h-[530px]
+  `,
+              )}
             >
+              <picture className="contents">
+                {slide.mobileSrc ? (
+                  <source
+                    media="(max-width: 599px)"
+                    srcSet={slide.mobileSrc}
+                  />
+                ) : null}
               <img
                 src={slide.src}
                 alt={slide.alt}
@@ -754,12 +867,13 @@ export function MaterialsHeroSlider({
                 style={{
                   ...(slide.objectPosition
                     ? {
-                        objectPosition:
-                          slide.objectPosition,
-                      }
+                      objectPosition:
+                        slide.objectPosition,
+                    }
                     : null),
                 }}
               />
+              </picture>
 
               {slide.overlay ? (
                 <MaterialsHeroSlideOverlayContent
