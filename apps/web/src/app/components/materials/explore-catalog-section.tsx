@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
+import { Card } from "../ui/card";
 import { FilterChip } from "../ui/filter-chip";
+import { HorizontalScrollHint } from "../ui/horizontal-scroll-hint";
 import { cn } from "../ui/utils";
 
 export type ExploreCatalogTab = {
@@ -31,18 +33,31 @@ export function ExploreCatalogSection({
   return (
     <section id={id} className={cn("scroll-mt-20", className)}>
       <h2 className="mb-3 font-bold text-foreground">{title}</h2>
-      <div className="mb-6 flex flex-wrap gap-2" role="group" aria-label="Visões do catálogo">
-        {tabs.map((tab) => (
-          <FilterChip
-            key={tab.id}
-            onClick={() => onTabChange(tab.id)}
-            selected={activeTab === tab.id}
-            className="px-3.5"
+      <Card className="mb-6 p-4 sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <span className="shrink-0 text-sm font-semibold text-foreground">Filtrar por:</span>
+          {/* Mobile: uma linha com scroll horizontal e setas; sm+: quebra de linha como no Histórico. */}
+          <HorizontalScrollHint
+            className="-m-1 min-w-0 sm:m-0 sm:flex-1"
+            scrollerClassName="flex items-center gap-3 p-1 sm:flex-wrap sm:overflow-visible sm:p-0"
+            previousLabel="Ver filtros anteriores"
+            nextLabel="Ver mais filtros"
+            role="group"
+            aria-label="Visões do catálogo"
           >
-            {tab.label}
-          </FilterChip>
-        ))}
-      </div>
+            {tabs.map((tab) => (
+              <FilterChip
+                key={tab.id}
+                onClick={() => onTabChange(tab.id)}
+                selected={activeTab === tab.id}
+                className="shrink-0 whitespace-nowrap"
+              >
+                {tab.label}
+              </FilterChip>
+            ))}
+          </HorizontalScrollHint>
+        </div>
+      </Card>
       <div className="space-y-10">{children}</div>
     </section>
   );

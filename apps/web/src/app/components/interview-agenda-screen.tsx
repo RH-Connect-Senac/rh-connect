@@ -52,7 +52,7 @@ const FILTERS: { value: InterviewAgendaFilter; label: string }[] = [
 const EMPTY_FILTER_COPY: Record<InterviewAgendaFilter, string> = {
   UPCOMING: "Você não tem entrevistas futuras agendadas.",
   PAST: "Nenhuma entrevista anterior ou cancelada por aqui.",
-  ALL: "Nenhuma entrevista na agenda.",
+  ALL: "Nenhuma entrevista agendada.",
 };
 
 // Layout fluido do calendário: células ocupam a largura do card, com alvo de
@@ -292,7 +292,7 @@ export function InterviewAgendaContent({
           {hasNoInterviews ? (
             <EmptyState
               icon={CalendarDays}
-              title="Nenhuma entrevista na agenda"
+              title="Nenhuma entrevista agendada"
               description="Adicione entrevistas de processos seletivos para organizar sua preparação."
               action={
                 <Button onClick={openCreate} className="min-h-11 sm:min-h-0">

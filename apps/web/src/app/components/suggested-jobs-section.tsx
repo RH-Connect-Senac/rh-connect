@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, ClipboardList, Info, Laptop, MapPin, Users } from "lucide-react";
+import { AlertCircle, Briefcase, ClipboardList, Info, Laptop, MapPin, Users } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import { HorizontalScrollHint } from "./ui/horizontal-scroll-hint";
 import {
   DEFAULT_SUGGESTED_JOB_AREA,
   SUGGESTED_JOB_AREAS,
@@ -66,7 +67,7 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
 
   return (
     <section aria-labelledby="suggested-jobs-title" className="space-y-5">
-      <div role="note" className="flex gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
+      <div role="note" className="flex gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 sm:px-5 sm:py-3.5">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" aria-hidden="true" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-blue-900">Vagas sugeridas da Empregare</p>
@@ -78,18 +79,33 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
       </div>
 
       <Card className="p-5 sm:p-6">
-        <h3 id="suggested-jobs-title" className="font-bold text-foreground mb-1">
-          Escolha uma vaga sugerida
-        </h3>
-        <p className="text-sm text-muted-foreground mb-5">
-          Selecione uma área, copie o link de uma das vagas e cole no campo acima.
-        </p>
+        <div className="mb-5 flex items-start gap-3.5">
+          <span
+            aria-hidden="true"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100"
+          >
+            <Briefcase className="h-[1.125rem] w-[1.125rem]" />
+          </span>
+          <div className="min-w-0">
+            <h3 id="suggested-jobs-title" className="font-bold text-foreground mb-0.5">
+              Escolha uma vaga sugerida
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Selecione uma área, copie o link de uma das vagas e cole no campo acima.
+            </p>
+          </div>
+        </div>
 
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">1. Escolha a área</p>
-        <div
+        <HorizontalScrollHint
+          className="mb-5 rounded-xl bg-muted"
+          scrollerClassName="flex gap-1 p-1"
+          leftFadeClassName="from-muted via-muted/90"
+          rightFadeClassName="from-muted via-muted/90"
+          previousLabel="Ver categorias anteriores"
+          nextLabel="Ver mais categorias"
           role="group"
           aria-label="Área da vaga"
-          className="mb-5 flex gap-1 overflow-x-auto rounded-xl bg-muted p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {SUGGESTED_JOB_AREAS.map((area) => {
             const active = area.id === selectedArea;
@@ -111,7 +127,7 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
               </button>
             );
           })}
-        </div>
+        </HorizontalScrollHint>
 
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">2. Escolha a vaga e copie o link</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

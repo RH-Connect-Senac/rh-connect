@@ -11,7 +11,8 @@ import {
   Star, Monitor, ChevronDown, Lightbulb, Info, MessageSquare,
   Target, Send, Upload, Menu,
   Heart, FileText, Trash2, Lock, Database, Bot,
-  ToggleLeft, ToggleRight, ChevronUp, Filter, CalendarDays
+  ToggleLeft, ToggleRight, ChevronUp, Filter, CalendarDays,
+  Building2, MapPin, FileBadge2, ListChecks, CheckCircle2, AlignLeft, Link as LinkIcon
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts";
 import { DevelopmentContent } from "./components/development-screen";
@@ -1188,7 +1189,7 @@ function DashboardScreen({
               <p className="text-blue-200 text-sm leading-relaxed mb-4">Cole a URL da vaga e pratique com perguntas contextualizadas.</p>
             </div>
             <Btn size="md" onClick={() => onNavigate("interview-setup")} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold w-full">
-              Iniciar prática <ArrowRight className="w-4 h-4" />
+              Praticar <ArrowRight className="w-4 h-4" />
             </Btn>
           </div>
         </div>
@@ -3667,6 +3668,32 @@ function InterviewHistoryScreen({
 
 // ─── Fase A: ENT-001 Nova entrevista ─────────────────────────────────────────
 
+// Linha do card "Contexto extraído": ícone em destaque, rótulo pequeno e valor.
+function ContextInfoRow({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof Briefcase;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3.5 px-5 py-4 sm:px-6">
+      <span
+        aria-hidden="true"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100"
+      >
+        <Icon className="h-[1.125rem] w-[1.125rem]" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <div className="mt-1.5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function InterviewSetupScreen({
   onNavigate,
   draft,
@@ -3696,6 +3723,9 @@ function InterviewSetupScreen({
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
+  const contextCardRef = useRef<HTMLDivElement>(null);
+  // Marcada apenas quando uma análise termina com sucesso; consumida uma única vez pelo efeito de scroll.
+  const scrollToContextRef = useRef(false);
   const urlFieldRef = useRef<HTMLDivElement>(null);
   const urlHighlightTimerRef = useRef<number | null>(null);
   const [urlHighlighted, setUrlHighlighted] = useState(false);
@@ -3722,8 +3752,10 @@ function InterviewSetupScreen({
     try {
       const context = await analyzeJobUrl(url);
       setDraft((current) => ({ ...current, context, questions: [], answers: {}, evaluationMode: null }));
+      scrollToContextRef.current = true;
       setStatus("success");
     } catch (err) {
+      scrollToContextRef.current = false;
       setStatus("error");
       setError(err instanceof Error ? err.message : "Não foi possível analisar a URL informada.");
     }
@@ -3781,6 +3813,21 @@ function InterviewSetupScreen({
 
   const contextReady = Boolean(draft.context && status === "success");
 
+  // Após uma análise bem-sucedida, leva o usuário ao INÍCIO do card "Contexto extraído".
+  // O flag é consumido aqui, então re-renders, edição de campos e análises com falha não rolam a página.
+  useEffect(() => {
+    if (!contextReady || !scrollToContextRef.current) return;
+    scrollToContextRef.current = false;
+    const card = contextCardRef.current;
+    if (!card) return;
+    // No layout de duas colunas (xl) o contexto já fica ao lado da URL; não rola se já estiver visível.
+    const twoColumns = window.matchMedia?.("(min-width: 1280px)").matches ?? false;
+    const rect = card.getBoundingClientRect();
+    if (twoColumns && rect.top >= 0 && rect.top <= window.innerHeight * 0.5) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    card.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  }, [contextReady, draft.context]);
+
   if (savedDraftAvailable && draft.context) {
     return (
       <AuthLayout
@@ -3829,6 +3876,16 @@ function InterviewSetupScreen({
     );
   }
 
+  // Ações da tela; renderizadas em um único ponto por vez (dentro do bloco de contexto ou ao final).
+  const setupActions = (
+    <div className="flex gap-3">
+      <Btn variant="outline" className="min-w-28 sm:min-w-32" onClick={() => isInterviewDraftInProgress(draft) ? onCancelInterview?.() : onCancelPreparation?.()}>Cancelar</Btn>
+      <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
+        {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
+      </Btn>
+    </div>
+  );
+
   return (
     <AuthLayout
       current="interview-setup"
@@ -3839,16 +3896,25 @@ function InterviewSetupScreen({
       <div
         className={
           contextReady
-            ? "w-full max-w-2xl space-y-5 xl:max-w-6xl xl:grid xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:items-start xl:gap-6 xl:space-y-0"
+            ? "flex w-full max-w-2xl flex-col gap-5 xl:max-w-6xl xl:grid xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:grid-rows-[auto_1fr] xl:items-start xl:gap-x-6 xl:gap-y-5"
             : "w-full max-w-2xl space-y-5"
         }
       >
-        <div className="min-w-0 space-y-5">
-        <Card className="p-5 sm:p-6">
-          <h3 className="font-bold text-foreground mb-1">URL da vaga</h3>
-          <p className="text-sm text-muted-foreground mb-4">
-            Cole aqui o link da vaga escolhida abaixo e toque em Analisar.
-          </p>
+        <Card className={contextReady ? "min-w-0 p-5 sm:p-6 xl:col-start-1 xl:row-start-1" : "p-5 sm:p-6"}>
+          <div className="mb-4 flex items-start gap-3.5">
+            <span
+              aria-hidden="true"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-100"
+            >
+              <LinkIcon className="h-[1.125rem] w-[1.125rem]" />
+            </span>
+            <div className="min-w-0">
+              <h3 className="font-bold text-foreground mb-0.5">URL da vaga</h3>
+              <p className="text-sm text-muted-foreground">
+                Cole aqui o link da vaga escolhida abaixo e toque em Analisar.
+              </p>
+            </div>
+          </div>
           <div ref={urlFieldRef} className="flex flex-col sm:flex-row gap-3">
             <Input
               value={url}
@@ -3869,46 +3935,45 @@ function InterviewSetupScreen({
           )}
         </Card>
 
-        <SuggestedJobsSection onLinkCopied={handleSuggestedLinkCopied} />
-        </div>
-
-        <div className="min-w-0 space-y-5">
         {draft.context && status === "success" && (
-          <>
-            <Card className="p-5 sm:p-6 bg-blue-50 border-blue-100">
-              <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3">Contexto extraído</p>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-[11px] text-muted-foreground mb-0.5">Cargo</p>
-                  <p className="text-sm font-semibold text-foreground">{draft.context.title}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-muted-foreground mb-0.5">Empresa</p>
-                  <p className="text-sm font-semibold text-foreground">{draft.context.company}</p>
-                </div>
+          <div className="min-w-0 space-y-4 xl:col-start-2 xl:row-start-1 xl:row-span-2">
+            <div ref={contextCardRef} className="scroll-mt-24">
+            <Card className="overflow-hidden rounded-2xl border-border bg-white p-0 shadow-sm">
+              <div className="flex items-center gap-3 border-b border-border bg-slate-50 px-5 py-4 sm:px-6">
+                <span
+                  aria-hidden="true"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500 text-white shadow-sm"
+                >
+                  <FileText className="h-4 w-4" />
+                </span>
+                <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Contexto extraído</p>
+              </div>
+              <div className="divide-y divide-border/40">
+                <ContextInfoRow icon={Briefcase} label="Cargo">
+                  <p className="break-words text-sm font-semibold leading-snug text-foreground sm:text-base">{draft.context.title}</p>
+                </ContextInfoRow>
+                <ContextInfoRow icon={Building2} label="Empresa">
+                  <p className="break-words text-sm font-semibold leading-snug text-foreground sm:text-base">{draft.context.company}</p>
+                </ContextInfoRow>
                 {jobLocation && (
-                  <div>
-                    <p className="text-[11px] text-muted-foreground mb-0.5">Localização</p>
-                    <p className="text-sm font-semibold text-foreground">{jobLocation}</p>
-                  </div>
+                  <ContextInfoRow icon={MapPin} label="Localização">
+                    <p className="break-words text-sm font-semibold leading-snug text-foreground sm:text-base">{jobLocation}</p>
+                  </ContextInfoRow>
                 )}
                 {jobContractType && (
-                  <div>
-                    <p className="text-[11px] text-muted-foreground mb-0.5">Tipo de contrato</p>
-                    <p className="text-sm font-semibold text-foreground">{jobContractType}</p>
-                  </div>
+                  <ContextInfoRow icon={FileBadge2} label="Tipo de contrato">
+                    <p className="break-words text-sm font-semibold leading-snug text-foreground sm:text-base">{jobContractType}</p>
+                  </ContextInfoRow>
                 )}
                 {jobWorkMode && (
-                  <div>
-                    <p className="text-[11px] text-muted-foreground mb-0.5">Modalidade</p>
-                    <p className="text-sm font-semibold text-foreground">{jobWorkMode}</p>
-                  </div>
+                  <ContextInfoRow icon={Monitor} label="Modalidade">
+                    <p className="break-words text-sm font-semibold leading-snug text-foreground sm:text-base">{jobWorkMode}</p>
+                  </ContextInfoRow>
                 )}
                 {jobDescription && (
-                  <div>
-                    <p className="text-[11px] text-muted-foreground mb-0.5">Descrição</p>
+                  <ContextInfoRow icon={AlignLeft} label="Descrição">
                     <p
-                      className="text-sm text-foreground leading-relaxed"
+                      className="break-words text-sm leading-relaxed text-foreground/80"
                       style={
                         descriptionIsLong && !descriptionExpanded
                           ? {
@@ -3931,23 +3996,23 @@ function InterviewSetupScreen({
                         {descriptionExpanded ? "Ver menos" : "Ver mais"}
                       </button>
                     )}
-                  </div>
+                  </ContextInfoRow>
                 )}
                 {requirementSections.map((section) => (
-                  <div key={section.title}>
-                    <p className="text-[11px] text-muted-foreground mb-2">{section.title}</p>
-                    <div className="space-y-2">
+                  <ContextInfoRow key={section.title} icon={ListChecks} label={section.title}>
+                    <ul className="space-y-2.5">
                       {section.items.map((requirement) => (
-                        <div key={requirement} className="flex items-start gap-2 text-sm text-foreground">
-                          <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-                          <span>{requirement}</span>
-                        </div>
+                        <li key={requirement} className="flex items-start gap-2.5 text-sm leading-relaxed text-foreground">
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden="true" />
+                          <span className="min-w-0 break-words">{requirement}</span>
+                        </li>
                       ))}
-                    </div>
-                  </div>
+                    </ul>
+                  </ContextInfoRow>
                 ))}
               </div>
             </Card>
+            </div>
 
             <Card className="p-5 sm:p-6">
               <label className="flex items-start gap-3 cursor-pointer">
@@ -3957,16 +4022,16 @@ function InterviewSetupScreen({
                 </span>
               </label>
             </Card>
-          </>
+
+            {setupActions}
+          </div>
         )}
 
-        <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => isInterviewDraftInProgress(draft) ? onCancelInterview?.() : onCancelPreparation?.()}>Cancelar</Btn>
-          <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
-            {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
-          </Btn>
+        <div className={contextReady ? "min-w-0 xl:col-start-1 xl:row-start-2" : undefined}>
+          <SuggestedJobsSection onLinkCopied={handleSuggestedLinkCopied} />
         </div>
-        </div>
+
+        {!contextReady && setupActions}
       </div>
     </AuthLayout>
   );
