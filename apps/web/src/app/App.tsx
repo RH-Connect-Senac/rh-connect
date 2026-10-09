@@ -1,6 +1,6 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useState, useRef, useEffect, useCallback, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -106,11 +106,20 @@ import {
 } from "./router/routes";
 import {
   analyzeJobUrl,
-  evaluateInterviewWithAi,
-  generateInterviewQuestions,
-  type InterviewQuestion,
   type JobInterviewContext,
 } from "./services/interview-context-service";
+import {
+  createRealInterview,
+  generateRealQuestions,
+  getRealInterview,
+  getRealQuestions,
+  isUuid,
+  saveRealAnswer,
+  saveRealEvaluationMode,
+  submitRealInterview,
+  type RealInterview,
+  type RealInterviewQuestion,
+} from "./services/candidate-interviews-service";
 import {
   PROFESSIONAL_AREAS,
   type ProfessionalAreaId,
@@ -142,7 +151,6 @@ import {
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
 import { DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
 import {
-  completeAiEvaluation,
   getAvailableCandidateReports,
   getAverageScore,
   getCandidateInterviews,
@@ -150,7 +158,6 @@ import {
   getInterviewById,
   getReportByInterviewId,
   statusLabelFromInterview,
-  submitInterview,
 } from "./services/interviews-service";
 import {
   clearRememberedLoginEmail,
@@ -308,11 +315,19 @@ function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
 // também importável por `eval-screens.tsx`/`admin-screens.tsx`, sem criar
 // dependência circular com este arquivo. Ver comentário completo lá.
 
+// Pergunta exibida no wizard: vem SEMPRE da API (id = UUID persistido).
+type InterviewQuestion = Pick<RealInterviewQuestion, "id" | "type" | "text">;
+
+// ATENÇÃO (Fase 2B): este rascunho em localStorage é SOMENTE progresso
+// temporário de UX (retomar a tela/pergunta). A fonte da verdade da entrevista
+// (id, perguntas, respostas, modalidade, status, envio) é o Back/PostgreSQL:
+// `interviewId` e `questions[].id` são os da API e as respostas são
+// regravadas/relidas do Back (ver InterviewScreen).
 type InterviewDraft = {
   interviewId?: string;
   context: JobInterviewContext | null;
   questions: InterviewQuestion[];
-  answers: Record<number, string>;
+  answers: Record<string, string>;
   evaluationMode: EvaluationMode | null;
 };
 
@@ -420,10 +435,23 @@ function normalizeStoredInterviewDraftEntry(value: unknown): StoredInterviewDraf
     context: draft.context ?? null,
     questions: Array.isArray(draft.questions) ? draft.questions : [],
     answers: draft.answers && typeof draft.answers === "object" && !Array.isArray(draft.answers)
-      ? draft.answers as Record<number, string>
+      ? draft.answers as Record<string, string>
       : {},
     evaluationMode: draft.evaluationMode === "AI" || draft.evaluationMode === "HUMAN" ? draft.evaluationMode : null,
   };
+
+  // Rascunho legado (ids numéricos 1..5 / sem Interview real) não é mais
+  // aproveitado: perguntas só são válidas se vieram da API (UUID) e ligadas a
+  // um interviewId real.
+  if (normalizedDraft.interviewId && !isUuid(normalizedDraft.interviewId)) {
+    normalizedDraft.interviewId = undefined;
+  }
+  if (
+    normalizedDraft.questions.length > 0 &&
+    (!normalizedDraft.interviewId || normalizedDraft.questions.some((question) => !isUuid(question?.id)))
+  ) {
+    return null;
+  }
 
   if (!hasActiveInterviewDraft(normalizedDraft)) return null;
 
@@ -2490,6 +2518,14 @@ function InterviewScreen({
   const [validationMessage, setValidationMessage] = useState("");
   const [dictating, setDictating] = useState(false);
   const advancingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [syncState, setSyncState] = useState<"loading" | "ready" | "error">(draft.interviewId ? "loading" : "ready");
+  const [syncError, setSyncError] = useState("");
+  // Última resposta CONFIRMADA pelo Back, por pergunta (evita PUT desnecessário).
+  const persistedAnswersRef = useRef<Record<string, string>>({});
+  const localAnswersRef = useRef(draft.answers);
+  localAnswersRef.current = draft.answers;
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
   const question = questions[qIdx];
   const answer = question ? draft.answers[question.id] ?? "" : "";
@@ -2508,6 +2544,87 @@ function InterviewScreen({
     setQIdx((current) => current === targetQuestionIndex ? current : targetQuestionIndex);
   }, [targetQuestionIndex]);
 
+  // Ao entrar na etapa: relê perguntas/respostas do Back (fonte da verdade). Se o
+  // rascunho local tiver texto que o Back ainda não tem (retomada), regrava
+  // antes de liberar a tela; qualquer falha bloqueia com opção de tentar de novo.
+  const interviewIdForSync = draft.interviewId;
+  const syncWithServer = useCallback(async () => {
+    if (!interviewIdForSync) return;
+    setSyncState("loading");
+    setSyncError("");
+    const loaded = await getRealQuestions(interviewIdForSync);
+    if (!loaded.ok) {
+      setSyncError(loaded.message);
+      setSyncState("error");
+      return;
+    }
+    const serverAnswers: Record<string, string> = {};
+    loaded.data.forEach((item) => {
+      persistedAnswersRef.current[item.id] = item.answer ?? "";
+      if (item.answer) serverAnswers[item.id] = item.answer;
+    });
+    for (const item of loaded.data) {
+      const local = normalizeInterviewAnswer(localAnswersRef.current[item.id] ?? "").trim();
+      if (!local || serverAnswers[item.id]) continue;
+      const saved = await saveRealAnswer(interviewIdForSync, item.id, local);
+      if (!saved.ok) {
+        setSyncError(saved.message);
+        setSyncState("error");
+        return;
+      }
+      persistedAnswersRef.current[item.id] = saved.data.answer ?? "";
+      serverAnswers[item.id] = saved.data.answer ?? local;
+    }
+    setDraft((current) => ({
+      ...current,
+      questions: loaded.data.map(({ id, type, text }) => ({ id, type, text })),
+      answers: serverAnswers,
+    }));
+    setSyncState("ready");
+  }, [interviewIdForSync, setDraft]);
+
+  useEffect(() => {
+    void syncWithServer();
+  }, [syncWithServer]);
+
+  // Grava a resposta da pergunta no Back. Só retorna true quando o Back confirmou
+  // (ou já estava igual): em erro NÃO avança e mostra a mensagem.
+  const persistAnswer = async (target: InterviewQuestion, value: string): Promise<boolean> => {
+    const interviewId = draft.interviewId;
+    if (!interviewId) {
+      setSaveError("Entrevista não encontrada. Volte ao início e tente novamente.");
+      return false;
+    }
+    const normalized = normalizeInterviewAnswer(value).trim();
+    if (normalized === (persistedAnswersRef.current[target.id] ?? "")) {
+      setSaveError("");
+      return true;
+    }
+    const result = await saveRealAnswer(interviewId, target.id, normalized);
+    if (!result.ok) {
+      setSaveError(result.message);
+      toast.error(result.message);
+      return false;
+    }
+    persistedAnswersRef.current[target.id] = result.data.answer ?? "";
+    setSaveError("");
+    return true;
+  };
+
+  // Executa uma ação que sai da pergunta atual só depois de salvá-la.
+  const withSavedAnswer = async (action: () => void) => {
+    if (advancingRef.current || !question) return;
+    advancingRef.current = true;
+    setSaving(true);
+    stopDictation();
+    try {
+      if (await persistAnswer(question, answer)) action();
+    } finally {
+      advancingRef.current = false;
+      setSaving(false);
+    }
+  };
+
   useEffect(() => {
     onQuestionIndexChange?.(qIdx);
   }, [onQuestionIndexChange, qIdx]);
@@ -2525,6 +2642,7 @@ function InterviewScreen({
       answers: { ...current.answers, [question.id]: normalizedValue },
     }));
     if (isValidInterviewAnswer(normalizedValue)) setValidationMessage("");
+    setSaveError("");
   };
 
   const stopDictation = () => {
@@ -2604,34 +2722,32 @@ function InterviewScreen({
     }
   };
 
-  const goNext = () => {
+  // Avançar = salvar a resposta atual no Back e só então mudar de pergunta.
+  const goNext = async () => {
     if (advancingRef.current) return;
     if (!isValidInterviewAnswer(answer)) {
       setValidationMessage("Responda a pergunta atual antes de avançar.");
       toast.error("Responda a pergunta atual antes de avançar.");
       return;
     }
-    advancingRef.current = true;
-    stopDictation();
-    if (qIdx < questions.length - 1) {
-      setQIdx(qIdx + 1);
-      setValidationMessage("");
-    } else {
-      const pendingIndex = getFirstPendingQuestionIndex(draft);
-      if (pendingIndex >= 0) {
-        setQIdx(pendingIndex);
-        setValidationMessage("Responda todas as perguntas antes de revisar.");
-        toast.error("Responda todas as perguntas antes de revisar.");
+    await withSavedAnswer(() => {
+      if (qIdx < questions.length - 1) {
+        setQIdx(qIdx + 1);
+        setValidationMessage("");
       } else {
-        onNavigate("review");
+        const pendingIndex = getFirstPendingQuestionIndex(draft);
+        if (pendingIndex >= 0) {
+          setQIdx(pendingIndex);
+          setValidationMessage("Responda todas as perguntas antes de revisar.");
+          toast.error("Responda todas as perguntas antes de revisar.");
+        } else {
+          onNavigate("review");
+        }
       }
-    }
-    window.setTimeout(() => {
-      advancingRef.current = false;
-    }, 250);
+    });
   };
 
-  if (!draft.context || !question) {
+  if (!draft.context || !question || !draft.interviewId) {
     return <DraftWizardGuard current="interview" onNavigate={onNavigate} />;
   }
 
@@ -2650,12 +2766,33 @@ function InterviewScreen({
     );
   }
 
+  if (syncState !== "ready") {
+    return (
+      <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
+        <Card className="w-full max-w-2xl p-6 text-center">
+          {syncState === "loading" ? (
+            <>
+              <Spinner />
+              <p className="text-sm text-muted-foreground mt-3">Carregando sua entrevista...</p>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+              <h3 className="font-bold text-foreground mb-2">Não foi possível carregar sua entrevista</h3>
+              <p className="text-sm text-muted-foreground mb-5">{syncError}</p>
+              <Btn variant="primary" onClick={() => void syncWithServer()}>Tentar novamente</Btn>
+            </>
+          )}
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   // Navegação entre perguntas: regra única, usada pelo painel detalhado (sm+) e pelo compacto (mobile).
   const canOpenQuestionAt = (item: (typeof questions)[number], index: number) =>
     index === qIdx || isValidInterviewAnswer(draft.answers[item.id]);
   const openQuestion = (index: number) => {
-    stopDictation();
-    setQIdx(index);
+    void withSavedAnswer(() => setQIdx(index));
   };
   const answeredCount = questions.filter((item) => isValidInterviewAnswer(draft.answers[item.id])).length;
 
@@ -2703,6 +2840,11 @@ function InterviewScreen({
             </div>
             {validationMessage && (
               <p className="text-xs text-destructive mt-3 font-medium">{validationMessage}</p>
+            )}
+            {saveError && (
+              <p role="alert" className="text-xs text-destructive mt-3 font-medium">
+                {saveError} Sua resposta ainda não foi salva; clique em avançar para tentar novamente.
+              </p>
             )}
             {speechError && (
               <Alert variant="warning" className="mt-4 flex gap-3 rounded-2xl p-4">
@@ -2789,11 +2931,11 @@ function InterviewScreen({
           </Card>
 
           <div className="flex gap-3">
-            <Btn variant="outline" onClick={() => { stopDictation(); setQIdx(Math.max(0, qIdx - 1)); }} disabled={qIdx === 0}>
+            <Btn variant="outline" onClick={() => { const previous = Math.max(0, qIdx - 1); void withSavedAnswer(() => setQIdx(previous)); }} disabled={qIdx === 0 || saving}>
               Anterior
             </Btn>
-            <Btn variant="primary" className="flex-1" onClick={goNext}>
-              {qIdx < questions.length - 1 ? "Próxima" : "Revisar"} <ArrowRight className="w-4 h-4" />
+            <Btn variant="primary" className="flex-1" onClick={() => void goNext()} disabled={saving}>
+              {saving ? <><Spinner /> Salvando...</> : <>{qIdx < questions.length - 1 ? "Próxima" : "Revisar"} <ArrowRight className="w-4 h-4" /></>}
             </Btn>
           </div>
         </div>
@@ -3693,6 +3835,7 @@ function InterviewSetupScreen({
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(Boolean(draft.context));
   const [generating, setGenerating] = useState(false);
+  const continuingRef = useRef(false);
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
@@ -3721,7 +3864,8 @@ function InterviewSetupScreen({
     setDescriptionExpanded(false);
     try {
       const context = await analyzeJobUrl(url);
-      setDraft((current) => ({ ...current, context, questions: [], answers: {}, evaluationMode: null }));
+      // Novo contexto => nova entrevista real (o interviewId anterior é descartado).
+      setDraft((current) => ({ ...current, interviewId: undefined, context, questions: [], answers: {}, evaluationMode: null }));
       setStatus("success");
     } catch (err) {
       setStatus("error");
@@ -3729,23 +3873,45 @@ function InterviewSetupScreen({
     }
   };
 
+  // Contexto confirmado: cria a Interview REAL (POST /interviews) UMA vez e gera
+  // as perguntas persistidas (idempotente). O id nunca nasce no navegador e o
+  // candidato vem do JWT. `continuingRef` bloqueia clique duplo; se o
+  // interviewId já existe (voltar/avançar), ele é reaproveitado.
   const handleContinue = async () => {
+    if (continuingRef.current) return;
     if (!draft.context || !confirmed) {
       toast.error("Confirme o contexto da vaga antes de continuar.");
       return;
     }
+    continuingRef.current = true;
     setGenerating(true);
     try {
-      const questions = await generateInterviewQuestions(draft.context);
-      setDraft((current) => ({ ...current, questions, answers: {}, evaluationMode: null }));
+      let interviewId = draft.interviewId;
+      if (!interviewId) {
+        const created = await createRealInterview(draft.context);
+        if (!created.ok) {
+          toast.error(created.message);
+          return;
+        }
+        interviewId = created.data.id;
+        const createdId = interviewId;
+        setDraft((current) => ({ ...current, interviewId: createdId }));
+      }
+      const generated = await generateRealQuestions(interviewId);
+      if (!generated.ok) {
+        toast.error(generated.message);
+        return;
+      }
+      const readyInterviewId = interviewId;
+      const questions: InterviewQuestion[] = generated.data.map(({ id, type, text }) => ({ id, type, text }));
+      const answers: Record<string, string> = {};
+      generated.data.forEach((question) => {
+        if (question.answer) answers[question.id] = question.answer;
+      });
+      setDraft((current) => ({ ...current, interviewId: readyInterviewId, questions, answers, evaluationMode: null }));
       onNavigate("consent");
-    } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : "Não foi possível gerar as perguntas da entrevista. Tente novamente.",
-      );
     } finally {
+      continuingRef.current = false;
       setGenerating(false);
     }
   };
@@ -4073,13 +4239,34 @@ function EvaluationModeScreen({
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
 }) {
   const evaluationMode = draft.evaluationMode;
+  const [savingMode, setSavingMode] = useState(false);
+  const savingModeRef = useRef(false);
 
-  if (!draft.context || draft.questions.length === 0) {
+  if (!draft.context || draft.questions.length === 0 || !draft.interviewId) {
     return <DraftWizardGuard current="evaluation-mode" onNavigate={onNavigate} />;
   }
 
   const selectEvaluationMode = (mode: EvaluationMode) => {
     setDraft((current) => ({ ...current, evaluationMode: mode }));
+  };
+
+  // A escolha só vale depois de gravada no Back (PATCH evaluation-mode); a cópia
+  // no React é apenas para a UI. Em erro não avança.
+  const handleContinueToPrep = async () => {
+    if (!evaluationMode || savingModeRef.current || !draft.interviewId) return;
+    savingModeRef.current = true;
+    setSavingMode(true);
+    try {
+      const saved = await saveRealEvaluationMode(draft.interviewId, evaluationMode);
+      if (!saved.ok) {
+        toast.error(saved.message);
+        return;
+      }
+      onNavigate("prep");
+    } finally {
+      savingModeRef.current = false;
+      setSavingMode(false);
+    }
   };
 
   return (
@@ -4149,11 +4336,11 @@ function EvaluationModeScreen({
           <Btn variant="outline" onClick={() => onNavigate("consent")}>Voltar</Btn>
           <Btn
             variant="primary"
-            disabled={!evaluationMode}
-            onClick={() => onNavigate("prep")}
+            disabled={!evaluationMode || savingMode}
+            onClick={() => void handleContinueToPrep()}
             className="flex-1"
           >
-            Continuar para orientações <ArrowRight className="w-4 h-4" />
+            {savingMode ? <><Spinner /> Salvando...</> : <>Continuar para orientações <ArrowRight className="w-4 h-4" /></>}
           </Btn>
         </div>
       </div>
@@ -4166,12 +4353,11 @@ function EvaluationModeScreen({
 function InterviewConfirmScreen({
   onNavigate,
   draft,
-  session,
   onDraftCompleted,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
-  session: MockAuthSession;
+  session?: MockAuthSession;
   onDraftCompleted?: () => void;
 }) {
   const routerNavigate = useNavigate();
@@ -4179,10 +4365,9 @@ function InterviewConfirmScreen({
   const sendingRef = useRef(false);
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
-  const candidateIdentity = getCandidateIdentity(session);
   const evaluationMode = draft.evaluationMode;
 
-  if (!draft.context || draft.questions.length === 0) {
+  if (!draft.context || draft.questions.length === 0 || !draft.interviewId) {
     return <DraftWizardGuard current="interview-confirm" onNavigate={onNavigate} />;
   }
 
@@ -4200,42 +4385,19 @@ function InterviewConfirmScreen({
     }
     sendingRef.current = true;
     setSending(true);
-    const answers = draft.questions.map((question) => ({
-      questionId: question.id,
-      questionText: question.text,
-      questionType: question.type,
-      answer: draft.answers[question.id]?.trim() ?? "",
-    }));
 
-    try {
-      const aiEvaluation = evaluationMode === "AI"
-        ? await evaluateInterviewWithAi(draft.context!, answers)
-        : null;
-
-      const interview = submitInterview({
-        candidateId: candidateIdentity.id,
-        candidateName: candidateIdentity.name,
-        candidateEmail: candidateIdentity.email,
-        context: draft.context!,
-        evaluationMode,
-        answers,
-      });
-
-      if (aiEvaluation) {
-        completeAiEvaluation(interview.id, aiEvaluation);
-      }
-
-      onDraftCompleted?.();
-      sendingRef.current = false;
-      setSending(false);
-      routerNavigate(evaluationMode === "AI"
-        ? `/candidate/reports/${interview.id}`
-        : `/candidate/interviews/${interview.id}/success`);
-    } catch (error) {
-      sendingRef.current = false;
-      setSending(false);
-      toast.error(error instanceof Error ? error.message : "Não foi possível enviar a entrevista. Tente novamente.");
+    // Envio REAL: POST /interviews/:id/submit. HUMAN => PENDING_ASSIGNMENT (fila do
+    // Admin); AI => PENDING_AI_EVALUATION. Nenhuma avaliação por IA é executada aqui
+    // (Fase 3 pausada) e nada é gravado em localStorage como entrevista oficial.
+    const result = await submitRealInterview(draft.interviewId!, evaluationMode);
+    sendingRef.current = false;
+    setSending(false);
+    if (!result.ok) {
+      toast.error(result.message);
+      return;
     }
+    onDraftCompleted?.();
+    routerNavigate(`/candidate/interviews/${result.data.id}/success`);
   };
 
   return (
@@ -4350,8 +4512,48 @@ function InterviewConfirmScreen({
 function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
-  const interview = getInterviewById(id);
-  if (!interview) {
+  const [loadState, setLoadState] = useState<{ status: "loading" } | { status: "error"; message: string } | { status: "ready"; interview: RealInterview }>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    if (!id) {
+      setLoadState({ status: "error", message: "Entrevista não encontrada." });
+      return;
+    }
+    setLoadState({ status: "loading" });
+    void getRealInterview(id).then((result) => {
+      if (cancelled) return;
+      setLoadState(result.ok ? { status: "ready", interview: result.data } : { status: "error", message: result.message });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, reloadKey]);
+  if (loadState.status === "loading") {
+    return (
+      <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
+        <Card className="w-full max-w-xl p-10 text-center">
+          <Spinner />
+          <p className="text-sm text-muted-foreground mt-3">Carregando os dados do envio...</p>
+        </Card>
+      </AuthLayout>
+    );
+  }
+  if (loadState.status === "error") {
+    return (
+      <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
+        <EmptyState
+          icon={MessageSquare}
+          title="Não foi possível carregar o envio"
+          description={loadState.message}
+          className="w-full max-w-xl p-10"
+          action={<Btn variant="primary" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</Btn>}
+        />
+      </AuthLayout>
+    );
+  }
+  const interview = loadState.interview;
+  if (interview.status === "IN_PROGRESS") {
     return (
       <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
         <EmptyState
@@ -4406,7 +4608,7 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">{interview.context.title}</p>
+                <p className="text-sm font-semibold text-foreground">{interview.title}</p>
               </div>
               <div>
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>

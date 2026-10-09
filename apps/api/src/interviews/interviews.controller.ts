@@ -1,0 +1,70 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { CreateInterviewDto } from './dto/create-interview.dto';
+import { SetEvaluationModeDto } from './dto/set-evaluation-mode.dto';
+import { SubmitInterviewDto } from './dto/submit-interview.dto';
+import { InterviewsService } from './interviews.service';
+
+function userIdOf(req: Request): number {
+  return (req.user as { id: number }).id;
+}
+
+// `RolesGuard` lê o metadata `roles` apenas do handler (não da classe), por
+// isso `@Roles('CANDIDATE')` fica em cada rota. O dono da entrevista é sempre
+// o usuário do JWT: nenhum candidateId é aceito do cliente.
+@Controller('interviews')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class InterviewsController {
+  constructor(private readonly interviewsService: InterviewsService) {}
+
+  @Post()
+  @Roles('CANDIDATE')
+  create(@Req() req: Request, @Body() dto: CreateInterviewDto) {
+    return this.interviewsService.create(userIdOf(req), dto);
+  }
+
+  @Get(':id')
+  @Roles('CANDIDATE')
+  getById(@Req() req: Request, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.interviewsService.getOwned(userIdOf(req), id);
+  }
+
+  @Patch(':id/evaluation-mode')
+  @Roles('CANDIDATE')
+  setEvaluationMode(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: SetEvaluationModeDto,
+  ) {
+    return this.interviewsService.setEvaluationMode(
+      userIdOf(req),
+      id,
+      dto.evaluationMode,
+    );
+  }
+
+  @Post(':id/submit')
+  @HttpCode(200)
+  @Roles('CANDIDATE')
+  submit(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: SubmitInterviewDto,
+  ) {
+    return this.interviewsService.submit(userIdOf(req), id, dto.evaluationMode);
+  }
+}

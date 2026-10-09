@@ -8,6 +8,8 @@ import { FeedbackModule } from './feedback/feedback.module';
 import { ExternalResourcesModule } from './external-resources/external-resources.module';
 import { AdminCandidatesModule } from './admin-candidates/admin-candidates.module';
 import { CandidateProfileModule } from './candidate-profile/candidate-profile.module';
+import { InterviewsModule } from './interviews/interviews.module';
+import { AdminInterviewsModule } from './admin-interviews/admin-interviews.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { CandidateProfileModule } from './candidate-profile/candidate-profile.mo
     FeedbackModule,
     AdminCandidatesModule,
     CandidateProfileModule,
+    InterviewsModule,
+    AdminInterviewsModule,
   ],
   controllers: [AppController],
   providers: [],

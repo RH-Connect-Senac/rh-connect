@@ -1,6 +1,6 @@
 /** RH Connect — Telas do Administrador */
 
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useContext, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
 import type { MockAccountStatus } from "../services/auth-service";
@@ -14,7 +14,13 @@ import {
   type AdminCandidatesList,
 } from "../services/admin-candidates-service";
 import {
-  assignInterview,
+  assignInterviewToEvaluator,
+  listAdminEvaluators,
+  listPendingAssignmentInterviews,
+  type AdminEvaluator,
+  type AdminQueueInterview,
+} from "../services/admin-interviews-service";
+import {
   getAdminVisibleInterviews,
   getAssignmentByInterviewId,
   getAverageScore,
@@ -1012,26 +1018,84 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
 // ─── Screen: Atribuição de Avaliações ────────────────────────────────────────
 
 export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
+  // Fila e avaliadores vêm exclusivamente da API (entrevistas HUMAN em
+  // PENDING_ASSIGNMENT e avaliadores reais em `evaluator_profile`). Nada vem do
+  // armazenamento local nem de mock. Sem fallback: carregando, erro ou dado real.
   const [selected, setSelected] = useState<string | null>(null);
-  const [, refresh] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  const [remote, setRemote] = useState<
+    AdminRemoteState<{ interviews: AdminQueueInterview[]; evaluators: AdminEvaluator[] }>
+  >({ status: "loading" });
+  const [assigningEvaluatorId, setAssigningEvaluatorId] = useState<number | null>(null);
+  const [assignError, setAssignError] = useState("");
+  const [assignNotice, setAssignNotice] = useState("");
+  const assigningRef = useRef(false);
 
-  const realPending = getPendingAdminInterviews().map((interview) => ({
-    id: interview.id,
-    candidate: interview.candidateName,
-    job: interview.context.title,
-    date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
-    realId: interview.id,
-  }));
-  const pending = realPending;
+  useEffect(() => {
+    let cancelled = false;
+    setRemote({ status: "loading" });
 
-  const handleAssign = (evaluatorId: string) => {
-    if (!selected) return;
-    const selectedInterview = pending.find((item) => item.id === selected);
-    if (selectedInterview?.realId) {
-      assignInterview(selectedInterview.realId, evaluatorId);
-      refresh((value) => value + 1);
+    Promise.all([listPendingAssignmentInterviews(), listAdminEvaluators()]).then(
+      ([queueResult, evaluatorsResult]) => {
+        if (cancelled) return;
+        if (!queueResult.ok) {
+          setRemote({ status: "error", message: queueResult.message });
+        } else if (!evaluatorsResult.ok) {
+          setRemote({ status: "error", message: evaluatorsResult.message });
+        } else {
+          setRemote({
+            status: "success",
+            data: { interviews: queueResult.data, evaluators: evaluatorsResult.data },
+          });
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  const reload = () => setAttempt((value) => value + 1);
+
+  const pending =
+    remote.status === "success"
+      ? remote.data.interviews.map((interview) => ({
+          id: interview.id,
+          candidate: interview.candidate.name,
+          job: interview.jobTitle,
+          date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
+        }))
+      : [];
+  // Somente avaliadores com conta ACTIVE podem receber entrevistas (INVITED,
+  // ex.: convite pendente, não aparece como opção de atribuição).
+  const eligibleEvaluators =
+    remote.status === "success"
+      ? remote.data.evaluators.filter((evaluator) => evaluator.eligible)
+      : [];
+
+  const handleAssign = async (evaluator: AdminEvaluator) => {
+    if (!selected || assigningRef.current) return;
+    assigningRef.current = true;
+    setAssigningEvaluatorId(evaluator.id);
+    setAssignError("");
+    setAssignNotice("");
+
+    const result = await assignInterviewToEvaluator(selected, evaluator.id);
+
+    assigningRef.current = false;
+    setAssigningEvaluatorId(null);
+
+    if (result.ok) {
+      setAssignNotice(`Entrevista atribuída a ${evaluator.name}.`);
+    } else {
+      setAssignError(result.message);
     }
+
+    // Em sucesso ou conflito (ex.: outro Admin atribuiu antes) a fila é
+    // recarregada da API; a tela nunca "adivinha" o novo estado localmente.
     setSelected(null);
+    reload();
   };
 
   return (
@@ -1039,68 +1103,111 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
       title="Atribuição de Avaliações"
       subtitle="Associe entrevistas pendentes a avaliadores disponíveis">
       <div className="w-full space-y-4">
-        <Alert variant="warning" className="flex items-start gap-3 p-4">
-          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-700">{pending.length} entrevista{pending.length !== 1 ? "s" : ""} aguardando atribuição.</p>
-        </Alert>
+        {remote.status === "loading" && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+            <Spinner size="md" /> Carregando fila de atribuição...
+          </div>
+        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {/* Pending interviews */}
-          <div>
-            <h3 className="font-bold text-foreground mb-3">Entrevistas Pendentes</h3>
-            <div className="space-y-2.5">
-              {pending.length === 0 && (
-                <EmptyState
-                  icon={CheckCircle}
-                  title="Nenhuma entrevista pendente"
-                  description="Quando um candidato enviar uma entrevista, ela aparecerá aqui para atribuição."
-                />
-              )}
-              {pending.map(i => (
-                <button key={i.id} type="button" onClick={() => setSelected(i.id === selected ? null : i.id)} aria-pressed={selected === i.id}
-                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i.id ? "border-primary bg-blue-50" : "border-border bg-white hover:border-primary/30"}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-foreground">{i.candidate}</p>
-                      <p className="text-sm text-muted-foreground">{i.job} · {i.date}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {selected === i.id ? <Check className="w-4 h-4 text-primary" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-                    </div>
-                  </div>
-                </button>
-              ))}
+        {remote.status === "error" && (
+          <Alert variant="error" className="flex items-start gap-3 p-4">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm">{remote.message}</p>
+              <Btn variant="outline" size="sm" className="mt-3" onClick={reload}>
+                <RefreshCw className="w-3.5 h-3.5" /> Tentar novamente
+              </Btn>
             </div>
-          </div>
+          </Alert>
+        )}
 
-          {/* Evaluators */}
-          <div>
-            <h3 className="font-bold text-foreground mb-3">Avaliadores Disponíveis</h3>
-            {!selected ? (
-              <div className="p-8 border-2 border-dashed border-border rounded-xl text-center text-muted-foreground">
-                <p className="text-sm">Selecione uma entrevista à esquerda para atribuir</p>
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {EVALUATORS.filter(e => e.status === "Ativo").map(ev => (
-                  <button key={ev.id} onClick={() => handleAssign(ev.id)}
-                    className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
-                        {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+        {assignNotice && (
+          <Alert variant="success" className="flex items-start gap-3 p-4" role="status">
+            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="text-sm">{assignNotice}</p>
+          </Alert>
+        )}
+
+        {assignError && (
+          <Alert variant="error" className="flex items-start gap-3 p-4" role="alert">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="text-sm">{assignError}</p>
+          </Alert>
+        )}
+
+        {remote.status === "success" && (
+          <>
+            <Alert variant="warning" className="flex items-start gap-3 p-4">
+              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-700">{pending.length} entrevista{pending.length !== 1 ? "s" : ""} aguardando atribuição.</p>
+            </Alert>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Pending interviews */}
+              <div>
+                <h3 className="font-bold text-foreground mb-3">Entrevistas Pendentes</h3>
+                <div className="space-y-2.5">
+                  {pending.length === 0 && (
+                    <EmptyState
+                      icon={CheckCircle}
+                      title="Nenhuma entrevista pendente"
+                      description="Quando um candidato enviar uma entrevista, ela aparecerá aqui para atribuição."
+                    />
+                  )}
+                  {pending.map(i => (
+                    <button key={i.id} type="button" onClick={() => setSelected(i.id === selected ? null : i.id)} aria-pressed={selected === i.id}
+                      className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i.id ? "border-primary bg-blue-50" : "border-border bg-white hover:border-primary/30"}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-foreground">{i.candidate}</p>
+                          <p className="text-sm text-muted-foreground">{i.job} · {i.date}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {selected === i.id ? <Check className="w-4 h-4 text-primary" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-foreground">{ev.name}</p>
-                        <p className="text-xs text-muted-foreground">{ev.area} · {ev.pending} pendentes</p>
-                      </div>
-                      <Badge variant="info">Média {ev.done > 0 ? ev.avg : "—"}</Badge>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
-          </div>
-        </div>
+
+              {/* Evaluators */}
+              <div>
+                <h3 className="font-bold text-foreground mb-3">Avaliadores Disponíveis</h3>
+                {!selected ? (
+                  <div className="p-8 border-2 border-dashed border-border rounded-xl text-center text-muted-foreground">
+                    <p className="text-sm">Selecione uma entrevista à esquerda para atribuir</p>
+                  </div>
+                ) : eligibleEvaluators.length === 0 ? (
+                  <EmptyState
+                    icon={UserCheck}
+                    title="Nenhum avaliador ativo"
+                    description="Somente avaliadores com conta ativa podem receber entrevistas."
+                  />
+                ) : (
+                  <div className="space-y-2.5">
+                    {eligibleEvaluators.map(ev => (
+                      <button key={ev.id} type="button" onClick={() => handleAssign(ev)}
+                        disabled={assigningEvaluatorId !== null}
+                        className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all disabled:opacity-60 disabled:cursor-not-allowed">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
+                            {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-foreground">{ev.name}</p>
+                            <p className="text-xs text-muted-foreground">{ev.area ?? "Área não informada"} · {ev.assignedCount} pendente{ev.assignedCount !== 1 ? "s" : ""}</p>
+                          </div>
+                          {assigningEvaluatorId === ev.id && <Spinner />}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </AdminLayout>
   );
