@@ -3,18 +3,18 @@ import type { LegalDocument } from "./legal-types";
 export const privacyPolicy: LegalDocument = {
   title: "Política de Privacidade",
   subtitle: "Saiba como o RH Connect coleta, utiliza, armazena e protege seus dados.",
-  updatedAt: "14/09/2026",
-  closingStatement: "Li, compreendi e concordo com a Política de Privacidade.",
+  updatedAt: "[DATA]",
+  closingStatement: "Li, compreendi e concordo com os termos acima.",
   sections: [
     {
       id: "introducao", navTitle: "Introdução", blocks: [
         { type: "paragraph", text: 'Esta Política de Privacidade ("Política") descreve como [NOME DA EMPRESA], inscrita no CNPJ sob o nº [CNPJ], com sede em [ENDEREÇO] ("Empresa"), coleta, utiliza, armazena, compartilha e protege os dados pessoais de usuários ("Usuário") da plataforma RH Connect ("Plataforma"), em conformidade com a Lei Geral de Proteção de Dados Pessoais – LGPD (Lei nº 13.709/2018), o Marco Civil da Internet (Lei nº 12.965/2014), o Código de Defesa do Consumidor e as normas e orientações da Autoridade Nacional de Proteção de Dados (ANPD).' },
-        { type: "paragraph", text: "Esta Política integra os Termos de Uso do RH Connect e deve ser lida em conjunto com eles, com o Termo de Consentimento para Tratamento de Dados, o Termo de Consentimento para Treinamento da Inteligência Artificial, a Política de Retenção e Exclusão de Dados, a Política de Segurança da Informação, a Política de Cookies e a Política de Direitos do Titular dos Dados." },
+        { type: "paragraph", text: "Esta Política integra os Termos de Uso da RH Connect e deve ser lida em conjunto com eles, com o Termo de Consentimento para Tratamento de Dados, o Termo de Consentimento para Treinamento da Inteligência Artificial, a Política de Retenção e Exclusão de Dados, a Política de Segurança da Informação, a Política de Cookies e a Política de Direitos do Titular dos Dados." },
       ],
     },
     {
       id: "definicoes", navTitle: "Definições", legalTitle: "CAPÍTULO I – DEFINIÇÕES", blocks: [
-        { type: "paragraph", text: "Art. 1º Para os efeitos desta Política, aplicam-se as definições constantes do art. 1º dos Termos de Uso do RH Connect, além das seguintes:" },
+        { type: "paragraph", text: "Art. 1º Para os efeitos desta Política, aplicam-se as definições constantes do art. 1º dos Termos de Uso da RH Connect, além das seguintes:" },
         { type: "definitions", items: [
           { term: "1.1. Titular", description: "pessoa natural a quem se referem os dados pessoais tratados pela Empresa;" },
           { term: "1.2. Tratamento", description: "toda operação realizada com dados pessoais, como coleta, produção, recepção, classificação, utilização, acesso, reprodução, transmissão, distribuição, processamento, arquivamento, armazenamento, eliminação, avaliação, controle, modificação, comunicação, transferência, difusão ou extração, nos termos do art. 5º, X, da LGPD;" },
@@ -28,17 +28,16 @@ export const privacyPolicy: LegalDocument = {
     {
       id: "dados-coletados", navTitle: "Dados coletados", legalTitle: "CAPÍTULO II – DADOS COLETADOS", blocks: [
         { type: "paragraph", text: "Art. 2º A Plataforma poderá coletar as seguintes categorias de dados pessoais, mediante base legal aplicável:" },
-        { type: "chips", title: "Quais dados podem ser coletados", items: ["Nome completo", "Nome de usuário", "CPF, quando necessário", "Data de nascimento", "E-mail", "Telefone", "Endereço IP", "Navegador e sistema operacional", "Informações do dispositivo", "Cookies e identificadores online", "Localização, quando autorizada", "Logs", "Metadados de uso", "Currículo", "Mensagens e prompts", "Respostas das entrevistas", "Arquivos e documentos", "Fotografias", "Vídeos e gravações de entrevistas", "Gravações de voz", "Feedbacks", "Histórico de entrevistas e utilização"] },
+        { type: "chips", title: "Quais dados podem ser coletados", items: ["Nome completo", "Nome de usuário", "E-mail", "Endereço IP", "Navegador e sistema operacional", "Informações do dispositivo", "Cookies e identificadores online", "Localização, quando autorizada", "Logs", "Metadados de uso", "Currículo", "Mensagens e prompts", "Respostas das entrevistas", "Arquivos e documentos", "Fotografias", "Gravações de voz", "Feedbacks", "Histórico de entrevistas e utilização"] },
         { type: "paragraph", text: "2.1. Dados cadastrais:" },
-        { type: "list", items: ["a) nome completo;", "b) nome de usuário;", "c) CPF (quando necessário);", "d) data de nascimento;", "e) e-mail;", "f) telefone."] },
+        { type: "list", items: ["a) nome completo;", "b) nome de usuário;", "c) e-mail."] },
         { type: "paragraph", text: "2.2. Dados técnicos e de navegação:" },
         { type: "list", items: ["a) endereço IP;", "b) navegador e sistema operacional;", "c) informações do dispositivo;", "d) cookies e identificadores online;", "e) localização, quando autorizada pelo Usuário;", "f) registros de acesso (logs);", "g) metadados de uso."] },
         { type: "paragraph", text: "2.3. Conteúdo enviado pelo Usuário:" },
-        { type: "list", items: ["a) currículo;", "b) mensagens e prompts enviados à IA;", "c) respostas geradas nas Entrevistas Simuladas;", "d) arquivos e documentos anexados;", "e) fotografias;", "f) vídeos e gravações de entrevistas;", "g) gravações de voz;", "h) feedbacks enviados pelo Usuário;", "i) histórico de entrevistas e de utilização da Plataforma."] },
-        { type: "paragraph", text: "§1º Gravações de voz e vídeo enviadas nas Entrevistas Simuladas podem conter dados biométricos (voz, imagem facial). Nesses casos, a Empresa tratará tais dados como potencialmente sensíveis, adotando salvaguardas reforçadas e, quando exigido pela LGPD, consentimento específico e destacado, nos termos do Termo de Consentimento para Tratamento de Dados.", emphasis: "notice" },
+        { type: "list", items: ["a) currículo;", "b) mensagens e prompts enviados à IA;", "c) respostas geradas nas Entrevistas Simuladas;", "d) arquivos e documentos anexados;", "e) fotografias;", "f) gravações de voz;", "g) feedbacks enviados pelo Usuário;", "h) histórico de entrevistas e de utilização da Plataforma."] },
+        { type: "paragraph", text: "§1º Gravações de voz enviadas nas Entrevistas Simuladas podem conter dados biométricos (padrão de voz). Nesses casos, a Empresa trata tais dados como dados sensíveis, nos termos do art. 5º, II, da LGPD, adotando salvaguardas reforçadas e consentimento específico e destacado, nos termos do Termo de Consentimento para Tratamento de Dados.", emphasis: "notice" },
         { type: "paragraph", text: "§2º A Empresa não solicita, de forma deliberada, o envio de dados sensíveis não relacionados à finalidade da Plataforma (como dados de saúde, orientação sexual, convicção religiosa ou política), e orienta o Usuário a não incluir tais informações em seu currículo, respostas ou gravações, salvo quando estritamente necessário e relevante ao próprio conteúdo da simulação." },
-        { type: "stat", label: "Vídeos das entrevistas", value: "7 dias", text: "§3º As gravações de vídeo produzidas nas Entrevistas Simuladas ficam disponíveis para consulta e download pelo Usuário por um prazo limitado de 7 (sete) dias corridos, contados da respectiva entrevista, sendo excluídas de forma permanente e irreversível das bases da Empresa ao término desse prazo, conforme detalhado na Política de Retenção e Exclusão de Dados." },
-        { type: "paragraph", text: "§4º Os áudios enviados ou gerados nas Entrevistas Simuladas são convertidos em texto por meio de transcrição automatizada, sendo o conteúdo textual resultante da transcrição armazenado para as finalidades desta Política, nos termos da Política de Retenção e Exclusão de Dados." },
+        { type: "paragraph", text: "§3º Os áudios enviados ou gerados nas Entrevistas Simuladas são convertidos em texto por meio de transcrição automatizada, sendo o conteúdo textual resultante da transcrição armazenado para as finalidades desta Política, nos termos da Política de Retenção e Exclusão de Dados." },
       ],
     },
     {
@@ -47,6 +46,7 @@ export const privacyPolicy: LegalDocument = {
         { type: "table", headers: ["Finalidade", "Base Legal (LGPD)"], rows: [
           ["Funcionamento da Plataforma e execução do contrato (Termos de Uso)", "Art. 7º, V"], ["Autenticação e gestão de conta", "Art. 7º, V"], ["Prevenção a fraudes e à segurança do Usuário", "Art. 7º, IX (legítimo interesse)"], ["Suporte técnico e atendimento ao Usuário", "Art. 7º, V"], ["Personalização das Entrevistas Simuladas", "Art. 7º, V"], ["Avaliação de desempenho e geração de relatórios", "Art. 7º, V"], ["Melhoria contínua da Plataforma", "Art. 7º, IX (legítimo interesse)"], ["Treinamento, validação, pesquisa e aperfeiçoamento dos Modelos de IA", "Art. 7º, I (consentimento específico)"], ["Cumprimento de obrigações legais e regulatórias", "Art. 7º, II"], ["Exercício regular de direitos em processos judiciais, administrativos ou arbitrais", "Art. 7º, VI"],
         ] },
+        { type: "paragraph", text: "§Único. Nas hipóteses em que o tratamento se fundamentar em legítimo interesse (art. 7º, IX, da LGPD), a Empresa manterá, nos termos do art. 10, §2º, da LGPD, relatório de impacto à proteção de dados pessoais documentando o teste de balanceamento realizado, que poderá ser solicitado pela ANPD." },
         { type: "paragraph", text: "Art. 4º Sempre que a base legal aplicável for o consentimento, este será obtido de forma livre, informada, inequívoca e destacada das demais cláusulas contratuais, podendo ser revogado a qualquer tempo pelo Titular, sem prejuízo da licitude do tratamento realizado anteriormente à revogação.", emphasis: "notice" },
         { type: "paragraph", text: "Art. 5º Sempre que tecnicamente possível e compatível com a finalidade pretendida, os dados utilizados para treinamento, desenvolvimento, validação, pesquisa e aperfeiçoamento dos Modelos de IA serão previamente anonimizados, deixando de ser considerados dados pessoais para os fins da LGPD, nos termos do art. 12 da referida Lei." },
       ],
@@ -73,9 +73,7 @@ export const privacyPolicy: LegalDocument = {
     },
     {
       id: "direitos", navTitle: "Seus direitos", legalTitle: "CAPÍTULO VII – DIREITOS DO TITULAR", intro: "Seus direitos", blocks: [
-        { type: "paragraph", text: "Art. 13. Nos termos do art. 18 da LGPD, o Titular poderá, mediante requisição à Empresa, exercer, gratuitamente e a qualquer tempo, os direitos de:" },
-        { type: "chips", title: "Direitos previstos na Política", items: ["Confirmação da existência de tratamento", "Acesso aos dados", "Correção", "Anonimização", "Bloqueio", "Eliminação", "Portabilidade", "Informação sobre compartilhamento", "Revogação do consentimento", "Oposição, quando aplicável"] },
-        { type: "paragraph", text: "confirmação da existência de tratamento; acesso aos dados; correção; anonimização, bloqueio ou eliminação de dados desnecessários ou excessivos; portabilidade; informação sobre compartilhamento; revogação do consentimento; e oposição ao tratamento realizado com base em hipótese de dispensa de consentimento, quando aplicável." },
+        { type: "paragraph", text: "Art. 13. Nos termos do art. 18 da LGPD, o Titular poderá, mediante requisição à Empresa, exercer, gratuitamente e a qualquer tempo, os direitos de: confirmação da existência de tratamento; acesso aos dados; correção; anonimização, bloqueio ou eliminação de dados desnecessários ou excessivos; portabilidade; informação sobre compartilhamento; revogação do consentimento; e oposição ao tratamento realizado com base em hipótese de dispensa de consentimento, quando aplicável." },
         { type: "paragraph", text: "Art. 14. O procedimento detalhado para exercício de cada direito está descrito na Política de Direitos do Titular dos Dados." },
       ],
     },
@@ -99,7 +97,7 @@ export const privacyPolicy: LegalDocument = {
       id: "contato", navTitle: "DPO e canais de atendimento", legalTitle: "CAPÍTULO XI – ENCARREGADO DE DADOS (DPO) E CANAIS DE ATENDIMENTO", intro: "Contato", blocks: [
         { type: "paragraph", text: "Art. 18. Dúvidas, solicitações e reclamações relacionadas ao tratamento de dados pessoais poderão ser encaminhadas aos seguintes canais:" },
         { type: "definitions", items: [{ term: "18.1. Encarregado de Proteção de Dados (DPO)", description: "[ENCARREGADO DE DADOS (DPO)]" }, { term: "18.2. E-mail", description: "[E-MAIL DE CONTATO]" }, { term: "18.3. Endereço", description: "[ENDEREÇO]" }, { term: "18.4. Site oficial", description: "[SITE OFICIAL]" }] },
-        { type: "paragraph", text: "Art. 19. O Titular que não tiver sua solicitação atendida de forma satisfatória poderá apresentar reclamação à Autoridade Nacional de Proteção de Dados (ANPD)." },
+        { type: "paragraph", text: "Art. 19. O Titular que não tiver sua solicitação atendida de forma satisfatória poderá apresentar reclamação à Autoridade Nacional de Proteção de Dados (ANPD) ou, na qualidade de consumidor, ao Procon de seu Estado ou pela plataforma consumidor.gov.br." },
       ],
     },
   ],

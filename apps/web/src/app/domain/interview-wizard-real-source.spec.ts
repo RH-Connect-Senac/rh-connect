@@ -43,7 +43,9 @@ describe("wizard do candidato usa a API real", () => {
   });
 
   it("novo contexto descarta o interviewId anterior", () => {
-    expect(app).toMatch(/interviewId: undefined, context, questions: \[\]/);
+    expect(app).toMatch(
+      /interviewId:\s*undefined,\s*context,\s*questions:\s*\[\]/,
+    );
   });
 
   it("responder: salva no Back antes de avançar e bloqueia em erro", () => {

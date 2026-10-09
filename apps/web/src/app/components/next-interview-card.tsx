@@ -46,11 +46,11 @@ export function NextInterviewCard({
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-foreground">
-                {neverUsed ? "Tem uma entrevista marcada?" : "Nenhuma entrevista agendada"}
+                {neverUsed ? "Tem uma entrevista de emprego agendada?" : "Nenhuma entrevista agendada"}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {neverUsed
-                  ? "Adicione à sua agenda e organize sua preparação."
+                  ? "Adicione à sua agenda e prepare-se para o processo seletivo."
                   : "Quando surgir uma nova oportunidade, adicione à sua agenda para organizar sua preparação."}
               </p>
             </div>
