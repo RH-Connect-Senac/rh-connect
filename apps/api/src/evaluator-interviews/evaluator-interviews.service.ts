@@ -157,8 +157,9 @@ export class EvaluatorInterviewsService {
   }
 
   // Mesma regra de posse do detalhe (própria, HUMAN, ASSIGNED), só confirmando
-  // que existe: usada pelas rotas de avaliação. Qualquer outro caso => 404.
-  async assertAssignedTo(userId: number, interviewId: string): Promise<void> {
+  // que existe (e devolvendo o perfil já resolvido do JWT): usada pelas rotas de
+  // avaliação. Qualquer outro caso => 404.
+  async assertAssignedTo(userId: number, interviewId: string): Promise<number> {
     const evaluatorProfileId = await this.resolveEvaluatorProfileId(userId);
 
     const record = await this.prisma.interview.findFirst({
@@ -169,6 +170,8 @@ export class EvaluatorInterviewsService {
     if (!record) {
       throw new NotFoundException(NOT_FOUND_MESSAGE);
     }
+
+    return evaluatorProfileId;
   }
 
   async getAssignedById(userId: number, interviewId: string) {

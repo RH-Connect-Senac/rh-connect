@@ -136,3 +136,80 @@ export function computeDraftOverallScore(
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   return Math.round((mean + Number.EPSILON) * 10) / 10;
 }
+
+export interface CompletionData {
+  criteriaScores: Record<CriterionKey, number>;
+  summary: string;
+  overallScore: number;
+}
+
+// Validação da CONCLUSÃO sobre o que está persistido (nunca sobre o cliente):
+// os 7 critérios canônicos, todos com número finito de 0 a 10, nenhuma chave
+// desconhecida e comentário geral não vazio. O overall_score é recalculado aqui
+// (média dos sete), ignorando o valor parcial gravado no rascunho.
+export function validateForCompletion(
+  rawScores: unknown,
+  rawSummary: string | null,
+): CompletionData {
+  const stored = isPlainObject(rawScores) ? rawScores : {};
+
+  const unknown = Object.keys(stored).filter(
+    (key) => !CRITERION_KEYS.includes(key),
+  );
+  if (unknown.length > 0) {
+    throw new BadRequestException(
+      `A avaliação contém critério desconhecido: ${unknown.join(', ')}.`,
+    );
+  }
+
+  const missing = EVALUATION_CRITERIA.filter(
+    (criterion) => stored[criterion.key] === undefined,
+  );
+  if (missing.length > 0) {
+    throw new BadRequestException({
+      statusCode: 400,
+      error: 'Bad Request',
+      message: `Preencha todos os critérios para concluir. Faltam: ${missing
+        .map((criterion) => criterion.label)
+        .join(', ')}.`,
+      missingCriteria: missing.map((criterion) => criterion.key),
+    });
+  }
+
+  const invalid = EVALUATION_CRITERIA.filter((criterion) => {
+    const value = stored[criterion.key];
+    return (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      value < MIN_SCORE ||
+      value > MAX_SCORE
+    );
+  });
+  if (invalid.length > 0) {
+    throw new BadRequestException(
+      `Nota inválida (deve ser de ${MIN_SCORE} a ${MAX_SCORE}) em: ${invalid
+        .map((criterion) => criterion.label)
+        .join(', ')}.`,
+    );
+  }
+
+  const summary = typeof rawSummary === 'string' ? normalizeAnswer(rawSummary) : '';
+  if (summary === '') {
+    throw new BadRequestException(
+      'O comentário geral é obrigatório para concluir a avaliação.',
+    );
+  }
+  if (textLength(summary) > MAX_SUMMARY_LENGTH) {
+    throw new BadRequestException(
+      `O comentário deve ter no máximo ${MAX_SUMMARY_LENGTH} caracteres.`,
+    );
+  }
+
+  const criteriaScores = readCriteriaScores(stored) as Record<
+    CriterionKey,
+    number
+  >;
+  const overallScore = computeDraftOverallScore(criteriaScores) as number;
+
+  return { criteriaScores, summary, overallScore };
+}
