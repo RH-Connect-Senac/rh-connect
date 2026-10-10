@@ -60,7 +60,7 @@ import {
   EvalReviewScreen, EvalDoneScreen, EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
   EvalActivateScreen, EvalOnboardingScreen,
 } from "./components/eval-screens";
-import { EvalDashboardScreen, EvalQueueScreen, EvalInterviewDetailScreen } from "./components/evaluator-real-screens";
+import { EvalDashboardScreen, EvalQueueScreen, EvalInterviewDetailScreen, EvalDraftEvaluationScreen } from "./components/evaluator-real-screens";
 import {
   AdminDashboardScreen, AdminCandidatesScreen, AdminCandidateDetailScreen,
   AdminEvaluatorsScreen, AdminEvaluatorFormScreen,
@@ -6878,7 +6878,8 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
-          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalInterviewDetailScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/interviews/:id" element={protect("EVALUATOR", <EvalInterviewDetailScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalDraftEvaluationScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
           <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
           <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />

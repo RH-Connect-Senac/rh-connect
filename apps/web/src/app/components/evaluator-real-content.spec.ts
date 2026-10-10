@@ -55,7 +55,7 @@ const interview: EvaluatorInterviewDetail = {
 
 const noop = () => undefined;
 const queue = (state: EvaluatorQueueState) =>
-  renderToStaticMarkup(createElement(EvaluatorQueueContent, { state, onOpen: noop, onRetry: noop }));
+  renderToStaticMarkup(createElement(EvaluatorQueueContent, { state, onEvaluate: noop, onRetry: noop }));
 const detail = (state: EvaluatorDetailState) =>
   renderToStaticMarkup(createElement(EvaluatorDetailContent, { state, onBack: noop, onRetry: noop }));
 
@@ -69,7 +69,7 @@ describe("fila real do avaliador (apresentação)", () => {
   it("fila vazia: estado vazio coerente, sem item algum", () => {
     const html = queue({ status: "ready", items: [] });
     expect(html).toContain("Nenhuma entrevista atribuída no momento");
-    expect(html).not.toContain("Ver entrevista");
+    expect(html).not.toContain("Avaliar");
   });
 
   it("erro: mensagem segura e botão de tentar novamente", () => {
@@ -88,11 +88,35 @@ describe("fila real do avaliador (apresentação)", () => {
       "Três Lagoas/MS · Híbrido",
       "5 perguntas",
       "Atribuída em",
-      "Ver entrevista",
+      ">Avaliar</button>",
     ]) {
       expect(html).toContain(text);
     }
+    expect(html).not.toContain("Ver entrevista");
+    expect(html).not.toMatch(/Urgente|Normal|Baixa|prioridade/i);
+    expect(html).not.toContain(ID);
     expect(html).not.toMatch(/Carlos|Camila Dias|Beatriz|mock/i);
+  });
+});
+
+describe("fila: ação Avaliar", () => {
+  it("clicar em Avaliar entrega o UUID real da API (nunca outro id)", () => {
+    const calls: string[] = [];
+    const tree = EvaluatorQueueContent({
+      state: { status: "ready", items: [item, { ...item, id: "22222222-2222-4222-8222-222222222222" }] },
+      onEvaluate: (id: string) => calls.push(id),
+    }) as any;
+    const buttons: any[] = [];
+    const walk = (node: any) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node.type === "button") buttons.push(node);
+      walk(node.props?.children);
+    };
+    walk(tree);
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((b) => b.props.onClick());
+    expect(calls).toEqual([ID, "22222222-2222-4222-8222-222222222222"]);
   });
 });
 
@@ -137,10 +161,31 @@ describe("detalhe real da entrevista (apresentação)", () => {
     expect(html).toMatch(/whitespace-pre-wrap[^"]*"[^>]*>Linha 1\nLinha 2/);
   });
 
-  it("não habilita avaliação nesta fase: CTA desabilitado e sem campos de nota", () => {
+  it("o CTA Avaliar está habilitado e o detalhe continua somente leitura (sem campos de nota)", () => {
     const html = detail({ status: "ready", interview });
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>Avaliar \(em breve\)<\/button>/);
+    expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>Avaliar<\/button>/);
+    expect(html).not.toContain("em breve");
     expect(html).not.toMatch(/<input|<textarea|type="range"/);
+  });
+
+  it("onEvaluate recebe o UUID real da entrevista (nunca um id fictício)", () => {
+    const calls: string[] = [];
+    const element = EvaluatorDetailContent({
+      state: { status: "ready", interview },
+      onBack: () => undefined,
+      onEvaluate: (id: string) => calls.push(id),
+    }) as any;
+    const found: any[] = [];
+    const walk = (node: any) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node.type === "button" && node.props?.children === "Avaliar") found.push(node);
+      walk(node.props?.children);
+    };
+    walk(element);
+    expect(found).toHaveLength(1);
+    found[0].props.onClick();
+    expect(calls).toEqual([ID]);
   });
 });
 

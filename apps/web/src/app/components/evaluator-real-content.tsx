@@ -64,12 +64,12 @@ function joinParts(parts: Array<string | null | undefined>): string {
   return parts.filter((part): part is string => Boolean(part)).join(" · ");
 }
 
-const CARD_CLASS =
+export const CARD_CLASS =
   "rounded-2xl border border-border bg-card text-card-foreground shadow-[0_1px_2px_rgba(15,27,45,0.06)]";
-const BUTTON_CLASS =
+export const BUTTON_CLASS =
   "inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-white px-3 py-1.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted";
 
-function LoadingBlock({ label }: { label: string }) {
+export function LoadingBlock({ label }: { label: string }) {
   return (
     <div
       role="status"
@@ -82,7 +82,7 @@ function LoadingBlock({ label }: { label: string }) {
   );
 }
 
-function ErrorBlock({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorBlock({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <Alert variant="error" role="alert" className="flex flex-col gap-3">
       <div className="flex items-start gap-2">
@@ -102,11 +102,12 @@ function ErrorBlock({ message, onRetry }: { message: string; onRetry?: () => voi
 
 export function EvaluatorQueueContent({
   state,
-  onOpen,
+  onEvaluate,
   onRetry,
 }: {
   state: EvaluatorQueueState;
-  onOpen: (interviewId: string) => void;
+  // Única ação da fila: abre a tela de avaliação com o UUID real.
+  onEvaluate: (interviewId: string) => void;
   onRetry?: () => void;
 }) {
   if (state.status === "loading") {
@@ -157,8 +158,8 @@ export function EvaluatorQueueContent({
               <span className="text-xs">Enviada em {formatDateTimePtBr(item.submittedAt)}</span>
             </div>
             <div className="shrink-0">
-              <button type="button" className={BUTTON_CLASS} onClick={() => onOpen(item.id)}>
-                Ver entrevista
+              <button type="button" className={BUTTON_CLASS} onClick={() => onEvaluate(item.id)}>
+                Avaliar
               </button>
             </div>
           </div>
@@ -168,7 +169,7 @@ export function EvaluatorQueueContent({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className={`${CARD_CLASS} p-5 sm:p-6`}>
       <h3 className="mb-3 font-bold text-foreground">{title}</h3>
@@ -187,46 +188,9 @@ function BulletList({ items }: { items: string[] }) {
   );
 }
 
-export function EvaluatorDetailContent({
-  state,
-  onBack,
-  onRetry,
-}: {
-  state: EvaluatorDetailState;
-  onBack: () => void;
-  onRetry?: () => void;
-}) {
-  const backButton = (
-    <button type="button" className={BUTTON_CLASS} onClick={onBack}>
-      <ArrowLeft className="size-4" aria-hidden="true" />
-      Voltar para a fila
-    </button>
-  );
-
-  if (state.status === "loading") {
-    return <LoadingBlock label="Carregando entrevista..." />;
-  }
-  if (state.status === "not_found") {
-    return (
-      <EmptyState
-        icon={AlertCircle}
-        title="Entrevista não encontrada ou indisponível"
-        description={state.message}
-        className="p-12"
-        action={backButton}
-      />
-    );
-  }
-  if (state.status === "error") {
-    return (
-      <div className="space-y-4">
-        <ErrorBlock message={state.message} onRetry={onRetry} />
-        <div>{backButton}</div>
-      </div>
-    );
-  }
-
-  const { interview } = state;
+// Contexto da entrevista (candidato, vaga, perguntas e respostas), somente
+// leitura. Compartilhado entre o detalhe e a tela de avaliação.
+export function InterviewSections({ interview }: { interview: EvaluatorInterviewDetail }) {
   const { candidate, context } = interview;
   const facts = [
     { label: "Empresa", value: context.company },
@@ -236,9 +200,7 @@ export function EvaluatorDetailContent({
   ].filter((fact): fact is { label: string; value: string } => Boolean(fact.value));
 
   return (
-    <div className="w-full space-y-5">
-      <div>{backButton}</div>
-
+    <>
       <Section title="Candidato">
         <p className="font-bold text-foreground">{candidate.name}</p>
         {candidate.professionalTitle && (
@@ -312,18 +274,70 @@ export function EvaluatorDetailContent({
           </ol>
         )}
       </Section>
+    </>
+  );
+}
+
+export function EvaluatorDetailContent({
+  state,
+  onBack,
+  onRetry,
+  onEvaluate,
+}: {
+  state: EvaluatorDetailState;
+  onBack: () => void;
+  onRetry?: () => void;
+  // Abre a tela real de avaliação com o UUID real da entrevista.
+  onEvaluate?: (interviewId: string) => void;
+}) {
+  const backButton = (
+    <button type="button" className={BUTTON_CLASS} onClick={onBack}>
+      <ArrowLeft className="size-4" aria-hidden="true" />
+      Voltar para a fila
+    </button>
+  );
+
+  if (state.status === "loading") {
+    return <LoadingBlock label="Carregando entrevista..." />;
+  }
+  if (state.status === "not_found") {
+    return (
+      <EmptyState
+        icon={AlertCircle}
+        title="Entrevista não encontrada ou indisponível"
+        description={state.message}
+        className="p-12"
+        action={backButton}
+      />
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="space-y-4">
+        <ErrorBlock message={state.message} onRetry={onRetry} />
+        <div>{backButton}</div>
+      </div>
+    );
+  }
+
+  const { interview } = state;
+
+  return (
+    <div className="w-full space-y-5">
+      <div>{backButton}</div>
+
+      <InterviewSections interview={interview} />
 
       <Section title="Avaliação">
         <p className="mb-3 text-sm text-muted-foreground">
-          A avaliação (notas, comentário e conclusão) será habilitada na próxima etapa.
+          Registre as notas dos 7 critérios e o comentário geral. O rascunho fica salvo no servidor.
         </p>
         <button
           type="button"
-          disabled
-          aria-disabled="true"
-          className="inline-flex cursor-not-allowed items-center justify-center rounded-xl bg-muted px-4 py-2 text-sm font-semibold text-muted-foreground"
+          className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+          onClick={() => onEvaluate?.(interview.id)}
         >
-          Avaliar (em breve)
+          Avaliar
         </button>
       </Section>
     </div>

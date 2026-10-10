@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getAssignedInterview,
+  getEvaluationDraft,
   listAssignedInterviews,
+  saveEvaluationDraft,
 } from "./evaluator-interviews-service";
 
 function jsonResponse(status: number, body?: unknown) {
@@ -69,18 +71,18 @@ const detail = {
   ],
 };
 
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("evaluator-interviews-service", () => {
-  const fetchMock = vi.fn();
-
-  beforeEach(() => {
-    fetchMock.mockReset();
-    vi.stubGlobal("fetch", fetchMock);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it("fila: GET /evaluator/interviews com cookies, sem corpo e sem identidade enviada", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { total: 1, interviews: [queueItem] }));
 
@@ -204,5 +206,161 @@ describe("evaluator-interviews-service", () => {
 
     fetchMock.mockResolvedValue(jsonResponse(200, { interviewId: ID }));
     expect(await getAssignedInterview(ID)).toMatchObject({ ok: false, reason: "error" });
+  });
+});
+
+const draftBody = {
+  interviewId: ID,
+  status: "DRAFT",
+  criteriaScores: { clarity: 8, coherence: 7.5, inventado: 9 },
+  summary: "Linha 1\nLinha 2",
+  overallScore: 7.8,
+  updatedAt: "2026-10-10T10:00:00.000Z",
+};
+
+describe("evaluator-interviews-service: rascunho da avaliação", () => {
+  it("GET /evaluator/interviews/:id/evaluation com cookies; só critérios canônicos", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, draftBody));
+
+    const result = await getEvaluationDraft(ID);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(new RegExp(`/evaluator/interviews/${ID}/evaluation$`));
+    expect(init.method).toBe("GET");
+    expect(init.credentials).toBe("include");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.criteriaScores).toEqual({ clarity: 8, coherence: 7.5 });
+      expect(result.data.summary).toBe("Linha 1\nLinha 2");
+      expect(result.data.overallScore).toBe(7.8);
+    }
+  });
+
+  it("GET: estado vazio do Back (nada criado) vira rascunho vazio", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { interviewId: ID, status: "DRAFT", criteriaScores: {}, summary: null, overallScore: null, updatedAt: null }),
+    );
+
+    expect(await getEvaluationDraft(ID)).toEqual({
+      ok: true,
+      data: { interviewId: ID, status: "DRAFT", criteriaScores: {}, summary: null, overallScore: null, updatedAt: null },
+    });
+  });
+
+  it("PUT /evaluator/interviews/:id/evaluation com cookies e JSON", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, draftBody));
+
+    const result = await saveEvaluationDraft(ID, { criteriaScores: { clarity: 8 }, summary: "x" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(new RegExp(`/evaluator/interviews/${ID}/evaluation$`));
+    expect(init.method).toBe("PUT");
+    expect(init.credentials).toBe("include");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(result.ok).toBe(true);
+  });
+
+  it("PUT manda SOMENTE campos permitidos (criteriaScores e summary)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, draftBody));
+
+    await saveEvaluationDraft(ID, {
+      criteriaScores: { clarity: 8 },
+      summary: "a\nb",
+      // campos que nunca devem sair do Front, mesmo se alguém tentar passar:
+      ...({ status: "COMPLETED", overallScore: 10, evaluatorId: 4 } as object),
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      criteriaScores: { clarity: 8 },
+      summary: "a\nb",
+    });
+  });
+
+  it("PUT parcial: omite o que não foi informado", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, draftBody));
+
+    await saveEvaluationDraft(ID, { summary: null });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ summary: null });
+  });
+
+  it("PUT: 401 renova a sessão uma vez e repete o PUT", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401, { message: "x" }))
+      .mockResolvedValueOnce(jsonResponse(200, {}))
+      .mockResolvedValueOnce(jsonResponse(200, draftBody));
+
+    const result = await saveEvaluationDraft(ID, { summary: "x" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/auth\/refresh$/);
+    expect(fetchMock.mock.calls[2][1].method).toBe("PUT");
+    expect(result.ok).toBe(true);
+  });
+
+  it("GET: 401 com refresh falhando => unauthorized", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(401, { message: "x" }));
+    expect(await getEvaluationDraft(ID)).toMatchObject({ ok: false, reason: "unauthorized" });
+  });
+
+  it("404 => not_found com mensagem fixa (GET e PUT)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(404, { message: "Entrevista não encontrada." }));
+
+    for (const result of [await getEvaluationDraft(ID), await saveEvaluationDraft(ID, { summary: "x" })]) {
+      expect(result).toEqual({
+        ok: false,
+        reason: "not_found",
+        message: "Entrevista não encontrada ou indisponível.",
+      });
+    }
+  });
+
+  it("PUT: 400 e 409 repassam a mensagem de negócio em português", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(400, { message: 'A nota de "clarity" deve ser um número entre 0 e 10.' }),
+    );
+    expect(await saveEvaluationDraft(ID, { criteriaScores: { clarity: 11 } })).toEqual({
+      ok: false,
+      reason: "invalid",
+      message: 'A nota de "clarity" deve ser um número entre 0 e 10.',
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(409, { message: "A avaliação foi alterada em outra requisição. Tente novamente." }),
+    );
+    expect(await saveEvaluationDraft(ID, { summary: "x" })).toMatchObject({
+      ok: false,
+      reason: "conflict",
+      message: "A avaliação foi alterada em outra requisição. Tente novamente.",
+    });
+  });
+
+  it("PUT: 500 e mensagem técnica não vazam; usa texto padrão", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(500, { message: "PrismaClientKnownRequestError stack" }));
+
+    const result = await saveEvaluationDraft(ID, { summary: "x" });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "error",
+      message: "Não foi possível salvar o rascunho. Tente novamente.",
+    });
+  });
+
+  it("erro de rede em GET/PUT => erro explícito, sem mock nem localStorage", async () => {
+    fetchMock.mockRejectedValue(new Error("offline"));
+
+    const get = await getEvaluationDraft(ID);
+    const put = await saveEvaluationDraft(ID, { summary: "x" });
+
+    for (const result of [get, put]) {
+      expect(result).toMatchObject({ ok: false, reason: "error" });
+      expect(result).not.toHaveProperty("data");
+    }
+  });
+
+  it("resposta inválida => erro de resposta inválida", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { interviewId: ID, status: "OUTRO" }));
+    expect(await getEvaluationDraft(ID)).toMatchObject({ ok: false, reason: "error" });
   });
 });

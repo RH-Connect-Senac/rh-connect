@@ -6,14 +6,25 @@
  * localStorage ou fallback para outro avaliador é usado aqui.
  */
 
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Layers } from "lucide-react";
 import { SessionContext } from "../session-context";
 import {
   getAssignedInterview,
+  getEvaluationDraft,
   listAssignedInterviews,
+  saveEvaluationDraft,
 } from "../services/evaluator-interviews-service";
+import {
+  emptyForm,
+  formFromDraft,
+  isDirty,
+  validateForm,
+  type CriterionKey,
+} from "../domain/evaluator-evaluation-form";
+import { EvaluationAutosave, type AutosaveSnapshot } from "../domain/evaluator-autosave";
+import { SavedNotice, visibleSyncStatus } from "../domain/evaluator-save-notice";
 import {
   EvaluatorDetailContent,
   EvaluatorQueueContent,
@@ -21,11 +32,30 @@ import {
   type EvaluatorDetailState,
   type EvaluatorQueueState,
 } from "./evaluator-real-content";
+import {
+  EvaluatorEvaluationContent,
+  type EvaluationScreenState,
+  type SaveFeedback,
+} from "./evaluator-evaluation-content";
+import {
+  clearLocalDraft,
+  getBrowserStorage,
+  restoreForm,
+} from "../domain/evaluator-local-draft";
+import {
+  clampQuestionIndex,
+  questionProgressLabel,
+} from "../domain/evaluator-evaluation-view";
+import { Badge } from "./ui/badge";
 import { EvalLayout } from "./eval-screens";
 
 type NavFn = (s: string) => void;
 
-const EVAL_ROUTE = "/evaluator/evaluations";
+// Fila e dashboard levam direto à avaliação (EVALUATION_ROUTE) com o
+// interviewId (UUID) real. O detalhe somente leitura (`EvalInterviewDetailScreen`,
+// rota /evaluator/interviews/:id em App.tsx) segue existindo para consulta
+// futura, mas não faz parte do fluxo principal da fila.
+const EVALUATION_ROUTE = "/evaluator/evaluations";
 
 // Carrega a fila real. `reload` refaz a consulta (tentar novamente).
 function useAssignedQueue(): [EvaluatorQueueState, () => void] {
@@ -94,7 +124,7 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
           </div>
           <EvaluatorQueueContent
             state={queue.status === "ready" ? { status: "ready", items: queue.items.slice(0, 3) } : queue}
-            onOpen={(id) => routerNavigate(`${EVAL_ROUTE}/${id}`)}
+            onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
             onRetry={reload}
           />
         </section>
@@ -120,7 +150,7 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
       <div className="w-full">
         <EvaluatorQueueContent
           state={queue}
-          onOpen={(id) => routerNavigate(`${EVAL_ROUTE}/${id}`)}
+          onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
           onRetry={reload}
         />
       </div>
@@ -130,6 +160,7 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function EvalInterviewDetailScreen({ onNavigate }: { onNavigate: NavFn }) {
   const { id } = useParams();
+  const routerNavigate = useNavigate();
   const [state, setState] = useState<EvaluatorDetailState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -164,6 +195,173 @@ export function EvalInterviewDetailScreen({ onNavigate }: { onNavigate: NavFn })
     <EvalLayout current="eval-screen" onNavigate={onNavigate} title="Entrevista" subtitle={subtitle}>
       <EvaluatorDetailContent
         state={state}
+        onBack={() => onNavigate("eval-queue")}
+        onRetry={() => setAttempt((current) => current + 1)}
+        onEvaluate={(interviewId) => routerNavigate(`${EVALUATION_ROUTE}/${interviewId}`)}
+      />
+    </EvalLayout>
+  );
+}
+
+export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const { id } = useParams();
+  const [state, setState] = useState<EvaluationScreenState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  // Estado do formulário/sincronização vem do controlador de autosave.
+  const [view, setView] = useState<AutosaveSnapshot | null>(null);
+  const autosaveRef = useRef<EvaluationAutosave | null>(null);
+  // "Rascunho salvo" some sozinho (~2,5s); pendências/falhas não.
+  const [savedVisible, setSavedVisible] = useState(false);
+  const noticeRef = useRef<SavedNotice | null>(null);
+  // Proteção local (NÃO é o rascunho oficial): isolada por usuário + entrevista.
+  const session = useContext(SessionContext);
+  const userId = session.user?.id ?? "";
+  const [restoredFromLocal, setRestoredFromLocal] = useState(false);
+  // Pergunta exibida (só navegação de leitura; não salva nem altera notas).
+  const [questionIndex, setQuestionIndex] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!id) {
+      setState({ status: "not_found", message: "Entrevista não encontrada ou indisponível." });
+      return;
+    }
+    setState({ status: "loading" });
+    setView(null);
+    setSavedVisible(false);
+    setQuestionIndex(0);
+    setRestoredFromLocal(false);
+    Promise.all([getAssignedInterview(id), getEvaluationDraft(id)]).then(([interview, draft]) => {
+      if (cancelled) return;
+      if (interview.ok && draft.ok && draft.data.status === "DRAFT") {
+        // Servidor primeiro; depois, por cima, só notas/comentário ainda não
+        // confirmados que estavam guardados localmente (se houver).
+        const serverForm = formFromDraft(draft.data);
+        const storage = getBrowserStorage();
+        const restored = restoreForm(storage, userId, id, serverForm);
+
+        autosaveRef.current?.destroy();
+        noticeRef.current?.destroy();
+        noticeRef.current = new SavedNotice(setSavedVisible);
+        const controller: EvaluationAutosave = new EvaluationAutosave({
+          userId,
+          interviewId: id,
+          storage,
+          save: saveEvaluationDraft,
+          onChange: (snapshot) => {
+            if (autosaveRef.current !== controller) return;
+            setView(snapshot);
+            noticeRef.current?.update(snapshot.status);
+            // nota geral indicativa devolvida pelo servidor
+            setState((current) =>
+              current.status === "ready" && current.draft !== snapshot.draft
+                ? { ...current, draft: snapshot.draft }
+                : current,
+            );
+          },
+        });
+        autosaveRef.current = controller;
+        setRestoredFromLocal(restored.restored);
+        setState({ status: "ready", interview: interview.data, draft: draft.data });
+        // Se a cópia recuperada difere do servidor e é válida, o autosave a envia.
+        controller.load(draft.data, restored.form, serverForm);
+        return;
+      }
+      // Avaliação já concluída não é editável: tratada como indisponível e a
+      // cópia local (se houver) deixa de ter sentido.
+      if (interview.ok && draft.ok && draft.data.status !== "DRAFT") {
+        clearLocalDraft(getBrowserStorage(), userId, id);
+      }
+      const notFound = [interview, draft].find((r) => !r.ok && r.reason === "not_found");
+      if (notFound && !notFound.ok) {
+        setState({ status: "not_found", message: notFound.message });
+        return;
+      }
+      if (interview.ok && draft.ok) {
+        setState({ status: "not_found", message: "Esta avaliação não está disponível para edição." });
+        return;
+      }
+      const failed = [interview, draft].find((r) => !r.ok);
+      setState({
+        status: "error",
+        message: failed && !failed.ok ? failed.message : "Não foi possível carregar a avaliação. Tente novamente.",
+      });
+    });
+    return () => {
+      cancelled = true;
+      // Sair da tela: cancela o debounce e silencia callbacks (sem setState depois).
+      autosaveRef.current?.destroy();
+      autosaveRef.current = null;
+      noticeRef.current?.destroy();
+      noticeRef.current = null;
+    };
+  }, [id, attempt, userId]);
+
+  const form = view?.form ?? emptyForm();
+  const validation = useMemo(
+    () => validateForm(form, view?.persisted ?? {}),
+    [form, view?.persisted],
+  );
+  const dirty = view ? isDirty(view.form, view.serverForm) : false;
+
+  // Cada alteração grava a cópia local na hora e reinicia o debounce; o PUT
+  // acontece depois de ~2s sem edição (ou em "Salvar rascunho").
+  const onScoreChange = (key: CriterionKey, value: string) => {
+    const controller = autosaveRef.current;
+    if (!controller) return;
+    const current = controller.getSnapshot().form;
+    controller.edit({ ...current, scores: { ...current.scores, [key]: value } });
+  };
+  const onSummaryChange = (value: string) => {
+    const controller = autosaveRef.current;
+    if (!controller) return;
+    controller.edit({ ...controller.getSnapshot().form, summary: value });
+  };
+  const onSave = () => {
+    void autosaveRef.current?.flush();
+  };
+
+  // Erro do save MANUAL (destaque). O sucesso (manual ou automático) usa só o
+  // texto discreto de status: "Rascunho salvo".
+  const feedback: SaveFeedback =
+    view?.lastSave === "manual" && (view.status === "failed" || view.status === "invalid") && view.message
+      ? { kind: "error", message: view.message }
+      : null;
+
+  const ready = state.status === "ready" ? state : null;
+  const totalQuestions = ready ? ready.interview.questions.length : 0;
+  const title = ready ? `Avaliando: ${ready.interview.candidate.name}` : "Avaliação";
+  const subtitle = ready ? ready.interview.context.title : "Avaliação da entrevista";
+
+  return (
+    <EvalLayout
+      current="eval-screen"
+      onNavigate={onNavigate}
+      title={title}
+      subtitle={subtitle}
+      actions={
+        ready && totalQuestions > 0 ? (
+          <Badge variant="warning">{questionProgressLabel(questionIndex, totalQuestions)}</Badge>
+        ) : undefined
+      }
+    >
+      <EvaluatorEvaluationContent
+        state={state}
+        ui={{
+          form,
+          validation,
+          dirty,
+          saving: view?.saving ?? false,
+          feedback,
+          syncStatus: visibleSyncStatus(view?.status, savedVisible),
+          lastSave: view?.lastSave ?? null,
+          restoredFromLocal,
+          onScoreChange,
+          onSummaryChange,
+          onSave,
+        }}
+        questionIndex={questionIndex}
+        onQuestionChange={(index) => setQuestionIndex(clampQuestionIndex(index, totalQuestions))}
         onBack={() => onNavigate("eval-queue")}
         onRetry={() => setAttempt((current) => current + 1)}
       />
