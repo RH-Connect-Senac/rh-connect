@@ -285,7 +285,7 @@ describe('InterviewQuestionsService.saveAnswer', () => {
     const { service, prisma } = makeService();
     prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
     prisma.interview_question.findFirst.mockResolvedValue(
-      storedQuestion(1, { answer_text: 'linha 1 linha 2', answered_at: at }),
+      storedQuestion(1, { answer_text: 'linha 1\n\nlinha 2', answered_at: at }),
     );
 
     const result = await service.saveAnswer(
@@ -301,10 +301,59 @@ describe('InterviewQuestionsService.saveAnswer', () => {
       interview_id: INTERVIEW_ID,
       interview: { candidate_user_id: 42, status: 'IN_PROGRESS' },
     });
-    expect(args.data.answer_text).toBe('linha 1 linha 2');
+    expect(args.data.answer_text).toBe('linha 1\n\nlinha 2');
     expect(args.data.answered_at).toBeInstanceOf(Date);
     expect(args.data.updated_at).toBeInstanceOf(Date);
-    expect(result.answer).toBe('linha 1 linha 2');
+    expect(result.answer).toBe('linha 1\n\nlinha 2');
+  });
+
+  describe('quebras de linha da resposta', () => {
+    async function savedText(input: string) {
+      const { service, prisma } = makeService();
+      prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+      prisma.interview_question.findFirst.mockResolvedValue(storedQuestion(1));
+      await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, input);
+      return prisma.interview_question.updateMany.mock.calls[0][0].data
+        .answer_text;
+    }
+
+    it('preserva \\n entre parágrafos (não vira espaço)', async () => {
+      expect(await savedText('Primeiro parágrafo.\nSegundo parágrafo.')).toBe(
+        'Primeiro parágrafo.\nSegundo parágrafo.',
+      );
+    });
+
+    it('preserva linhas em branco', async () => {
+      expect(await savedText('a\n\n\nb')).toBe('a\n\n\nb');
+    });
+
+    it('normaliza CRLF e CR para LF', async () => {
+      expect(await savedText('linha 1\r\n\r\nlinha 2')).toBe(
+        'linha 1\n\nlinha 2',
+      );
+      expect(await savedText('a\rb')).toBe('a\nb');
+    });
+
+    it('mantém o trim externo (inclusive quebras nas pontas)', async () => {
+      expect(await savedText('  \n  texto \n ')).toBe('texto');
+    });
+
+    it('o limite de 1000 caracteres conta as quebras (já normalizadas)', async () => {
+      const exactly1000 = 'a'.repeat(499) + '\r\n' + 'b'.repeat(500);
+      expect(await savedText(exactly1000)).toBe(
+        'a'.repeat(499) + '\n' + 'b'.repeat(500),
+      );
+      const { service, prisma } = makeService();
+      await expect(
+        service.saveAnswer(
+          42,
+          INTERVIEW_ID,
+          QUESTION_ID,
+          'a'.repeat(500) + '\n' + 'b'.repeat(500),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.interview_question.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   it('resposta em branco limpa a resposta (null) e o answered_at', async () => {

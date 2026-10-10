@@ -15,10 +15,12 @@ export const FLOW_LIMITS = {
   questionCount: 5,
 } as const;
 
-// Mesma normalização do frontend (App.tsx `normalizeInterviewAnswer`): quebras
-// de linha viram um espaço; depois trim. Resposta só de espaços/quebras => ''.
+// Normalização da resposta: apenas padroniza o fim de linha (CRLF/CR => LF) e
+// remove espaços/quebras das pontas. Parágrafos e linhas em branco do candidato
+// são PRESERVADOS (nenhuma quebra vira espaço). Resposta só de espaços/quebras
+// => ''. O frontend (`normalizeInterviewAnswer`) aplica a mesma regra de fim de linha.
 export function normalizeAnswer(value: string): string {
-  return value.replace(/\s*\r?\n+\s*/g, ' ').trim();
+  return value.replace(/\r\n?/g, '\n').trim();
 }
 
 // Acima do limite => 400; o conteúdo nunca é cortado em silêncio.

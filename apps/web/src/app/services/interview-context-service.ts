@@ -1,3 +1,4 @@
+import { findSuggestedJobByUrl, getSuggestedJobSnapshot } from "../domain/suggested-jobs";
 import type { ProfessionalAreaId, ProfessionalSubareaId, SeniorityLevelId } from "../domain/professional-catalog";
 
 export type JobInterviewContext = {
@@ -187,7 +188,10 @@ function normalizeQuestionType(value: unknown): InterviewQuestion["type"] | null
   return null;
 }
 
-export async function analyzeJobUrl(url: string): Promise<JobInterviewContext> {
+const JOB_UNREADABLE_MESSAGE =
+  "Não foi possível ler os dados desta vaga. Verifique se o link ainda está disponível ou tente outra vaga.";
+
+async function analyzeJobUrlRemote(url: string): Promise<JobInterviewContext> {
   const trimmedUrl = url.trim();
 
   if (!/^https?:\/\/\S+\.\S+/i.test(trimmedUrl)) {
@@ -202,7 +206,7 @@ export async function analyzeJobUrl(url: string): Promise<JobInterviewContext> {
   const title = asString(context.title);
 
   if (!title) {
-    throw new Error("Não foi possível identificar o título da vaga informada.");
+    throw new Error(JOB_UNREADABLE_MESSAGE);
   }
 
   return {
@@ -217,6 +221,50 @@ export async function analyzeJobUrl(url: string): Promise<JobInterviewContext> {
     contractType: asOptionalString(context.contractType),
     workMode: asWorkMode(context.workMode),
   };
+}
+
+/**
+ * Contexto da vaga a partir do snapshot validado de uma vaga sugerida OFICIAL.
+ * Null para qualquer URL que não seja exatamente uma delas.
+ */
+export function buildSuggestedJobFallbackContext(url: string): JobInterviewContext | null {
+  const job = findSuggestedJobByUrl(url);
+  if (!job) return null;
+  const snapshot = getSuggestedJobSnapshot(job);
+  if (!snapshot) return null;
+  return {
+    sourceUrl: job.url,
+    jobTitle: job.title,
+    title: job.title,
+    company: job.company ?? "",
+    summary: snapshot.summary,
+    activities: [...snapshot.activities],
+    requirements: [...snapshot.requirements],
+    location: job.location,
+    contractType: snapshot.contractType,
+    workMode: snapshot.workMode,
+  };
+}
+
+/**
+ * 1) tenta SEMPRE a análise real; 2) se falhar e a URL for exatamente uma vaga
+ * sugerida oficial, usa o snapshot dela; 3) qualquer outra URL mantém o erro.
+ */
+export async function resolveJobContext(
+  url: string,
+  analyze: (url: string) => Promise<JobInterviewContext> = analyzeJobUrlRemote,
+): Promise<JobInterviewContext> {
+  try {
+    return await analyze(url);
+  } catch (error) {
+    const fallback = buildSuggestedJobFallbackContext(url);
+    if (fallback) return fallback;
+    throw error;
+  }
+}
+
+export function analyzeJobUrl(url: string): Promise<JobInterviewContext> {
+  return resolveJobContext(url, analyzeJobUrlRemote);
 }
 
 export async function generateInterviewQuestions(

@@ -122,6 +122,23 @@ import {
   type RealInterviewQuestion,
 } from "./services/candidate-interviews-service";
 import {
+  clearAnswerDraft,
+  clearAnswerDraftsForInterview,
+  clearInterviewUrlPrefill,
+  deriveHighestReachedIndex,
+  getAnswerDraft,
+  getQuestionNavState,
+  isQuestionNavigable,
+  normalizeInterviewAnswer,
+  peekInterviewUrlPrefill,
+  resolveAnswerText,
+  resolveLinkCopyEffect,
+  shouldShowCopiedLinkNotice,
+  resolveInitialQuestionIndex,
+  saveAnswerDraft,
+  storeInterviewUrlPrefill,
+} from "./services/interview-ux-state";
+import {
   PROFESSIONAL_AREAS,
   type ProfessionalAreaId,
   getProfessionalSubareasByArea,
@@ -344,6 +361,8 @@ type InterviewDraftScreen =
 type InterviewDraftProgress = {
   currentScreen: InterviewDraftScreen;
   currentQuestionIndex: number;
+  // Maior pergunta já alcançada (UX/navegação local; o Back não guarda isso).
+  highestQuestionIndex?: number;
 };
 
 type StoredInterviewDraftEntry = {
@@ -364,10 +383,6 @@ const DEFAULT_INTERVIEW_DRAFT_PROGRESS: InterviewDraftProgress = {
 };
 
 const ANSWER_MAX_CHARS = 1000;
-
-function normalizeInterviewAnswer(value: string) {
-  return value.replace(/\s*\r?\n+\s*/g, " ");
-}
 
 function isValidInterviewAnswer(value?: string) {
   return Boolean(value?.trim());
@@ -422,6 +437,9 @@ function normalizeInterviewDraftProgress(value?: Partial<InterviewDraftProgress>
     currentQuestionIndex: Number.isInteger(value?.currentQuestionIndex) && value!.currentQuestionIndex! >= 0
       ? value!.currentQuestionIndex!
       : DEFAULT_INTERVIEW_DRAFT_PROGRESS.currentQuestionIndex,
+    ...(Number.isInteger(value?.highestQuestionIndex) && value!.highestQuestionIndex! >= 0
+      ? { highestQuestionIndex: value!.highestQuestionIndex! }
+      : {}),
   };
 }
 
@@ -2505,16 +2523,31 @@ function InterviewScreen({
   draft,
   setDraft,
   onQuestionIndexChange,
+  candidateId,
+  restoredQuestionIndex,
+  restoredHighestIndex,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
-  onQuestionIndexChange?: (index: number) => void;
+  onQuestionIndexChange?: (index: number, highestReached: number) => void;
+  // Namespace local dos rascunhos de resposta (UX); o dono real vem do JWT no Back.
+  candidateId: string;
+  // Pergunta salva quando a página é recarregada DENTRO desta etapa (undefined ao chegar de outra tela).
+  restoredQuestionIndex?: number;
+  // Maior pergunta já alcançada antes do reload (só UX; define o que o painel mantém clicável).
+  restoredHighestIndex?: number;
 }) {
   const [searchParams] = useSearchParams();
   const questions = draft.questions;
   const targetQuestionIndex = getQuestionIndexFromSearchParam(searchParams.get("question"), questions.length);
-  const [qIdx, setQIdx] = useState(targetQuestionIndex);
+  const [qIdx, setQIdx] = useState(() =>
+    resolveInitialQuestionIndex({ restoredIndex: restoredQuestionIndex, urlIndex: targetQuestionIndex, questionCount: questions.length }),
+  );
+  // Maior pergunta já alcançada (só cresce). O estado de cada item do painel deriva disto + da resposta.
+  const [storedHighest, setStoredHighest] = useState<number | undefined>(restoredHighestIndex);
+  // Pergunta cujo rascunho local já foi conferido (ver efeito de restauração).
+  const [draftCheckedFor, setDraftCheckedFor] = useState<string | null>(null);
   const [speechError, setSpeechError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
   const [dictating, setDictating] = useState(false);
@@ -2525,12 +2558,16 @@ function InterviewScreen({
   const [syncError, setSyncError] = useState("");
   // Última resposta CONFIRMADA pelo Back, por pergunta (evita PUT desnecessário).
   const persistedAnswersRef = useRef<Record<string, string>>({});
-  const localAnswersRef = useRef(draft.answers);
-  localAnswersRef.current = draft.answers;
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
   const question = questions[qIdx];
   const answer = question ? draft.answers[question.id] ?? "" : "";
   const answerLength = answer.length;
+  const highestReached = deriveHighestReachedIndex({
+    storedHighest,
+    currentIndex: qIdx,
+    answeredIndexes: questions.flatMap((item, index) => (isValidInterviewAnswer(draft.answers[item.id]) ? [index] : [])),
+    questionCount: questions.length,
+  });
   const progress = questions.length ? ((qIdx + 1) / questions.length) * 100 : 0;
   const supportsSpeech = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 
@@ -2541,13 +2578,19 @@ function InterviewScreen({
     };
   }, []);
 
+  // `?question=` só move a pergunta quando MUDA depois da montagem; na montagem o
+  // índice inicial já foi resolvido acima (inclusive o restaurado após F5).
+  const seenQuestionParamRef = useRef(searchParams.get("question"));
   useEffect(() => {
+    const param = searchParams.get("question");
+    if (seenQuestionParamRef.current === param) return;
+    seenQuestionParamRef.current = param;
     setQIdx((current) => current === targetQuestionIndex ? current : targetQuestionIndex);
-  }, [targetQuestionIndex]);
+  }, [searchParams, targetQuestionIndex]);
 
-  // Ao entrar na etapa: relê perguntas/respostas do Back (fonte da verdade). Se o
-  // rascunho local tiver texto que o Back ainda não tem (retomada), regrava
-  // antes de liberar a tela; qualquer falha bloqueia com opção de tentar de novo.
+  // Ao entrar na etapa: relê perguntas/respostas CONFIRMADAS do Back (fonte da
+  // verdade). Nada do localStorage é enviado ao Back aqui; falha bloqueia a tela
+  // com opção de tentar de novo.
   const interviewIdForSync = draft.interviewId;
   const syncWithServer = useCallback(async () => {
     if (!interviewIdForSync) return;
@@ -2564,18 +2607,6 @@ function InterviewScreen({
       persistedAnswersRef.current[item.id] = item.answer ?? "";
       if (item.answer) serverAnswers[item.id] = item.answer;
     });
-    for (const item of loaded.data) {
-      const local = normalizeInterviewAnswer(localAnswersRef.current[item.id] ?? "").trim();
-      if (!local || serverAnswers[item.id]) continue;
-      const saved = await saveRealAnswer(interviewIdForSync, item.id, local);
-      if (!saved.ok) {
-        setSyncError(saved.message);
-        setSyncState("error");
-        return;
-      }
-      persistedAnswersRef.current[item.id] = saved.data.answer ?? "";
-      serverAnswers[item.id] = saved.data.answer ?? local;
-    }
     setDraft((current) => ({
       ...current,
       questions: loaded.data.map(({ id, type, text }) => ({ id, type, text })),
@@ -2588,6 +2619,45 @@ function InterviewScreen({
     void syncWithServer();
   }, [syncWithServer]);
 
+  const answerDraftScope = (questionId: string) => ({
+    candidateId,
+    interviewId: draft.interviewId ?? "",
+    questionId,
+  });
+
+  // RASCUNHO EM EDIÇÃO (só UX). Ao abrir uma pergunta, se existe texto local ainda
+  // não confirmado que parte da MESMA resposta do Back, ele reaparece no textarea.
+  // Não é enviado ao Back: só a ação normal (Próxima/Anterior/Revisar) grava.
+  // Se o Back mudou desde então (rascunho velho), o rascunho é descartado.
+  useEffect(() => {
+    if (syncState !== "ready" || !question || !draft.interviewId) return;
+    if (draftCheckedFor === question.id) return;
+    const scope = answerDraftScope(question.id);
+    const stored = getAnswerDraft(scope);
+    const resolved = resolveAnswerText(persistedAnswersRef.current[question.id] ?? "", stored);
+    if (resolved.source === "draft") {
+      const restoredText = resolved.text;
+      setDraft((current) => ({ ...current, answers: { ...current.answers, [question.id]: restoredText } }));
+    } else if (stored) {
+      clearAnswerDraft(scope);
+    }
+    setDraftCheckedFor(question.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncState, question?.id, draftCheckedFor]);
+
+  // Enquanto digita ( ou dita), mantém o texto ainda NÃO confirmado como rascunho
+  // local; sem requisição HTTP. Só roda depois da conferência/restauração acima.
+  useEffect(() => {
+    if (syncState !== "ready" || !question || !draft.interviewId) return;
+    if (draftCheckedFor !== question.id) return;
+    saveAnswerDraft(
+      answerDraftScope(question.id),
+      normalizeInterviewAnswer(answer),
+      persistedAnswersRef.current[question.id] ?? "",
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answer, question?.id, syncState, draftCheckedFor]);
+
   // Grava a resposta da pergunta no Back. Só retorna true quando o Back confirmou
   // (ou já estava igual): em erro NÃO avança e mostra a mensagem.
   const persistAnswer = async (target: InterviewQuestion, value: string): Promise<boolean> => {
@@ -2598,6 +2668,7 @@ function InterviewScreen({
     }
     const normalized = normalizeInterviewAnswer(value).trim();
     if (normalized === (persistedAnswersRef.current[target.id] ?? "")) {
+      clearAnswerDraft(answerDraftScope(target.id));
       setSaveError("");
       return true;
     }
@@ -2608,6 +2679,8 @@ function InterviewScreen({
       return false;
     }
     persistedAnswersRef.current[target.id] = result.data.answer ?? "";
+    // Back confirmou: ele é a resposta oficial; o rascunho local daquela pergunta sai.
+    clearAnswerDraft(answerDraftScope(target.id));
     setSaveError("");
     return true;
   };
@@ -2627,8 +2700,12 @@ function InterviewScreen({
   };
 
   useEffect(() => {
-    onQuestionIndexChange?.(qIdx);
-  }, [onQuestionIndexChange, qIdx]);
+    onQuestionIndexChange?.(qIdx, highestReached);
+  }, [onQuestionIndexChange, qIdx, highestReached]);
+
+  useEffect(() => {
+    setStoredHighest((current) => (current !== undefined && current >= highestReached ? current : highestReached));
+  }, [highestReached]);
 
   // Entrada na etapa e troca de pergunta: volta ao topo da tela.
   useEffect(() => {
@@ -2790,8 +2867,14 @@ function InterviewScreen({
   }
 
   // Navegação entre perguntas: regra única, usada pelo painel detalhado (sm+) e pelo compacto (mobile).
-  const canOpenQuestionAt = (item: (typeof questions)[number], index: number) =>
-    index === qIdx || isValidInterviewAnswer(draft.answers[item.id]);
+  // "Respondida/Pendente" (resposta) é separado de "Bloqueada" (nunca alcançada): só esta última não abre.
+  const navStateAt = (item: (typeof questions)[number], index: number) =>
+    getQuestionNavState({
+      index,
+      currentIndex: qIdx,
+      highestReached,
+      answered: isValidInterviewAnswer(draft.answers[item.id]),
+    });
   const openQuestion = (index: number) => {
     void withSavedAnswer(() => setQIdx(index));
   };
@@ -2821,15 +2904,9 @@ function InterviewScreen({
             <Textarea
               value={answer}
               onChange={(event) => updateAnswer(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (!event.repeat) goNext();
-                }
-              }}
               maxLength={ANSWER_MAX_CHARS}
               placeholder="Digite sua resposta. Se preferir, use o ditado por voz para preencher este campo."
-              className="min-h-44 sm:min-h-56"
+              className="min-h-44 sm:min-h-56 max-h-72 overflow-y-auto"
             />
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
               <div className={`text-xs ${answerLength >= ANSWER_MAX_CHARS ? "text-amber-700 font-semibold" : "text-muted-foreground"}`}>
@@ -2866,31 +2943,32 @@ function InterviewScreen({
             </p>
             <div className="flex flex-wrap gap-2">
               {questions.map((item, index) => {
-                const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const current = index === qIdx;
-                const canOpenQuestion = canOpenQuestionAt(item, index);
+                const navState = navStateAt(item, index);
+                const canOpenQuestion = isQuestionNavigable(navState);
+                const stateLabel = { CURRENT: "atual", ANSWERED: "respondida", VISITED_PENDING: "pendente", LOCKED: "bloqueada" }[navState];
                 return (
                   <button
                     key={item.id}
                     type="button"
                     disabled={!canOpenQuestion}
-                    aria-current={current ? "step" : undefined}
-                    aria-label={`Pergunta ${index + 1}: ${answered ? "respondida" : "pendente"}${current ? ", atual" : ""}`}
+                    aria-current={navState === "CURRENT" ? "step" : undefined}
+                    aria-label={`Pergunta ${index + 1}: ${stateLabel}`}
                     onClick={() => {
                       if (!canOpenQuestion) return;
                       openQuestion(index);
                     }}
                     className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-bold transition-colors outline-none focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)] ${
-                      current
+                      navState === "CURRENT"
                         ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : answered
+                        : navState === "ANSWERED"
                           ? "border-green-200 bg-green-50 text-green-700"
-                          : canOpenQuestion
-                            ? "border-border bg-muted text-muted-foreground"
+                          : navState === "VISITED_PENDING"
+                            ? "border-amber-200 bg-amber-50 text-amber-700"
                             : "cursor-not-allowed border-border bg-muted text-muted-foreground opacity-60"
                     }`}
                   >
-                    {answered && <span aria-hidden="true">✓</span>}
+                    {navState === "ANSWERED" && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                    {navState === "LOCKED" && <Lock className="h-3.5 w-3.5" aria-hidden="true" />}
                     <span>{index + 1}</span>
                   </button>
                 );
@@ -2902,8 +2980,8 @@ function InterviewScreen({
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Progresso</p>
             <div className="space-y-2">
               {questions.map((item, index) => {
-                const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const canOpenQuestion = canOpenQuestionAt(item, index);
+                const navState = navStateAt(item, index);
+                const canOpenQuestion = isQuestionNavigable(navState);
                 return (
                   <button
                     key={item.id}
@@ -2914,17 +2992,28 @@ function InterviewScreen({
                       openQuestion(index);
                     }}
                     className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
-                      index === qIdx
+                      navState === "CURRENT"
                         ? "bg-blue-50 text-blue-700"
                         : canOpenQuestion
                           ? "hover:bg-muted"
                           : "cursor-not-allowed opacity-60"
                     }`}
                   >
-                    <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${answered ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}>
-                      {index + 1}
+                    <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${
+                      navState === "CURRENT"
+                        ? "bg-blue-100 text-blue-700"
+                        : navState === "ANSWERED"
+                          ? "bg-green-100 text-green-700"
+                          : navState === "VISITED_PENDING"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-muted text-muted-foreground"
+                    }`}>
+                      {navState === "LOCKED" ? <Lock className="h-3 w-3" aria-hidden="true" /> : index + 1}
                     </span>
-                    <span className="text-xs font-medium truncate">{answered ? "Respondida" : "Pendente"}</span>
+                    <span className={`flex items-center gap-1 text-xs font-medium truncate ${navState === "VISITED_PENDING" ? "text-amber-700" : ""}`}>
+                      {navState === "ANSWERED" && <Check className="h-3 w-3 text-green-700" aria-hidden="true" />}
+                      {{ CURRENT: "Em andamento", ANSWERED: "Respondida", VISITED_PENDING: "Pendente", LOCKED: "Bloqueada" }[navState]}
+                    </span>
                   </button>
                 );
               })}
@@ -3017,7 +3106,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
                     <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Pergunta {i + 1}</p>
                     <p className="text-sm text-foreground line-clamp-2 sm:truncate">{q.text}</p>
                     <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1">Resposta:</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 whitespace-pre-line break-words">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
                   </div>
                   <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} className="shrink-0">
                     <Edit2 className="w-4 h-4" /> Editar
@@ -3857,12 +3946,16 @@ function InterviewSetupScreen({
   onCancelInterview?: () => void;
   onCancelPreparation?: () => void;
 }) {
-  const [url, setUrl] = useState(draft.context?.sourceUrl ?? "");
+  // Prefill (UX): URL de uma vaga sugerida já copiada neste navegador. Só lê; nunca analisa nem cria nada.
+  const [url, setUrl] = useState(() => draft.context?.sourceUrl ?? peekInterviewUrlPrefill() ?? "");
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(Boolean(draft.context));
   const [generating, setGenerating] = useState(false);
+  // URL preenchida pelo clique em "Copiar link" de uma vaga sugerida (nunca por digitação/colagem).
+  const [copiedLinkUrl, setCopiedLinkUrl] = useState<string | null>(null);
   const continuingRef = useRef(false);
+  const keepUrlOnContextClearRef = useRef(false);
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
@@ -3888,13 +3981,16 @@ function InterviewSetupScreen({
   const descriptionIsLong = jobDescription.length > 320;
 
   const handleAnalyze = async () => {
+    setCopiedLinkUrl(null);
     setStatus("loading");
     setError("");
     setConfirmed(false);
     setDescriptionExpanded(false);
     try {
       const context = await analyzeJobUrl(url);
-      // Novo contexto => nova entrevista real (o interviewId anterior é descartado).
+      // Novo contexto => nova entrevista real (o interviewId anterior é descartado,
+      // junto com os rascunhos locais de resposta dela).
+      clearAnswerDraftsForInterview(getCandidateIdentity(session).id, draft.interviewId);
       setDraft((current) => ({
         ...current,
         interviewId: undefined,
@@ -3957,7 +4053,9 @@ function InterviewSetupScreen({
 
   useEffect(() => {
     if (hadContextRef.current && !draft.context) {
-      setUrl("");
+      // Troca de vaga por "Copiar link": a nova URL já está no campo e deve permanecer.
+      if (!keepUrlOnContextClearRef.current) setUrl("");
+      keepUrlOnContextClearRef.current = false;
       setStatus("idle");
       setError("");
       setConfirmed(false);
@@ -3966,13 +4064,36 @@ function InterviewSetupScreen({
     hadContextRef.current = Boolean(draft.context);
   }, [draft.context]);
 
+  // O prefill vale para esta abertura da tela; consumido, não reaparece depois.
+  useEffect(() => {
+    clearInterviewUrlPrefill();
+  }, []);
+
   useEffect(() => () => {
     if (urlHighlightTimerRef.current !== null) window.clearTimeout(urlHighlightTimerRef.current);
   }, []);
 
   // Após copiar um link sugerido: rola até o campo de URL e o destaca por instantes.
   // Só foca o input com mouse/ponteiro preciso (no celular abriria o teclado).
-  const handleSuggestedLinkCopied = () => {
+  const handleSuggestedLinkCopied = (copiedUrl: string) => {
+    // Guarda a URL conhecida no clique (sem ler o clipboard e sem requisição) e SEMPRE
+    // a coloca no campo, substituindo a de outra vaga. Não analisa e não cria Interview.
+    storeInterviewUrlPrefill(copiedUrl);
+    const linkEffect = resolveLinkCopyEffect(copiedUrl, draft.context?.sourceUrl);
+    if (linkEffect.invalidateContext) {
+      // O contexto extraído era de OUTRA vaga: sai da tela e exige nova análise. A
+      // Interview já criada no Back não é apagada; só deixa de ser a do fluxo atual
+      // (o próximo "Analisar" já descarta o interviewId, como antes).
+      clearAnswerDraftsForInterview(getCandidateIdentity(session).id, draft.interviewId);
+      keepUrlOnContextClearRef.current = true;
+      setDraft((current) => ({ ...current, interviewId: undefined, context: null, questions: [], answers: {}, evaluationMode: null }));
+      setStatus("idle");
+      setError("");
+      setConfirmed(false);
+      setDescriptionExpanded(false);
+    }
+    setUrl(linkEffect.nextUrl);
+    setCopiedLinkUrl(linkEffect.nextUrl);
     const field = urlFieldRef.current;
     if (!field) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -4091,7 +4212,10 @@ function InterviewSetupScreen({
           <div ref={urlFieldRef} className="flex flex-col sm:flex-row gap-3">
             <Input
               value={url}
-              onChange={(event) => setUrl(event.target.value)}
+              onChange={(event) => {
+                setCopiedLinkUrl(null);
+                setUrl(event.target.value);
+              }}
               placeholder="https://www.empregare.com/pt-br/vaga/..."
               aria-label="URL da vaga"
               className={urlHighlighted ? "border-[#2563EB] shadow-[0_0_0_4px_rgba(37,99,235,0.2)]" : undefined}
@@ -4099,6 +4223,11 @@ function InterviewSetupScreen({
             <Btn variant="primary" onClick={handleAnalyze} disabled={status === "loading" || !url.trim()}>
               {status === "loading" ? <><Spinner /> Analisando</> : <>Analisar</>}
             </Btn>
+          </div>
+          <div role="status" aria-live="polite">
+            {status !== "loading" && shouldShowCopiedLinkNotice(copiedLinkUrl, url) && (
+              <p className="mt-3 text-sm font-medium text-blue-700">Link preenchido. Agora toque em Analisar.</p>
+            )}
           </div>
           {status === "error" && (
             <Alert variant="error" className="mt-4 flex gap-3 rounded-2xl p-4">
@@ -6553,6 +6682,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   };
 
   const discardSavedDraft = () => {
+    clearAnswerDraftsForInterview(candidateIdentity.id, interviewDraft.interviewId);
     clearStoredInterviewDraft(candidateIdentity.id);
     setInterviewDraft(createEmptyInterviewDraft());
     setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
@@ -6574,6 +6704,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   };
 
   const completeCurrentDraft = () => {
+    clearAnswerDraftsForInterview(candidateIdentity.id, interviewDraft.interviewId);
     clearStoredInterviewDraft(candidateIdentity.id);
     setInterviewDraft(createEmptyInterviewDraft());
     setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
@@ -6601,13 +6732,22 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     if (shouldShowResumePrompt) return;
     if (!currentInterviewDraftScreen) return;
     setDraftProgress((current) => {
-      const currentQuestionIndex = currentInterviewDraftScreen === "interview"
-        ? getQuestionIndexFromSearchParam(new URLSearchParams(location.search).get("question"), interviewDraft.questions.length)
+      // Só vale `?question=` ao CHEGAR de outra tela (revisão/retomar). Se o progresso
+      // já estava na etapa de respostas (ex.: F5), a pergunta salva é preservada.
+      const questionParam = new URLSearchParams(location.search).get("question");
+      const currentQuestionIndex = currentInterviewDraftScreen === "interview" && current.currentScreen !== "interview"
+        ? getQuestionIndexFromSearchParam(questionParam, interviewDraft.questions.length)
         : current.currentQuestionIndex;
       if (current.currentScreen === currentInterviewDraftScreen && current.currentQuestionIndex === currentQuestionIndex) {
         return current;
       }
-      return { currentScreen: currentInterviewDraftScreen, currentQuestionIndex };
+      // "Alcançadas" valem para a Interview em andamento: voltam a zero ao reiniciar pela análise da vaga.
+      const highestQuestionIndex = currentInterviewDraftScreen === "interview-setup" ? undefined : current.highestQuestionIndex;
+      return {
+        currentScreen: currentInterviewDraftScreen,
+        currentQuestionIndex,
+        ...(highestQuestionIndex === undefined ? {} : { highestQuestionIndex }),
+      };
     });
   }, [currentInterviewDraftScreen, interviewDraft.questions.length, location.search, shouldShowResumePrompt]);
 
@@ -6749,7 +6889,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
           <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} onQuestionIndexChange={(index) => setDraftProgress((current) => current.currentQuestionIndex === index ? current : { ...current, currentQuestionIndex: index })} />)} />
+          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} candidateId={candidateIdentity.id} restoredQuestionIndex={draftProgress.currentScreen === "interview" ? draftProgress.currentQuestionIndex : undefined} restoredHighestIndex={draftProgress.highestQuestionIndex} onQuestionIndexChange={(index, highestReached) => setDraftProgress((current) => current.currentQuestionIndex === index && current.highestQuestionIndex === highestReached ? current : { ...current, currentQuestionIndex: index, highestQuestionIndex: highestReached })} />)} />
           <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} />)} />
           </Route>

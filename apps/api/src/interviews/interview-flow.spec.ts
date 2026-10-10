@@ -19,10 +19,18 @@ function pythonPayload(overrides: Array<Record<string, unknown>> = []) {
 }
 
 describe('normalizeAnswer / validateAnswer', () => {
-  it('troca quebras de linha por espaço e faz trim (como o frontend)', () => {
-    expect(normalizeAnswer('  linha 1 \r\n\r\n  linha 2\nlinha 3  ')).toBe(
-      'linha 1 linha 2 linha 3',
+  it('preserva parágrafos e linhas em branco; só padroniza o fim de linha e faz trim', () => {
+    expect(normalizeAnswer('Primeiro parágrafo.\nSegundo parágrafo.')).toBe(
+      'Primeiro parágrafo.\nSegundo parágrafo.',
     );
+    expect(normalizeAnswer('  linha 1\r\n\r\nlinha 2\rlinha 3  ')).toBe(
+      'linha 1\n\nlinha 2\nlinha 3',
+    );
+  });
+
+  it('nenhuma quebra de linha vira espaço', () => {
+    expect(normalizeAnswer('a\nb')).not.toBe('a b');
+    expect(normalizeAnswer('linha 1\r\n\r\nlinha 2')).toBe('linha 1\n\nlinha 2');
   });
 
   it('resposta só com espaços/quebras vira string vazia', () => {
@@ -47,8 +55,13 @@ describe('normalizeAnswer / validateAnswer', () => {
   });
 
   it('mede o limite depois de normalizar as quebras de linha', () => {
-    const raw = `${'a'.repeat(499)}\n\n\n${'b'.repeat(500)}`; // 1000 normalizados
+    const raw = `${'a'.repeat(499)}\r\n${'b'.repeat(500)}`; // CRLF vira 1 LF => 1000
     expect(textOf(validateAnswer(raw))).toBe(1000);
+  });
+
+  it('as quebras preservadas contam no limite', () => {
+    const raw = `${'a'.repeat(499)}\n\n${'b'.repeat(500)}`; // 1001
+    expect(() => validateAnswer(raw)).toThrow(BadRequestException);
   });
 });
 
