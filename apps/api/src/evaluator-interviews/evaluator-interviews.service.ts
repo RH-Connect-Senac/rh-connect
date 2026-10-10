@@ -156,6 +156,21 @@ export class EvaluatorInterviewsService {
     };
   }
 
+  // Mesma regra de posse do detalhe (própria, HUMAN, ASSIGNED), só confirmando
+  // que existe: usada pelas rotas de avaliação. Qualquer outro caso => 404.
+  async assertAssignedTo(userId: number, interviewId: string): Promise<void> {
+    const evaluatorProfileId = await this.resolveEvaluatorProfileId(userId);
+
+    const record = await this.prisma.interview.findFirst({
+      where: { interview_id: interviewId, ...visibleTo(evaluatorProfileId) },
+      select: { interview_id: true },
+    });
+
+    if (!record) {
+      throw new NotFoundException(NOT_FOUND_MESSAGE);
+    }
+  }
+
   async getAssignedById(userId: number, interviewId: string) {
     const evaluatorProfileId = await this.resolveEvaluatorProfileId(userId);
 
