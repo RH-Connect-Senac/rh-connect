@@ -56,10 +56,11 @@ import {
   isSpeechContextSecure,
 } from "./domain/speech-dictation";
 import {
-  EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalScreenView,
+  EvalActiveScreen,
   EvalReviewScreen, EvalDoneScreen, EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
   EvalActivateScreen, EvalOnboardingScreen,
 } from "./components/eval-screens";
+import { EvalDashboardScreen, EvalQueueScreen, EvalInterviewDetailScreen } from "./components/evaluator-real-screens";
 import {
   AdminDashboardScreen, AdminCandidatesScreen, AdminCandidateDetailScreen,
   AdminEvaluatorsScreen, AdminEvaluatorFormScreen,
@@ -167,7 +168,6 @@ import {
   type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
-import { DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
 import {
   getAvailableCandidateReports,
   getAverageScore,
@@ -288,33 +288,6 @@ function getCandidateIdentity(session: MockAuthSession) {
   }
 
   return UNAUTHENTICATED_CANDIDATE_IDENTITY;
-}
-
-// Ponte de compatibilidade TEMPORÁRIA entre a sessão real (Auth/Prompt 03 —
-// `session.user.id` vem do `user_id` do Prisma) e o domínio mock de
-// Avaliações, que continua 100% localStorage e usa ids estáveis tipo
-// "evaluator-carlos-andrade" (gravados pelo Admin em `assignInterview`).
-// Sem essa ponte, o id real nunca bate com o `assignedEvaluatorId` mock, e a
-// tela do Avaliador não encontra as atribuições feitas pelo Admin.
-//
-// Regra: se o avaliador autenticado tiver um e-mail conhecido no diretório
-// mock (`EVALUATOR_DIRECTORY`), usamos o id mock estável correspondente —
-// preservando `name` da sessão real. Para avaliadores reais sem
-// correspondência mock conhecida, caímos no `user.id` real (fallback), que
-// simplesmente não vai casar com nenhuma atribuição mock existente — não é
-// uma correção estrutural, só evita quebrar o caso demo do Carlos Andrade.
-function getEvaluatorIdentity(session: MockAuthSession) {
-  const user = session.user;
-  if (session.authenticated && user?.role === "EVALUATOR") {
-    const normalizedEmail = user.email.trim().toLowerCase();
-    const mockEvaluatorId = findEvaluatorIdByEmail(normalizedEmail);
-    return {
-      id: mockEvaluatorId ?? user.id,
-      name: user.name,
-    };
-  }
-
-  return { id: DEFAULT_EVALUATOR.id, name: DEFAULT_EVALUATOR.name };
 }
 
 function getEntryPathForSession(session: MockAuthSession) {
@@ -6854,7 +6827,10 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const protect = (role: MockUserRole, children: ReactNode) => (
     <ProtectedRoute session={session} role={role}>{children}</ProtectedRoute>
   );
-  const evaluatorIdentity = getEvaluatorIdentity(session);
+  // Id da SESSÃO real, só para as telas do Avaliador que ainda usam o domínio
+  // mock (Em andamento, Histórico, Revisão, Concluída). Nunca é mapeado para
+  // um id fictício: sem correspondência, essas telas simplesmente ficam vazias.
+  const evaluatorSessionId = session.authenticated && session.user?.role === "EVALUATOR" ? session.user.id : "";
 
   return (
     <SessionContext.Provider value={session}>
@@ -6899,13 +6875,13 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
 
           <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
           <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
-          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
+          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalInterviewDetailScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
+          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
+          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
           <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />
 

@@ -4,13 +4,10 @@ import { useState, useEffect, useContext } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import type { EvaluationScores } from "../domain/interviews";
-// Prompt 08: os 6 componentes abaixo antes aceitavam `evaluatorId` como
-// prop OPCIONAL, com default `DEFAULT_EVALUATOR.id` ("Carlos Andrade") — um
-// fallback perigoso, já que cada um só é montado uma vez em `App.tsx`,
-// sempre recebendo `evaluatorId={evaluatorIdentity.id}` (a identidade real
-// resolvida pela ponte sessão→mock). Tornar a prop obrigatória elimina esse
-// fallback sem mudar nenhum call site existente — nenhum deles dependia do
-// valor default.
+// Telas ainda baseadas no domínio mock (Em andamento, Revisão, Concluída,
+// Histórico) recebem `evaluatorId` OBRIGATÓRIO, vindo da sessão real em
+// App.tsx — sem valor padrão e sem mapeamento para ids fictícios. Dashboard,
+// Fila e Detalhe agora são REAIS (`evaluator-real-screens.tsx`).
 import {
   completeEvaluation,
   createEmptyEvaluationScores,
@@ -38,7 +35,7 @@ import {
   MessageSquare, Info, Users, ArrowRight, Zap, Lock, AlertCircle,
 } from "lucide-react";
 import {
-  EVAL_ACCOUNT, EVAL_NOTIFS, resolveAccountConfig,
+  EVAL_ACCOUNT, EVAL_NOTIFS, getInitials, resolveAccountConfig,
 } from "./header-popovers";
 import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
 import { SessionContext } from "../session-context";
@@ -153,16 +150,13 @@ const EVAL_NAV: ProfileShellNavItem[] = [
   { icon: Settings,    label: "Configurações",      screen: "eval-settings" },
 ];
 
-function EvalLayout({ current, onNavigate, title, subtitle, actions, children }: {
+export function EvalLayout({ current, onNavigate, title, subtitle, actions, children }: {
   current: string; onNavigate: NavFn;
   title: string; subtitle?: string; actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  // Antes desta correção (Prompt 08), o cabeçalho/AccountDropdown do
-  // Avaliador sempre exibia o nome/e-mail de demonstração (`EVAL_ACCOUNT`,
-  // "Carlos Andrade"), mesmo com um avaliador real autenticado — porque este
-  // componente não tinha acesso à sessão. Mesmo padrão já usado por
-  // `AuthLayout` (Candidato) em App.tsx.
+  // Identidade SOMENTE da sessão real. Sem sessão de avaliador, o cabeçalho
+  // usa a base neutra `EVAL_ACCOUNT` (rótulo genérico, sem nome/e-mail).
   const activeSession = useContext(SessionContext);
   const resolvedAccount =
     activeSession.authenticated && activeSession.user?.role === "EVALUATOR"
@@ -202,18 +196,6 @@ function formatDateTime(value?: string) {
   if (!value) return "—";
   const date = new Date(value);
   return `${date.toLocaleDateString("pt-BR")} às ${date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
-}
-
-function mapInterviewToQueueItem(interview: ReturnType<typeof getAssignedInterviews>[number]) {
-  return {
-    id: interview.id,
-    candidate: interview.candidateName,
-    job: interview.context.title,
-    submitted: formatDateTime(interview.submittedAt ?? interview.createdAt),
-    priority: "normal" as const,
-    questions: interview.answers.length,
-    realId: interview.id,
-  };
 }
 
 // ─── Gráfico Interativo — Esta Semana ────────────────────────────────────────
@@ -390,200 +372,8 @@ function EvalWeekChartCard({ completedAtList, onDaySelect }: { completedAtList: 
 
 // ─── Screen: Dashboard do Avaliador ──────────────────────────────────────────
 
-export function EvalDashboardScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
-  const routerNavigate = useNavigate();
-  const assignedInterviews = getAssignedInterviews(evaluatorId);
-  const completedEvaluations = getCompletedEvaluations(evaluatorId);
-  const queuePreview = assignedInterviews.map(mapInterviewToQueueItem).slice(0, 3);
-  const completedPreview = completedEvaluations.map(({ interview, evaluation }) => ({
-    id: interview.id,
-    candidate: interview.candidateName,
-    job: interview.context.title,
-    date: evaluation.completedAt ? formatDateTime(evaluation.completedAt) : "—",
-    score: getAverageScore(evaluation.scores) ?? 0,
-    status: "completed" as const,
-    realId: interview.id,
-  })).slice(0, 4);
-  const completedScores = completedEvaluations
-    .map(({ evaluation }) => getAverageScore(evaluation.scores))
-    .filter((score): score is number => score !== null);
-  const averageScore = completedScores.length
-    ? formatScore(completedScores.reduce((sum, score) => sum + score, 0) / completedScores.length)
-    : "—";
-  const todayKey = new Date().toDateString();
-  const completedToday = completedEvaluations.filter(({ evaluation }) =>
-    evaluation.completedAt ? new Date(evaluation.completedAt).toDateString() === todayKey : false,
-  ).length;
-
-  return (
-    <EvalLayout current="eval-dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, Carlos. Você tem ${assignedInterviews.length} ${assignedInterviews.length === 1 ? "avaliação pendente" : "avaliações pendentes"}.`}>
-      <div className="w-full space-y-5">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard value={assignedInterviews.length}    label="Avaliações pendentes" icon={Layers}    color="bg-amber-50 text-amber-600" />
-          <StatCard value={completedToday}    label="Concluídas hoje"      icon={CheckCircle} color="bg-green-50 text-green-600" />
-          <StatCard value={averageScore}  label="Média geral de score" icon={Star}       color="bg-blue-50 text-blue-600" />
-          <StatCard value="—"  label="Tempo médio de avaliação" icon={Clock}      color="bg-purple-50 text-purple-600" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Queue preview */}
-          <Card className="lg:col-span-2 p-5 sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-foreground flex items-center gap-2"><Layers className="w-4 h-4 text-amber-500" /> Próximas na Fila</h3>
-              <Btn variant="ghost" size="sm" onClick={() => onNavigate("eval-queue")}>Ver todas <ChevronRight className="w-3.5 h-3.5" /></Btn>
-            </div>
-            <div className="space-y-2.5">
-              {queuePreview.length === 0 && (
-                <EmptyState
-                  icon={Layers}
-                  title="Nenhuma avaliação na fila"
-                  description="As entrevistas atribuídas a você aparecerão aqui."
-                  className="border-none bg-muted/40 p-6"
-                />
-              )}
-              {queuePreview.map(item => (
-                <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 hover:bg-muted/70 transition-colors">
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${item.priority === "high" ? "bg-red-500" : item.priority === "normal" ? "bg-amber-500" : "bg-slate-300"}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{item.candidate}</p>
-                    <p className="text-xs text-muted-foreground truncate">{item.job} · {item.submitted.split(" ")[0]}</p>
-                  </div>
-                  <Btn variant="outline" size="sm" onClick={() => routerNavigate(`/evaluator/evaluations/${item.realId}`)}>Avaliar</Btn>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* Weekly chart — interativo */}
-          <EvalWeekChartCard completedAtList={completedEvaluations.flatMap(({ evaluation }) => (evaluation.completedAt ? [evaluation.completedAt] : []))} />
-        </div>
-
-        {/* Recent completed */}
-        <Card className="p-5 sm:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-foreground flex items-center gap-2"><History className="w-4 h-4 text-green-500" /> Recém Concluídas</h3>
-            <Btn variant="ghost" size="sm" onClick={() => onNavigate("eval-history")}>Histórico completo <ChevronRight className="w-3.5 h-3.5" /></Btn>
-          </div>
-          {completedPreview.length === 0 ? (
-            <EmptyState
-              icon={History}
-              title="Nenhuma avaliação concluída"
-              description="As avaliações que você concluir aparecerão aqui."
-              className="border-none bg-muted/40 p-6"
-            />
-          ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-2 pr-4">Candidato</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-2 pr-4 hidden sm:table-cell">Vaga</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-2 pr-4">Data</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-2">Score</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {completedPreview.map(item => (
-                  <tr key={item.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-3 pr-4 font-medium text-foreground">{item.candidate}</td>
-                    <td className="py-3 pr-4 text-muted-foreground hidden sm:table-cell truncate max-w-[180px]">{item.job}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">{item.date}</td>
-                    <td className="py-3">
-                      <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{formatScore(item.score)}</Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          )}
-        </Card>
-      </div>
-    </EvalLayout>
-  );
-}
-
-// ─── Screen: Fila de Avaliações ───────────────────────────────────────────────
-
-export function EvalQueueScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
-  const routerNavigate = useNavigate();
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  const assignedInterviews = getAssignedInterviews(evaluatorId);
-  const queueItems = assignedInterviews.map(mapInterviewToQueueItem);
-  const filtered = queueItems.filter(i =>
-    (filter === "all" || i.priority === filter) &&
-    (i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase()))
-  );
-
-  const priorityLabel = { high: "Urgente", normal: "Normal", low: "Baixa" } as const;
-  const priorityTone = { high: "danger", normal: "warning", low: "neutral" } as const;
-
-  return (
-    <EvalLayout current="eval-queue" onNavigate={onNavigate} title="Fila de Avaliações" subtitle={`${queueItems.length} entrevistas aguardando revisão`}>
-      <div className="w-full space-y-4">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <SearchInput
-            containerClassName="flex-1"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar candidato ou vaga..."
-            className="bg-white"
-          />
-          <div className="flex gap-2">
-            {["all","high","normal","low"].map(f => (
-              <FilterChip
-                key={f}
-                onClick={() => setFilter(f)}
-                selected={filter === f}
-                className={filter === f ? "py-2" : "bg-white py-2 hover:bg-muted"}
-              >
-                {f === "all" ? "Todos" : f === "high" ? "Urgente" : f === "normal" ? "Normal" : "Baixa"}
-              </FilterChip>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          {filtered.length === 0 ? (
-            <Card className="p-12 text-center">
-              <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-3" />
-              <p className="font-bold text-foreground">{queueItems.length === 0 ? "Nenhuma avaliação na fila" : "Nenhuma avaliação encontrada"}</p>
-              <p className="text-sm text-muted-foreground mt-1">{queueItems.length === 0 ? "As entrevistas atribuídas a você aparecerão aqui." : "Ajuste a busca ou o filtro para ver outras avaliações."}</p>
-            </Card>
-          ) : filtered.map(item => (
-            <Card key={item.id} className="p-4 sm:p-5">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-mono text-muted-foreground">{item.id}</span>
-                    <StatusBadge tone={priorityTone[item.priority]}>{priorityLabel[item.priority]}</StatusBadge>
-                  </div>
-                  <p className="font-bold text-foreground">{item.candidate}</p>
-                  <p className="text-sm text-muted-foreground">{item.job}</p>
-                </div>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>{item.questions} questões</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span className="text-xs">{item.submitted}</span>
-                  </div>
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <Btn variant="outline" size="sm" onClick={() => routerNavigate(`/evaluator/evaluations/${item.realId}`)}><Eye className="w-3.5 h-3.5" /> Ver</Btn>
-                  <Btn variant="primary" size="sm" onClick={() => routerNavigate(`/evaluator/evaluations/${item.realId}`)}>Avaliar</Btn>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
-    </EvalLayout>
-  );
-}
+// As telas Dashboard, Fila e Detalhe do Avaliador agora são REAIS e vivem em
+// `evaluator-real-screens.tsx` (Fase 5C.1).
 
 // ─── Screen: Em Andamento ─────────────────────────────────────────────────────
 
@@ -1127,6 +917,10 @@ export function EvalCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
 export function EvalSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [notif, setNotif] = useState({ email: true, push: true, daily: false });
   const [saved, setSaved] = useState(false);
+  // Identidade SOMENTE da sessão real: sem nome/e-mail/iniciais fixos e sem
+  // especialização inventada (não há fonte real para ela nesta tela ainda).
+  const session = useContext(SessionContext);
+  const user = session.authenticated && session.user?.role === "EVALUATOR" ? session.user : null;
 
   return (
     <EvalLayout current="eval-settings" onNavigate={onNavigate} title="Configurações" subtitle="Preferências da conta de avaliador">
@@ -1142,21 +936,21 @@ export function EvalSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
         <Card className="p-5 sm:p-6">
           <h3 className="font-bold text-foreground mb-4 flex items-center gap-2"><Users className="w-4 h-4" /> Perfil do Avaliador</h3>
           <div className="flex items-center gap-4 mb-5">
-            <div className="w-14 h-14 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center text-white text-xl font-bold">CA</div>
+            <div className="w-14 h-14 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center text-white text-xl font-bold">{user ? getInitials(user.name) : "AV"}</div>
             <div>
-              <p className="font-bold text-foreground">Carlos Andrade</p>
-              <p className="text-sm text-muted-foreground">carlos.andrade@gmail.com</p>
+              <p className="font-bold text-foreground">{user?.name ?? "Avaliador"}</p>
+              {user && <p className="text-sm text-muted-foreground">{user.email}</p>}
               <Badge variant="info" className="mt-1">Avaliador humano</Badge>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-semibold text-foreground mb-1.5">Nome completo</label>
-              <Input defaultValue="Carlos Andrade" className="bg-white" />
+              <Input value={user?.name ?? ""} readOnly className="bg-white" />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Especialização</label>
-              <Input defaultValue="Recursos Humanos" className="bg-white" />
+              <label className="block text-sm font-semibold text-foreground mb-1.5">E-mail</label>
+              <Input value={user?.email ?? ""} readOnly className="bg-white" />
             </div>
           </div>
         </Card>

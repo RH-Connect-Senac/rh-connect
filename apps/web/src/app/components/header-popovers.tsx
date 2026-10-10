@@ -43,10 +43,13 @@ export const CANDIDATE_ACCOUNT: AccountConfig = {
   settingsScreen: "settings",
 };
 
+// Base NEUTRA: nunca carrega nome/e-mail de uma pessoa real. A identidade
+// exibida vem da sessão (`resolveAccountConfig`); sem sessão de avaliador, o
+// cabeçalho mostra apenas o rótulo genérico.
 export const EVAL_ACCOUNT: AccountConfig = {
-  name: "Carlos Andrade",
-  email: "carlos.andrade@gmail.com",
-  initials: "CA",
+  name: "Avaliador",
+  email: "",
+  initials: "AV",
   avatarClass: "bg-gradient-to-br from-teal-500 to-teal-700",
   profileLabel: "Minha conta",
   profileScreen: "eval-settings",
