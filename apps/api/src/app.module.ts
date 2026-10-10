@@ -10,6 +10,7 @@ import { AdminCandidatesModule } from './admin-candidates/admin-candidates.modul
 import { CandidateProfileModule } from './candidate-profile/candidate-profile.module';
 import { InterviewsModule } from './interviews/interviews.module';
 import { AdminInterviewsModule } from './admin-interviews/admin-interviews.module';
+import { EvaluatorInterviewsModule } from './evaluator-interviews/evaluator-interviews.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AdminInterviewsModule } from './admin-interviews/admin-interviews.modul
     CandidateProfileModule,
     InterviewsModule,
     AdminInterviewsModule,
+    EvaluatorInterviewsModule,
   ],
   controllers: [AppController],
   providers: [],
