@@ -244,9 +244,9 @@ Nunca adicione serviço pago, assinatura, API comercial ou dependência que gere
 
 ## 8. Nilo e gamificação
 
-Existe uma especificação v0.2 para Nilo e gamificação.
+A V1 de Nilo e gamificação (XP, missões, competências, Árvore de Talentos — Front-end, mocks e `localStorage`) está implementada e ativa no produto, na rota `/candidate/development` (`DevelopmentScreen`), acessível pelo item "Desenvolvimento" do menu do candidato.
 
-Trate-a como **proposta em discussão/validação**, não como obrigação automática do MVP, salvo decisão registrada posteriormente.
+A especificação v0.2 (`docs/03-design/01-Especificação do Personagem Nilo e da Gamificação...pdf`) e os documentos de evolução futura (`docs/06-arquitetura/07-evolucao-futura-gamificacao-arvore-nilo.md`) continuam sendo a referência para o que vai **além** da V1 (animação avançada, persistência em Back-end, IA). Trate essa evolução futura como **proposta em discussão/validação**, não como obrigação automática do MVP, salvo decisão registrada posteriormente.
 
 Princípios obrigatórios quando esses recursos forem utilizados:
 
@@ -543,13 +543,13 @@ Estas decisões são **provisórias e revisáveis**: podem ser alteradas futuram
 
 ### 16.3 Banco de dados
 
-Banco adotado provisoriamente:
+Banco adotado:
 
-- MySQL
+- PostgreSQL, via Prisma (`apps/api/prisma/schema.prisma`)
 
-Motivo atual: familiaridade da equipe e adequação aos requisitos relacionais do MVP.
+Decisão registrada em `docs/05-decisoes/DEC-003-banco-de-dados.md`.
 
-Não substituir por PostgreSQL ou outro banco sem uma decisão posterior registrada.
+Não substituir por MySQL ou outro banco sem uma decisão posterior registrada.
 
 ### 16.4 Qualidade e automação
 
@@ -569,16 +569,17 @@ Não substituir por PostgreSQL ou outro banco sem uma decisão posterior registr
 
 ### 16.6 Deploy e infraestrutura
 
-Adotado provisoriamente:
+Adotado:
 
-- Vercel para o deploy do Front-end (`apps/web`)
+- VPS própria, hospedando Front-end (`apps/web`) e API (`apps/api`).
+
+Decisão registrada em `docs/05-decisoes/DEC-004-hospedagem-infraestrutura.md`.
 
 Ainda a definir:
 
-- hospedagem da API;
-- armazenamento dos vídeos;
+- armazenamento dos vídeos (planejado para V2, junto com o módulo de gravação);
 - política de retenção;
-- estratégia final de autenticação/sessão.
+- estratégia final de autenticação/sessão (recuperação/redefinição de senha planejada para V2, ainda sem endpoint).
 
 Não adicionar serviços pagos ou provedores adicionais sem justificativa e aprovação.
 
@@ -936,9 +937,9 @@ Entre os resultados essenciais:
 
 Caso ainda não estejam em decisão aprovada, não escolha sozinho:
 
-- modelo final de autenticação/sessão;
-- hospedagem da API;
-- armazenamento de vídeos;
+- modelo final de autenticação/sessão (recuperação/redefinição de senha: planejada para V2, sem endpoint ainda);
+- armazenamento de vídeos (planejado para V2);
+- gravação/upload de vídeo (planejado para V2, nada implementado ainda);
 - política de retenção;
 - duração máxima de resposta;
 - quantidade de perguntas;
@@ -947,18 +948,20 @@ Caso ainda não estejam em decisão aprovada, não escolha sozinho:
 - acesso do candidato ao vídeo após envio;
 - exclusão de vídeo;
 - identificação exibida ao avaliador;
-- escala de avaliação;
-- pesos;
-- fórmula da nota;
 - liberação automática/manual do relatório;
 - fluxo de revisão;
 - notificações;
 - materiais no MVP;
 - navegadores oficiais;
-- escopo exato de gamificação;
-- escopo exato da Árvore de Talentos;
-- escopo exato de Nilo;
+- escopo exato da evolução futura da Árvore de Talentos (além da V1 já implementada);
+- escopo exato da evolução futura de Nilo (além da V1 já implementada);
 - qualquer integração paga.
+
+Itens resolvidos e já registrados (não tratar mais como pendência):
+
+- hospedagem da API — VPS (`docs/05-decisoes/DEC-004-hospedagem-infraestrutura.md`);
+- escala de avaliação, pesos e fórmula da nota — 7 critérios, escala 0–10, média aritmética simples (`docs/05-decisoes/DEC-005-formula-e-criterios-de-avaliacao.md`);
+- escopo de gamificação/Nilo/Árvore de Talentos na V1 — implementado e ativo (seção 8).
 
 Quando encontrar uma dessas lacunas, sinalize:
 
