@@ -2,11 +2,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  EvaluationForm,
   EvaluatorEvaluationContent,
   type EvaluationFormUi,
   type EvaluationScreenState,
   type SaveFeedback,
 } from "./evaluator-evaluation-content";
+import { Button } from "./ui/button";
 import {
   emptyForm,
   formFromDraft,
@@ -138,7 +140,7 @@ describe("tela real de avaliação (apresentação)", () => {
     expect(html).toContain("Linha 1\nLinha 2");
     expect(html).toContain("7,8");
     expect(html).toContain("Calculada pelo servidor");
-    expect(html).toMatch(/data-testid="overall-label">Média parcial</);
+    expect(html).toMatch(/data-testid="overall-label">Média atual</);
   });
 
   it("sem rascunho: campos vazios, nota geral '—' e contador 0/2000", () => {
@@ -160,7 +162,7 @@ describe("tela real de avaliação (apresentação)", () => {
     form.scores.coherence = "7";
     const html = render(ready(emptyDraft), ui(emptyDraft, { form, validation: validateForm(form, {}), dirty: true }));
     expect(html).toContain("7,5");
-    expect(html).toMatch(/data-testid="overall-label">Prévia</);
+    expect(html).toMatch(/data-testid="overall-label">Média atual</);
     expect(html).toMatch(/data-testid="overall-value">7,5</);
   });
 
@@ -203,12 +205,13 @@ describe("tela real de avaliação (apresentação)", () => {
     expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
   });
 
-  it("salvando: botão desabilitado ('Salvando...') e campos travados — sem duplo clique", () => {
+  it("salvando: só o botão Salvar trava ('Salvando...'); campos seguem editáveis (autosave transparente)", () => {
     const form = formFromDraft(savedDraft);
     form.scores.clarity = "9";
     const html = render(ready(savedDraft), ui(savedDraft, { form, validation: validateForm(form, savedDraft.criteriaScores), dirty: true, saving: true }));
     expect(html).toMatch(/<button[^>]*disabled[^>]*aria-busy="true"[^>]*>Salvando\.\.\.<\/button>/);
-    expect(html).toMatch(/id="criterion-clarity"[^>]*disabled/);
+    expect(html).not.toMatch(/id="criterion-clarity"[^>]*\sdisabled=""/);
+    expect(html).not.toMatch(/<textarea[^>]*\sdisabled=""/);
   });
 
   it("sucesso mostra 'Rascunho salvo' no texto discreto de status", () => {
@@ -240,10 +243,11 @@ describe("tela real de avaliação (apresentação)", () => {
     expect(html).toMatch(/<textarea[^>]*>Linha 1\nLinha 2<\/textarea>/);
   });
 
-  it("conclusão NÃO está ligada: botão 'Concluir avaliação' desabilitado e com aviso", () => {
-    const html = render(ready(savedDraft), ui(savedDraft));
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Concluir avaliação<\/button>/);
-    expect(html).toContain("será liberada na próxima etapa");
+  it("não há mais botão 'Concluir avaliação' na edição: a conclusão fica na revisão", () => {
+    const html = render(ready(savedDraft), ui(savedDraft, { canReview: true, onReview: noop }));
+    expect(html).not.toContain("Concluir avaliação");
+    expect(html).not.toContain("próxima etapa");
+    expect(html).toContain("Revisar avaliação");
   });
 });
 
@@ -355,7 +359,7 @@ describe("uma pergunta por vez", () => {
     // QuestionPanel é componente: expande a árvore chamando-o com suas props.
     const panelEl = findAll(tree, (n) => typeof n.type === "function" && n.type.name === "QuestionPanel")[0];
     const panel = panelEl.type(panelEl.props) as any;
-    const buttons = findAll(panel, (n) => n.type === "button");
+    const buttons = findAll(panel, (n) => n.type === "button" || n.type === Button);
     const byIndex = (i: number) => buttons.find((b: any) => b.props["data-question-index"] === i);
     byIndex(0).props.onClick();
     byIndex(2).props.onClick();
@@ -389,8 +393,10 @@ describe("contexto da vaga compacto", () => {
     const html = renderAt(0);
     expect(html).toContain("Secretária Comercial");
     for (const chip of ["Clínica Exemplo", "Três Lagoas/MS", "Híbrido", "PJ"]) expect(html).toContain(chip);
-    expect(html).toMatch(/<details[^>]*>\s*<summary[^>]*>Requisitos \(1\)/);
-    expect(html).toMatch(/<details[^>]*>\s*<summary[^>]*>Atividades \(1\)/);
+    expect(html).toMatch(/<summary[^>]*>\s*<span>Requisitos[\s\S]*?<\/span>/);
+    expect(html).toMatch(/<summary[^>]*>\s*<span>Atividades[\s\S]*?<\/span>/);
+    // recolhidos por padrão (nenhum <details open>)
+    expect(html).not.toMatch(/<details[^>]*\sopen/);
     expect(html).toContain("Pacote Office");
   });
 
@@ -468,12 +474,12 @@ describe("painel de critérios clicável", () => {
     const html = renderAt(0, ui(emptyDraft, { form, validation: validateForm(form, {}), dirty: true }));
     expect(html).toMatch(/data-testid="scored-count">3\/7 critérios avaliados/);
     expect(html).toMatch(/data-testid="overall-value">7,0</);
-    expect(html).toMatch(/data-testid="overall-label">Prévia</);
+    expect(html).toMatch(/data-testid="overall-label">Média atual</);
   });
 
-  it("sem alterações, a média vem do servidor (7,8) e é rotulada 'Média parcial'", () => {
+  it("sem alterações, a média vem do servidor (7,8) e é rotulada 'Média atual'", () => {
     const html = renderAt(0, ui(savedDraft), interview3, savedDraft);
-    expect(html).toMatch(/data-testid="overall-label">Média parcial</);
+    expect(html).toMatch(/data-testid="overall-label">Média atual</);
     expect(html).toMatch(/data-testid="overall-value">7,8</);
   });
 
@@ -484,20 +490,20 @@ describe("painel de critérios clicável", () => {
     expect(html).toContain("/2000");
   });
 
-  it("botões de nota ficam travados enquanto salva", () => {
+  it("botões de nota NÃO ficam travados enquanto salva (autosave não tira o foco)", () => {
     const form = formFromDraft(savedDraft);
     form.scores.clarity = "9";
     const html = renderAt(0, ui(savedDraft, { form, validation: validateForm(form, savedDraft.criteriaScores), dirty: true, saving: true }));
     const buttons = html.match(/<button[^>]*data-score="\d+"[^>]*>/g) ?? [];
     expect(buttons).toHaveLength(70);
-    expect(buttons.every((b) => /\sdisabled=""/.test(b))).toBe(true);
+    expect(buttons.some((b) => /\sdisabled=""/.test(b))).toBe(false);
   });
 
-  it("layout: painel lateral sticky no desktop, pergunta à esquerda e critérios depois no mobile", () => {
+  it("layout: duas colunas no desktop, pergunta à esquerda e critérios depois no mobile — SEM scroll interno", () => {
     const html = renderAt(0);
     expect(html).toContain("xl:grid-cols-[minmax(0,1fr)_380px]");
-    expect(html).toContain("xl:sticky");
-    expect(html).toContain("xl:overflow-y-auto");
+    // um único scroll vertical: nada de painel rolável nem altura máxima
+    expect(html).not.toMatch(/overflow-y-(auto|scroll)|overflow-auto|max-h-|xl:sticky/);
     
     expect(html).not.toMatch(/overflow-x-scroll/);
   });
@@ -578,5 +584,168 @@ describe("estados visuais do autosave", () => {
 
   it("limpo: nenhum texto de sincronização", () => {
     expect(renderAt(0, ui(savedDraft), interview3, savedDraft)).not.toContain("unsaved-indicator");
+  });
+});
+
+// ─── Fase 5C.3: botão "Revisar avaliação" na edição ───
+
+const reviewBtn = /<button[^>]*data-action="review"[^>]*>/;
+
+describe("edição: Revisar avaliação", () => {
+  it("ao lado de Salvar rascunho, nesta ordem", () => {
+    const html = render(ready(savedDraft), ui(savedDraft, { canReview: true, onReview: noop }));
+    expect(html.indexOf("Salvar rascunho") < html.indexOf("Revisar avaliação")).toBe(true);
+  });
+  it("desabilitado quando a avaliação não está completa e mostra a dica", () => {
+    const html = render(ready(emptyDraft), ui(emptyDraft, { canReview: false, onReview: noop }));
+    expect(html.match(reviewBtn)?.[0]).toMatch(/\sdisabled=""/);
+    expect(html).toContain("Preencha os 7 critérios (0–10) e o comentário");
+  });
+  it("habilitado com a avaliação completa, sem dica", () => {
+    const html = render(ready(savedDraft), ui(savedDraft, { canReview: true, onReview: noop }));
+    expect(html.match(reviewBtn)?.[0]).not.toMatch(/\sdisabled=""/);
+    expect(html).not.toContain("Preencha os 7 critérios (0–10) e o comentário");
+  });
+  it("revisando: mostra 'Salvando...' e desabilita (sem duplo clique)", () => {
+    const html = render(ready(savedDraft), ui(savedDraft, { canReview: true, reviewing: true, onReview: noop }));
+    expect(html.match(reviewBtn)?.[0]).toMatch(/\sdisabled=""/);
+    expect(html.match(/<button[^>]*data-action="review"[^>]*>[^<]*</)?.[0]).toContain("Salvando...");
+  });
+  it("falha ao salvar antes da revisão: erro visível, formulário e notas preservados", () => {
+    const html = render(
+      ready(savedDraft),
+      ui(savedDraft, { canReview: true, onReview: noop, reviewError: "Não foi possível salvar o rascunho." }),
+    );
+    expect(html).toContain("Não foi possível salvar o rascunho.");
+    expect(html).toContain("Linha 1\nLinha 2");
+    expect(html).toMatch(/<textarea/);
+  });
+  it("o clique chama onReview", () => {
+    let calls = 0;
+    const tree = EvaluationForm({ draft: savedDraft, ui: ui(savedDraft, { canReview: true, onReview: () => void calls++ }) });
+    const buttons: Array<{ props: Record<string, unknown> }> = [];
+    const walkTree = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(walkTree);
+      if (!node || typeof node !== "object") return;
+      const el = node as { type?: unknown; props?: { children?: unknown } };
+      if (el.type === "button") buttons.push(el as { props: Record<string, unknown> });
+      walkTree(el.props?.children);
+    };
+    walkTree(tree);
+    const review = buttons.find((b) => b.props["data-action"] === "review");
+    (review?.props.onClick as () => void)();
+    expect(calls).toBe(1);
+  });
+});
+
+describe("Fase 5C.3-UX2: identificação do candidato e nomenclatura", () => {
+  it("o nome completo e a vaga aparecem no conteúdo só em mobile (md:hidden); o título da vaga do desktop é md:block", () => {
+    const html = renderAt(0, ui(savedDraft), interview3, savedDraft);
+    expect(html).toMatch(/data-testid="candidate-identity"[^>]*>/);
+    expect(html).toMatch(/class="mb-2 md:hidden" data-testid="candidate-identity"/);
+    expect(html).toContain("Maria Candidata");
+    expect(html).toMatch(/<h3 class="hidden font-bold text-foreground md:block">Secretária Comercial<\/h3>/);
+  });
+  it("edição usa 'Média atual' (nunca 'parcial' nem 'final')", () => {
+    const html = renderAt(0, ui(savedDraft), interview3, savedDraft);
+    expect(html).toMatch(/data-testid="overall-label">Média atual</);
+    expect(html).not.toMatch(/Média parcial|Média final|Média prevista/);
+  });
+});
+
+function navButtons(index = 1): any[] {
+  const tree = EvaluatorEvaluationContent({
+    state: { status: "ready", interview: interview3, draft: savedDraft },
+    ui: ui(savedDraft),
+    questionIndex: index,
+    onQuestionChange: noop,
+    onBack: noop,
+  }) as any;
+  const panelEl = findAll(tree, (n) => typeof n.type === "function" && n.type.name === "QuestionPanel")[0];
+  const panel = panelEl.type(panelEl.props) as any;
+  const nav = findAll(panel, (n) => n.type === "nav")[0];
+  return findAll(nav, (n) => n.type === Button);
+}
+
+describe("Fase 5C.3-UX3: contexto e navegação mobile", () => {
+  const html = renderAt(1, ui(savedDraft), interview3, savedDraft);
+  it("chips são Badges do design system (empresa, local, modalidade, contrato); ausentes não renderizam", () => {
+    expect((html.match(/<li class="max-w-full"><span data-slot="badge"/g) ?? []).length).toBe(4);
+    const bare = renderAt(0, ui(savedDraft), { ...interview3, context: { ...interview3.context, company: null, location: null, workMode: null, contractType: null } }, savedDraft);
+    expect(bare).not.toContain('aria-label="Dados da vaga"');
+  });
+  it("sem requisitos/atividades os blocos não aparecem; com dados ambos existem", () => {
+    expect(html).toContain("Requisitos");
+    expect(html).toContain("Atividades");
+    const none = renderAt(0, ui(savedDraft), { ...interview3, context: { ...interview3.context, requirements: [], activities: [] } }, savedDraft);
+    expect(none).not.toMatch(/Requisitos|Atividades/);
+  });
+  it("indicadores numa linha só (flex-nowrap, sem flex-wrap) e encolhem em vez de quebrar", () => {
+    expect(html).toMatch(/order-first col-span-2 flex flex-nowrap justify-center/);
+    const nav = html.slice(html.indexOf("<nav"), html.indexOf("</nav>"));
+    expect(nav).not.toMatch(/flex-wrap/);
+    expect((nav.match(/data-question-index=/g) ?? []).length).toBe(3);
+    expect(nav).toMatch(/h-9 min-w-0 max-w-10 flex-1/);
+  });
+  it("Anterior/Próxima: dois botões lado a lado no mobile (grid de 2) com área de toque min-h-11", () => {
+    expect(html).toMatch(/<nav[^>]*grid grid-cols-2/);
+    const nav = html.slice(html.indexOf("<nav"), html.indexOf("</nav>"));
+    expect(nav).toContain("Anterior");
+    expect(nav).toContain("Próxima");
+    for (const b of navButtons()) expect(String(b.props.className)).toContain("min-h-11 w-full");
+  });
+  it("ordem: pergunta -> resposta -> progresso -> navegação -> critérios", () => {
+    const idx = (t: string) => html.indexOf(t);
+    expect(idx("Resposta do candidato") < idx('data-testid="question-progress"')).toBe(true);
+    expect(idx('data-testid="question-progress"') < idx("<nav")).toBe(true);
+    expect(idx("<nav") < idx("Critérios de avaliação")).toBe(true);
+  });
+  it("disabled correto: Anterior bloqueado na primeira, Próxima na última, ambos livres no meio", () => {
+    const first = renderAt(0, ui(savedDraft), interview3, savedDraft);
+    expect(first).toMatch(/<button[^>]*\sdisabled=""[^>]*>(?:<svg[^>]*>.*?<\/svg>)?Anterior<\/button>/);
+    expect(first).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Próxima/);
+    const last = renderAt(2, ui(savedDraft), interview3, savedDraft);
+    expect(last).toMatch(/<button[^>]*\sdisabled=""[^>]*>Próxima/);
+    expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>(?:<svg[^>]*>.*?<\/svg>)?Anterior/);
+    expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Próxima/);
+  });
+  it("tipo da pergunta em Badge e resposta com quebras de linha preservadas", () => {
+    expect(html).toMatch(/<span data-slot="badge"[^>]*>(Técnica|Comportamental|Situacional|[^<]+)<\/span>/);
+    expect(html).toContain("whitespace-pre-wrap");
+  });
+});
+
+describe("Fase 5C.3-UX4: Anterior/Próxima no design system", () => {
+  const html = renderAt(1, ui(savedDraft), interview3, savedDraft);
+  const nav = html.slice(html.indexOf("<nav"), html.indexOf("</nav>"));
+  it("Próxima usa o Button compartilhado, variant primary (azul do DS)", () => {
+    const next = navButtons().find((b) => hasText(b.props.children, "Próxima"));
+    expect(next?.type).toBe(Button);
+    expect(next?.props.variant).toBe("primary");
+    expect(String(next?.props.className)).not.toMatch(/rounded-|px-|py-|bg-/); // radius/padding/cor vêm do DS
+  });
+  it("Anterior usa o Button compartilhado, variant outline (secundário do DS)", () => {
+    const prev = navButtons().find((b) => hasText(b.props.children, "Anterior"));
+    expect(prev?.type).toBe(Button);
+    expect(prev?.props.variant).toBe("outline");
+    expect(String(prev?.props.className)).not.toMatch(/rounded-|px-|py-|bg-/);
+  });
+  it("disabled continua nas pontas (atributo no HTML)", () => {
+    const first = renderAt(0, ui(savedDraft), interview3, savedDraft);
+    expect(first).toMatch(/<button[^>]*\sdisabled=""[^>]*>(?:<svg[^>]*>.*?<\/svg>)?Anterior/);
+    const last = renderAt(2, ui(savedDraft), interview3, savedDraft);
+    expect(last).toMatch(/<button[^>]*\sdisabled=""[^>]*>Próxima/);
+    expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>(?:<svg[^>]*>.*?<\/svg>)?Anterior/);
+  });
+  it("indicadores seguem circulares, com azul (atual), verde (respondida) e foco do DS", () => {
+    const dots = nav.match(/<button[^>]*data-question-index="\d"[^>]*>/g) ?? [];
+    expect(dots).toHaveLength(3);
+    for (const d of dots) {
+      expect(d).toContain("rounded-full");
+      expect(d).toContain("focus-visible:ring-[4px]");
+    }
+    expect(dots[1]).toContain("border-blue-600 bg-blue-50 text-blue-700");
+    expect(dots[1]).toContain('aria-current="true"');
+    expect(dots[0]).toContain("border-green-200 bg-green-50 text-green-700");
   });
 });

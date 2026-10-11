@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  completeEvaluation,
   getAssignedInterview,
   getEvaluationDraft,
   listAssignedInterviews,
@@ -362,5 +363,104 @@ describe("evaluator-interviews-service: rascunho da avaliação", () => {
   it("resposta inválida => erro de resposta inválida", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { interviewId: ID, status: "OUTRO" }));
     expect(await getEvaluationDraft(ID)).toMatchObject({ ok: false, reason: "error" });
+  });
+});
+
+describe("completeEvaluation (POST /evaluation/complete)", () => {
+  const completed = {
+    interviewId: ID,
+    status: "COMPLETED",
+    evaluationStatus: "COMPLETED",
+    overallScore: 7.8,
+    completedAt: "2026-10-10T13:00:00.000Z",
+  };
+
+  it("POST na rota certa, com cookies e SEM corpo", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, completed));
+    const result = await completeEvaluation(ID);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(new RegExp(`/evaluator/interviews/${ID}/evaluation/complete$`));
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(init.body).toBeUndefined();
+    expect(result.ok).toBe(true);
+  });
+
+  it("não envia nota, critérios, comentário nem status (nenhum campo do cliente)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, completed));
+    await (completeEvaluation as (id: string, ...extra: unknown[]) => Promise<unknown>)(ID, {
+      overallScore: 10,
+      criteriaScores: { clarity: 10 },
+      summary: "x",
+      status: "COMPLETED",
+    });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.body).toBeUndefined();
+    expect(JSON.stringify(init)).not.toMatch(/overallScore|criteriaScores|summary/);
+  });
+
+  it("sucesso devolve overallScore e completedAt do servidor", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, completed));
+    expect(await completeEvaluation(ID)).toEqual({
+      ok: true,
+      data: {
+        interviewId: ID,
+        status: "COMPLETED",
+        evaluationStatus: "COMPLETED",
+        overallScore: 7.8,
+        completedAt: "2026-10-10T13:00:00.000Z",
+      },
+    });
+  });
+
+  it("200 com corpo vazio/estranho continua sendo sucesso (repetir o POST daria 404)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200));
+    const result = await completeEvaluation(ID);
+    expect(result).toMatchObject({ ok: true, data: { overallScore: null, completedAt: null } });
+  });
+
+  it("401 renova a sessão uma vez e repete o POST", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401, { message: "x" }))
+      .mockResolvedValueOnce(jsonResponse(200, {}))
+      .mockResolvedValueOnce(jsonResponse(200, completed));
+    const result = await completeEvaluation(ID);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/auth\/refresh$/);
+    expect(fetchMock.mock.calls[2][1].method).toBe("POST");
+    expect(result.ok).toBe(true);
+  });
+
+  it("400 => invalid com a mensagem de negócio", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, { message: "Preencha todos os critérios." }));
+    expect(await completeEvaluation(ID)).toEqual({
+      ok: false,
+      reason: "invalid",
+      message: "Preencha todos os critérios.",
+    });
+  });
+
+  it("404 => not_found com mensagem fixa", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(404, { message: "qualquer" }));
+    expect(await completeEvaluation(ID)).toEqual({
+      ok: false,
+      reason: "not_found",
+      message: "Entrevista não encontrada ou indisponível.",
+    });
+  });
+
+  it("409 => conflict", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(409, { message: "A avaliação já foi concluída." }));
+    expect(await completeEvaluation(ID)).toMatchObject({ ok: false, reason: "conflict" });
+  });
+
+  it("500 => error genérico e rede => error (sem vazar detalhes)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(500, { message: "stack trace secreto" }));
+    const server = await completeEvaluation(ID);
+    expect(server).toMatchObject({ ok: false, reason: "error" });
+    expect(JSON.stringify(server)).not.toContain("secreto");
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    expect(await completeEvaluation(ID)).toMatchObject({ ok: false, reason: "error" });
   });
 });

@@ -152,6 +152,22 @@ export class EvaluationAutosave {
     return this.run("manual");
   }
 
+  // Garante que a versão ATUAL esteja confirmada pelo servidor (usado antes
+  // de ir para a revisão). Reaproveita o mesmo fluxo do botão manual: sem
+  // alteração não há PUT; durante um PUT em andamento espera e envia só se
+  // ainda houver diferença; nunca cria request paralela.
+  async syncNow(): Promise<{ ok: boolean; message: string | null }> {
+    if (this.destroyed) return { ok: false, message: null };
+    await this.flush();
+    await this.whenIdle();
+    if (this.destroyed) return { ok: false, message: null };
+    if (!isDirty(this.form, this.serverForm)) return { ok: true, message: null };
+    return {
+      ok: false,
+      message: this.message ?? GENERIC_SAVE_ERROR,
+    };
+  }
+
   // Aguarda saves em andamento (útil em testes).
   async whenIdle(): Promise<void> {
     while (this.pending) await this.pending;
@@ -271,8 +287,11 @@ export class EvaluationAutosave {
       this.lastSave = kind;
       this.message = null;
       if (this.version === snapshotVersion) {
-        // Nada mudou durante o PUT: o formulário passa a refletir o servidor.
-        this.form = outcome.form;
+        // Nada mudou durante o PUT. Se o que está na tela já é a mesma versão
+        // confirmada (mesmas notas/comentário), o formulário NÃO é substituído:
+        // o texto digitado e a referência ficam intactos (o campo não é tocado,
+        // foco e cursor permanecem). Só adota a grafia do servidor se divergir.
+        if (isDirty(this.form, outcome.form)) this.form = outcome.form;
         this.status = "saved";
       } else {
         // Houve alteração nova: ela PERMANECE; a resposta antiga não a sobrescreve.

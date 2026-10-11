@@ -57,10 +57,10 @@ import {
 } from "./domain/speech-dictation";
 import {
   EvalActiveScreen,
-  EvalReviewScreen, EvalDoneScreen, EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
+  EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
   EvalActivateScreen, EvalOnboardingScreen,
 } from "./components/eval-screens";
-import { EvalDashboardScreen, EvalQueueScreen, EvalInterviewDetailScreen, EvalDraftEvaluationScreen } from "./components/evaluator-real-screens";
+import { EvalDashboardScreen, EvalQueueScreen, EvalInterviewDetailScreen, EvalDraftEvaluationScreen, EvalRealReviewScreen, EvalCompletionSuccessScreen } from "./components/evaluator-real-screens";
 import {
   AdminDashboardScreen, AdminCandidatesScreen, AdminCandidateDetailScreen,
   AdminEvaluatorsScreen, AdminEvaluatorFormScreen,
@@ -6880,8 +6880,8 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
           <Route path="/evaluator/interviews/:id" element={protect("EVALUATOR", <EvalInterviewDetailScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalDraftEvaluationScreen onNavigate={navigate} />)} />
-          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
-          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
+          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalRealReviewScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalCompletionSuccessScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
           <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />

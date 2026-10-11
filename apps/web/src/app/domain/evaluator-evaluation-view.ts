@@ -37,6 +37,34 @@ export function nextQuestionIndex(index: number, total: number): number {
   return clampQuestionIndex(index + 1, total);
 }
 
+// Cabeçalho da tela de avaliação. Desktop: "Avaliando: <nome>" + vaga. Mobile
+// (cabeçalho disputa espaço com menu/sino/avatar): título curto + progresso;
+// o nome completo e a vaga aparecem no conteúdo (ver JobContextSummary).
+export function evaluationHeader(input: {
+  isMobile: boolean;
+  candidateName: string | null;
+  jobTitle: string | null;
+  questionIndex: number;
+  totalQuestions: number;
+}): { title: string; subtitle: string; showProgressBadge: boolean } {
+  const { candidateName, jobTitle } = input;
+  if (candidateName === null || jobTitle === null) {
+    return { title: "Avaliação", subtitle: "Avaliação da entrevista", showProgressBadge: false };
+  }
+  if (input.isMobile) {
+    return {
+      title: "Avaliação",
+      subtitle: questionProgressLabel(input.questionIndex, input.totalQuestions),
+      showProgressBadge: false,
+    };
+  }
+  return {
+    title: `Avaliando: ${candidateName}`,
+    subtitle: jobTitle,
+    showProgressBadge: input.totalQuestions > 0,
+  };
+}
+
 export function questionProgressLabel(index: number, total: number): string {
   if (total <= 0) return "Sem perguntas";
   return `Questão ${clampQuestionIndex(index, total) + 1} de ${total}`;

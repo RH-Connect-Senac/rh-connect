@@ -7,10 +7,11 @@
  */
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { Layers } from "lucide-react";
 import { SessionContext } from "../session-context";
 import {
+  completeEvaluation,
   getAssignedInterview,
   getEvaluationDraft,
   listAssignedInterviews,
@@ -24,6 +25,12 @@ import {
   type CriterionKey,
 } from "../domain/evaluator-evaluation-form";
 import { EvaluationAutosave, type AutosaveSnapshot } from "../domain/evaluator-autosave";
+import { EvaluationCompletionFlow, type CompletionSnapshot } from "../domain/evaluator-completion-flow";
+import {
+  draftReadiness,
+  parseCompletionNavState,
+  reviewReadiness,
+} from "../domain/evaluator-review";
 import { SavedNotice, visibleSyncStatus } from "../domain/evaluator-save-notice";
 import {
   EvaluatorDetailContent,
@@ -38,15 +45,22 @@ import {
   type SaveFeedback,
 } from "./evaluator-evaluation-content";
 import {
+  EvaluatorReviewContent,
+  EvaluatorSuccessContent,
+  type ReviewScreenState,
+} from "./evaluator-review-content";
+import {
   clearLocalDraft,
   getBrowserStorage,
   restoreForm,
 } from "../domain/evaluator-local-draft";
 import {
   clampQuestionIndex,
+  evaluationHeader,
   questionProgressLabel,
 } from "../domain/evaluator-evaluation-view";
 import { Badge } from "./ui/badge";
+import { useIsMobile } from "./ui/use-mobile";
 import { EvalLayout } from "./eval-screens";
 
 type NavFn = (s: string) => void;
@@ -219,6 +233,11 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
   const [restoredFromLocal, setRestoredFromLocal] = useState(false);
   // Pergunta exibida (só navegação de leitura; não salva nem altera notas).
   const [questionIndex, setQuestionIndex] = useState(0);
+  const routerNavigate = useNavigate();
+  // "Revisar avaliação": salva a versão atual (se houver pendência) e navega.
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const reviewingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +246,9 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
       return;
     }
     setState({ status: "loading" });
+    reviewingRef.current = false;
+    setReviewing(false);
+    setReviewError(null);
     setView(null);
     setSavedVisible(false);
     setQuestionIndex(0);
@@ -320,6 +342,27 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
   const onSave = () => {
     void autosaveRef.current?.flush();
   };
+  const canReview = view ? reviewReadiness(form, view.persisted).ready : false;
+  const onReview = async () => {
+    const controller = autosaveRef.current;
+    if (!controller || !id || reviewingRef.current) return;
+    if (!reviewReadiness(controller.getSnapshot().form, controller.getSnapshot().persisted).ready) return;
+    reviewingRef.current = true;
+    setReviewing(true);
+    setReviewError(null);
+    // Reaproveita o fluxo de autosave: sem PUT paralelo e sem PUT se já sincronizado.
+    const result = await controller.syncNow();
+    if (autosaveRef.current !== controller) return; // saiu da tela
+    reviewingRef.current = false;
+    setReviewing(false);
+    if (!result.ok) {
+      setReviewError(
+        result.message ?? "Não foi possível salvar o rascunho antes da revisão. Tente novamente.",
+      );
+      return;
+    }
+    routerNavigate(`${EVALUATION_ROUTE}/${id}/review`);
+  };
 
   // Erro do save MANUAL (destaque). O sucesso (manual ou automático) usa só o
   // texto discreto de status: "Rascunho salvo".
@@ -330,8 +373,15 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
 
   const ready = state.status === "ready" ? state : null;
   const totalQuestions = ready ? ready.interview.questions.length : 0;
-  const title = ready ? `Avaliando: ${ready.interview.candidate.name}` : "Avaliação";
-  const subtitle = ready ? ready.interview.context.title : "Avaliação da entrevista";
+  const isMobile = useIsMobile();
+  const header = evaluationHeader({
+    isMobile,
+    candidateName: ready ? ready.interview.candidate.name : null,
+    jobTitle: ready ? ready.interview.context.title : null,
+    questionIndex,
+    totalQuestions,
+  });
+  const { title, subtitle } = header;
 
   return (
     <EvalLayout
@@ -340,7 +390,7 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
       title={title}
       subtitle={subtitle}
       actions={
-        ready && totalQuestions > 0 ? (
+        ready && header.showProgressBadge ? (
           <Badge variant="warning">{questionProgressLabel(questionIndex, totalQuestions)}</Badge>
         ) : undefined
       }
@@ -356,6 +406,10 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
           syncStatus: visibleSyncStatus(view?.status, savedVisible),
           lastSave: view?.lastSave ?? null,
           restoredFromLocal,
+          canReview,
+          reviewing,
+          reviewError,
+          onReview: () => void onReview(),
           onScoreChange,
           onSummaryChange,
           onSave,
@@ -365,6 +419,121 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
         onBack={() => onNavigate("eval-queue")}
         onRetry={() => setAttempt((current) => current + 1)}
       />
+    </EvalLayout>
+  );
+}
+
+// Revisão final: lê o detalhe e o rascunho REAIS (sem autosave, sem localStorage
+// de edição, sem mocks). Concluir só acontece após a confirmação.
+export function EvalRealReviewScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const { id } = useParams();
+  const routerNavigate = useNavigate();
+  const session = useContext(SessionContext);
+  const userId = session.user?.id ?? "";
+  const [state, setState] = useState<ReviewScreenState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [completion, setCompletion] = useState<CompletionSnapshot>({
+    phase: "idle",
+    result: null,
+    error: null,
+  });
+  const flowRef = useRef<EvaluationCompletionFlow | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!id) {
+      setState({ status: "not_found", message: "Entrevista não encontrada ou indisponível." });
+      return;
+    }
+    setState({ status: "loading" });
+    setCompletion({ phase: "idle", result: null, error: null });
+    Promise.all([getAssignedInterview(id), getEvaluationDraft(id)]).then(([interview, draft]) => {
+      if (cancelled) return;
+      if (interview.ok && draft.ok && draft.data.status === "DRAFT") {
+        const interviewData = interview.data;
+        const flow: EvaluationCompletionFlow = new EvaluationCompletionFlow({
+          userId,
+          interviewId: id,
+          storage: getBrowserStorage(),
+          complete: completeEvaluation,
+          canComplete: () => draftReadiness(draft.data).ready,
+          onChange: (snapshot) => {
+            if (flowRef.current !== flow) return;
+            setCompletion(snapshot);
+            if (snapshot.phase === "done") {
+              // As leituras ativas passam a dar 404: o sucesso leva o contexto na navegação.
+              routerNavigate(`${EVALUATION_ROUTE}/${id}/success`, {
+                replace: true,
+                state: {
+                  interviewId: id,
+                  candidateName: interviewData.candidate.name,
+                  jobTitle: interviewData.context.title,
+                  overallScore: snapshot.result?.overallScore ?? null,
+                  completedAt: snapshot.result?.completedAt ?? null,
+                },
+              });
+            }
+          },
+        });
+        flowRef.current?.destroy();
+        flowRef.current = flow;
+        setState({ status: "ready", interview: interviewData, draft: draft.data });
+        return;
+      }
+      const notFound = [interview, draft].find((r) => !r.ok && r.reason === "not_found");
+      if (notFound && !notFound.ok) {
+        setState({ status: "not_found", message: notFound.message });
+        return;
+      }
+      if (interview.ok && draft.ok) {
+        setState({ status: "not_found", message: "Esta avaliação não está disponível para revisão." });
+        return;
+      }
+      const failed = [interview, draft].find((r) => !r.ok);
+      setState({
+        status: "error",
+        message: failed && !failed.ok ? failed.message : "Não foi possível carregar a revisão. Tente novamente.",
+      });
+    });
+    return () => {
+      cancelled = true;
+      flowRef.current?.destroy();
+      flowRef.current = null;
+    };
+  }, [id, attempt, userId, routerNavigate]);
+
+  const ready = state.status === "ready" ? state : null;
+  return (
+    <EvalLayout
+      current="eval-screen"
+      onNavigate={onNavigate}
+      title="Revisar avaliação"
+      subtitle={ready ? `${ready.interview.candidate.name} · ${ready.interview.context.title}` : "Revisão final"}
+    >
+      <EvaluatorReviewContent
+        state={state}
+        ui={{
+          completion,
+          onBackToEdit: () => id && routerNavigate(`${EVALUATION_ROUTE}/${id}`),
+          onBackToQueue: () => onNavigate("eval-queue"),
+          onRequestConfirm: () => flowRef.current?.requestConfirm(),
+          onCancelConfirm: () => flowRef.current?.cancel(),
+          onConfirm: () => void flowRef.current?.confirm(),
+          onRetry: () => setAttempt((current) => current + 1),
+        }}
+      />
+    </EvalLayout>
+  );
+}
+
+// Sucesso: usa só o contexto vindo da conclusão; nenhum GET ativo é refeito.
+export function EvalCompletionSuccessScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const { id } = useParams();
+  const location = useLocation();
+  const info = parseCompletionNavState(location.state, id);
+  return (
+    <EvalLayout current="eval-queue" onNavigate={onNavigate} title="Avaliação concluída" subtitle="Resultado da avaliação">
+      <EvaluatorSuccessContent info={info} onBackToQueue={() => onNavigate("eval-queue")} />
     </EvalLayout>
   );
 }

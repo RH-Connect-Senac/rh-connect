@@ -277,7 +277,8 @@ describe("autosave: sucesso e sincronização", () => {
     const snap = t.controller.getSnapshot();
     expect(snap.status).toBe("saved");
     expect(snap.lastSave).toBe("auto");
-    expect(snap.form.scores.coherence).toBe("7.5");
+    // a tela mantém o que foi digitado (mesma nota, outra grafia); só o confirmado é do servidor
+    expect(snap.form.scores.coherence).toBe("7,5");
     expect(snap.serverForm.scores.coherence).toBe("7.5");
     expect(snap.draft.criteriaScores.coherence).toBe(7.5);
     expect(t.storage.data.size).toBe(0);
@@ -639,5 +640,129 @@ describe("autosave: isolamento e limpeza", () => {
   it("writeLocalDraft direto continua independente do autosave", () => {
     const storage = memoryStorage();
     expect(writeLocalDraft(storage, USER, ID, formFromDraft(draftOf({}, null)))).toBe(true);
+  });
+});
+
+describe("autosave: transparente para quem está digitando", () => {
+  it("sucesso NÃO substitui o formulário da tela: mesma referência e mesma grafia digitada", async () => {
+    const t = setup();
+    t.change({ coherence: "7,5" });
+    const typed = t.controller.getSnapshot().form;
+    t.clock.advance(2000);
+    await t.controller.whenIdle();
+    expect(t.save).toHaveBeenCalledTimes(1);
+    const after = t.controller.getSnapshot();
+    expect(after.form).toBe(typed);
+    expect(after.form.scores.coherence).toBe("7,5");
+    expect(after.status).toBe("saved");
+  });
+  it("comentário digitado permanece idêntico (inclusive espaço no fim) depois do autosave", async () => {
+    const t = setup();
+    t.change({ summary: "teste " });
+    t.clock.advance(2000);
+    await t.controller.whenIdle();
+    expect(t.form().summary).toBe("teste ");
+  });
+  it("continua digitando logo depois do autosave, sem nenhuma ação extra: novo debounce e novo PUT com tudo", async () => {
+    const t = setup();
+    t.change({ summary: "teste" });
+    t.clock.advance(2000);
+    await t.controller.whenIdle();
+    t.change({ summary: "teste123" });
+    expect(t.form().summary).toBe("teste123");
+    expect(t.clock.pendingTimers()).toBe(1);
+    t.clock.advance(2000);
+    await t.controller.whenIdle();
+    expect(t.save).toHaveBeenCalledTimes(2);
+    expect(t.payloads[1].summary).toBe("teste123");
+    expect(t.form().summary).toBe("teste123");
+  });
+  it("campo de nota decimal: digitação durante o PUT é preservada e enviada depois", async () => {
+    const gate = deferred<void>();
+    const t = setup({
+      saveImpl: async (payload) => {
+        await gate.promise;
+        return { ok: true as const, data: responseFor(draftOf({ clarity: 8 }, "Do servidor"), payload) };
+      },
+    });
+    t.change({ coherence: "7" });
+    t.clock.advance(2000);
+    t.change({ coherence: "7,5" }); // durante o PUT
+    gate.resolve();
+    await t.controller.whenIdle();
+    t.clock.advance(2000); // debounce da alteração feita durante o PUT
+    await t.controller.whenIdle();
+    expect(t.form().scores.coherence).toBe("7,5");
+    expect(t.payloads[t.payloads.length - 1].criteriaScores?.coherence).toBe(7.5);
+  });
+});
+
+describe("autosave: syncNow (antes da revisão)", () => {
+  it("já sincronizado: ok e NENHUM PUT", async () => {
+    const t = setup();
+    const result = await t.controller.syncNow();
+    expect(result.ok).toBe(true);
+    expect(t.save).not.toHaveBeenCalled();
+  });
+
+  it("pendência válida: faz UM PUT imediato (sem esperar o debounce) e fica ok", async () => {
+    const t = setup();
+    t.change({ coherence: "7" });
+    const result = await t.controller.syncNow();
+    expect(result.ok).toBe(true);
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(t.payloads[0].criteriaScores?.coherence).toBe(7);
+    expect(t.clock.pendingTimers()).toBe(0);
+  });
+
+  it("falha do PUT: ok=false com mensagem, formulário e cópia local preservados", async () => {
+    const t = setup({ saveImpl: async () => ({ ok: false as const, reason: "error", message: "Falha ao salvar" }) });
+    t.change({ coherence: "7" });
+    const result = await t.controller.syncNow();
+    expect(result.ok).toBe(false);
+    expect(Boolean(result.message)).toBe(true);
+    expect(t.form().scores.coherence).toBe("7");
+    expect(readLocalDraft(t.storage, USER, ID)?.criteriaScores.coherence).toBe("7");
+  });
+
+  it("falha não entra em loop de retry", async () => {
+    const t = setup({ saveImpl: async () => ({ ok: false as const, reason: "error", message: "x" }) });
+    t.change({ coherence: "7" });
+    await t.controller.syncNow();
+    t.clock.advance(60000);
+    await flushAsync();
+    expect(t.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("nunca há dois PUTs em paralelo, mesmo chamando syncNow duas vezes", async () => {
+    let running = 0;
+    let maxRunning = 0;
+    const gate = deferred<void>();
+    const t = setup({
+      saveImpl: async (payload) => {
+        running++;
+        maxRunning = Math.max(maxRunning, running);
+        await gate.promise;
+        running--;
+        return { ok: true as const, data: responseFor(draftOf({ clarity: 8 }, "Do servidor"), payload) };
+      },
+    });
+    t.change({ coherence: "7" });
+    const first = t.controller.syncNow();
+    const second = t.controller.syncNow();
+    await flushAsync();
+    gate.resolve();
+    const [a, b] = await Promise.all([first, second]);
+    expect(maxRunning).toBe(1);
+    expect(a.ok && b.ok).toBe(true);
+  });
+
+  it("controlador destruído: ok=false e nenhum PUT", async () => {
+    const t = setup();
+    t.change({ coherence: "7" });
+    t.controller.destroy();
+    const result = await t.controller.syncNow();
+    expect(result.ok).toBe(false);
+    expect(t.save).not.toHaveBeenCalled();
   });
 });

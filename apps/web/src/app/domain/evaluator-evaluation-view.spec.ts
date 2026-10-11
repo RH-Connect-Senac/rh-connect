@@ -14,6 +14,7 @@ import {
   questionProgressLabel,
   questionProgressPercent,
   scoreTone,
+  evaluationHeader,
 } from "./evaluator-evaluation-view";
 import { emptyForm } from "./evaluator-evaluation-form";
 
@@ -94,5 +95,26 @@ describe("aparência dos controles de nota", () => {
     form.scores.objectivity = "99";
     form.scores.examples = "";
     expect(countScoredCriteria(form)).toBe(2);
+  });
+});
+
+describe("evaluationHeader (desktop x mobile)", () => {
+  const base = { candidateName: "Lucas Gabriel Costa Coutinho", jobTitle: "Assistente de TI", questionIndex: 1, totalQuestions: 5 };
+  it("desktop: 'Avaliando: <nome completo>' + vaga e badge de progresso", () => {
+    expect(evaluationHeader({ ...base, isMobile: false })).toEqual({
+      title: "Avaliando: Lucas Gabriel Costa Coutinho",
+      subtitle: "Assistente de TI",
+      showProgressBadge: true,
+    });
+  });
+  it("mobile: título curto + 'Questão X de Y', sem nome no cabeçalho e sem badge duplicado", () => {
+    const header = evaluationHeader({ ...base, isMobile: true });
+    expect(header).toEqual({ title: "Avaliação", subtitle: "Questão 2 de 5", showProgressBadge: false });
+    expect(JSON.stringify(header)).not.toContain("Lucas");
+  });
+  it("sem dados carregados: título neutro nos dois", () => {
+    for (const isMobile of [true, false]) {
+      expect(evaluationHeader({ ...base, candidateName: null, jobTitle: null, isMobile }).title).toBe("Avaliação");
+    }
   });
 });

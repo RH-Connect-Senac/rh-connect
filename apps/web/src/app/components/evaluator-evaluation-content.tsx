@@ -3,12 +3,16 @@
  * Apresentação pura: recebe o estado do formulário e os callbacks do
  * container (`evaluator-real-screens.tsx`). Não importa mocks, identidade de
  * demonstração nem localStorage. Uma pergunta por vez, painel de critérios
- * clicável e sticky. A conclusão da avaliação NÃO está ligada.
+ * clicável (sem rolagem interna). A conclusão acontece na tela de revisão (Fase 5C.3).
  */
 
-import { AlertCircle, ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, ChevronDown } from "lucide-react";
 import { Alert } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
 import {
   BUTTON_CLASS,
   CARD_CLASS,
@@ -70,6 +74,11 @@ export type EvaluationFormUi = {
   lastSave?: "auto" | "manual" | null;
   // Houve cópia local (ainda não salva) aplicada ao abrir a tela.
   restoredFromLocal?: boolean;
+  // Revisão (Fase 5C.3): liberada só com os 7 critérios válidos + comentário.
+  canReview?: boolean;
+  reviewing?: boolean;
+  reviewError?: string | null;
+  onReview?: () => void;
   onScoreChange: (key: CriterionKey, value: string) => void;
   onSummaryChange: (value: string) => void;
   onSave: () => void;
@@ -88,11 +97,36 @@ const TONE_TEXT: Record<ScoreTone, string> = {
   high: "text-green-600",
 };
 
-const INPUT_CLASS =
-  "w-16 rounded-lg border border-border bg-white px-2 py-1 text-center text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40";
+// Campos usam o <Input>/<Textarea> compartilhados (mesmo padrão de Configurações e
+// Histórico: borda, foco azul, erro por aria-invalid). Aqui só o tamanho compacto
+// do campo de nota; borda/foco/erro vêm do componente, nunca sobrescritos.
+const SCORE_INPUT_CLASS = "w-16 bg-white px-2 py-1.5 text-center font-semibold";
+const LABEL_CLASS = "mb-1.5 block text-sm font-semibold text-foreground";
 
 function formatOverall(value: number | null): string {
   return value === null ? "—" : value.toFixed(1).replace(".", ",");
+}
+
+// Lista secundária e recolhida por padrão (contexto informa, não domina a tela).
+function ExpandableList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <details className="group rounded-xl border border-border bg-white text-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 [&::-webkit-details-marker]:hidden">
+        <span>
+          {title} ({items.length})
+        </span>
+        <ChevronDown
+          className="size-4 shrink-0 transition-transform group-open:rotate-180"
+          aria-hidden="true"
+        />
+      </summary>
+      <ul className="list-disc space-y-1 border-t border-border px-3 pb-3 pl-8 pt-3 text-foreground">
+        {items.map((item, index) => (
+          <li key={`${index}-${item}`}>{item}</li>
+        ))}
+      </ul>
+    </details>
+  );
 }
 
 // Resumo compacto da vaga; requisitos e atividades ficam em blocos expansíveis.
@@ -110,39 +144,32 @@ export function JobContextSummary({ interview }: { interview: EvaluatorInterview
       <p className="mb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
         Contexto da vaga
       </p>
-      <h3 className="font-bold text-foreground">{context.title}</h3>
+      {/* Mobile/tablet pequeno: o cabeçalho é curto; aqui o candidato fica identificado. */}
+      <div className="mb-2 md:hidden" data-testid="candidate-identity">
+        <p className="font-bold text-foreground">{interview.candidate.name}</p>
+        <p className="text-sm text-foreground">{context.title}</p>
+      </div>
+      <h3 className="hidden font-bold text-foreground md:block">{context.title}</h3>
       {chips.length > 0 && (
         <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Dados da vaga">
           {chips.map((chip) => (
-            <li key={chip} className="rounded-full bg-muted/60 px-2.5 py-0.5 text-xs text-foreground">
-              {chip}
+            <li key={chip} className="max-w-full">
+              <Badge variant="neutral" className="max-w-full" title={chip}>
+                <span className="truncate">{chip}</span>
+              </Badge>
             </li>
           ))}
         </ul>
       )}
-      {context.requirements.length > 0 && (
-        <details className="mt-3 text-sm">
-          <summary className="cursor-pointer text-xs font-semibold text-muted-foreground">
-            Requisitos ({context.requirements.length})
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-foreground">
-            {context.requirements.map((item, index) => (
-              <li key={`${index}-${item}`}>{item}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-      {context.activities.length > 0 && (
-        <details className="mt-2 text-sm">
-          <summary className="cursor-pointer text-xs font-semibold text-muted-foreground">
-            Atividades ({context.activities.length})
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-foreground">
-            {context.activities.map((item, index) => (
-              <li key={`${index}-${item}`}>{item}</li>
-            ))}
-          </ul>
-        </details>
+      {(context.requirements.length > 0 || context.activities.length > 0) && (
+        <div className="mt-3 space-y-2">
+          {context.requirements.length > 0 && (
+            <ExpandableList title="Requisitos" items={context.requirements} />
+          )}
+          {context.activities.length > 0 && (
+            <ExpandableList title="Atividades" items={context.activities} />
+          )}
+        </div>
       )}
     </section>
   );
@@ -172,19 +199,8 @@ export function QuestionPanel({
 
   return (
     <section className={`${CARD_CLASS} p-5`} aria-label="Pergunta atual">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground" data-testid="question-progress">
-          {questionProgressLabel(current, total)}
-        </p>
-        <span className="rounded-full bg-muted/60 px-2.5 py-0.5 text-xs font-semibold text-foreground">
-          {formatQuestionType(question.type)}
-        </span>
-      </div>
-      <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden="true">
-        <div
-          className="h-full rounded-full bg-primary transition-all"
-          style={{ width: `${questionProgressPercent(current, total)}%` }}
-        />
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Badge variant="primary">{formatQuestionType(question.type)}</Badge>
       </div>
 
       <p className="mb-4 text-base font-semibold leading-relaxed text-foreground">{question.text}</p>
@@ -207,17 +223,29 @@ export function QuestionPanel({
         )}
       </div>
 
-      <nav className="flex items-center justify-between gap-2" aria-label="Navegação entre perguntas">
-        <button
-          type="button"
-          className={`${BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
-          disabled={!canGoPrevious(current, total)}
-          onClick={() => onChange(previousQuestionIndex(current, total))}
+      {/* Progresso: separado da navegação */}
+      <div className="mb-4">
+        <p
+          className="mb-1.5 text-[11px] font-bold uppercase tracking-widest text-muted-foreground"
+          data-testid="question-progress"
         >
-          <ChevronLeft className="size-3.5" aria-hidden="true" />
-          Anterior
-        </button>
-        <div className="flex flex-wrap justify-center gap-1.5">
+          {questionProgressLabel(current, total)}
+        </p>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden="true">
+          <div
+            className="h-full rounded-full bg-primary transition-all"
+            style={{ width: `${questionProgressPercent(current, total)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Mobile: indicadores numa linha (sem quebra) e Anterior/Próxima lado a lado,
+          com área de toque confortável. sm+: tudo numa linha só. */}
+      <nav
+        className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:justify-between"
+        aria-label="Navegação entre perguntas"
+      >
+        <div className="order-first col-span-2 flex flex-nowrap justify-center gap-1.5 sm:order-none sm:col-span-1">
           {interview.questions.map((item, i) => {
             const active = i === current;
             const answered = Boolean(item.answer && item.answer.trim() !== "");
@@ -228,12 +256,12 @@ export function QuestionPanel({
                 data-question-index={i}
                 aria-label={`Ir para a questão ${i + 1}`}
                 aria-current={active ? "true" : undefined}
-                className={`size-7 rounded-full text-xs font-bold transition-colors ${
+                className={`h-9 min-w-0 max-w-10 flex-1 rounded-full border text-xs font-bold transition-colors outline-none focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)] sm:size-7 sm:flex-none ${
                   active
-                    ? "bg-primary text-primary-foreground"
+                    ? "border-blue-600 bg-blue-50 text-blue-700"
                     : answered
-                      ? "bg-green-100 text-green-800 hover:bg-green-200"
-                      : "bg-muted text-muted-foreground hover:bg-muted-foreground/20"
+                      ? "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                      : "border-border bg-muted text-muted-foreground hover:bg-muted-foreground/20"
                 }`}
                 onClick={() => onChange(i)}
               >
@@ -242,15 +270,27 @@ export function QuestionPanel({
             );
           })}
         </div>
-        <button
+        {/* Mesmos Button/variants do fluxo do candidato: Anterior = outline, Próxima = primária. */}
+        <Button
           type="button"
-          className={`${BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50`}
+          variant="outline"
+          className="min-h-11 w-full sm:order-first sm:min-h-0 sm:w-auto"
+          disabled={!canGoPrevious(current, total)}
+          onClick={() => onChange(previousQuestionIndex(current, total))}
+        >
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          Anterior
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          className="min-h-11 w-full sm:min-h-0 sm:w-auto"
           disabled={!canGoNext(current, total)}
           onClick={() => onChange(nextQuestionIndex(current, total))}
         >
           Próxima
-          <ChevronRight className="size-3.5" aria-hidden="true" />
-        </button>
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </Button>
       </nav>
     </section>
   );
@@ -260,6 +300,7 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
   const { form, validation, dirty, saving, feedback, restoredFromLocal } = ui;
   const length = summaryLength(form.summary);
   const submitEnabled = canSubmit({ saving, dirty, valid: validation.valid });
+  const reviewEnabled = Boolean(ui.canReview) && !ui.reviewing && Boolean(ui.onReview);
   const scored = countScoredCriteria(form);
   const syncStatus: AutosaveStatus = ui.syncStatus ?? (saving ? "saving" : dirty ? "dirty" : "clean");
   const syncText = describeSync({ status: syncStatus, lastSave: ui.lastSave ?? null });
@@ -273,7 +314,7 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
         <h3 className="font-bold text-foreground">Critérios de avaliação</h3>
         <div className="text-right">
           <p className="text-xs text-muted-foreground" data-testid="overall-label">
-            {dirty ? "Prévia" : "Média parcial"}
+            Média atual
           </p>
           <p className="text-2xl font-bold text-primary" data-testid="overall-value">
             {formatOverall(overall)}
@@ -301,7 +342,7 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
                   <span className={`text-sm font-bold ${TONE_TEXT[tone]}`} data-testid={`score-${criterion.key}`}>
                     {formatScore(value)}
                   </span>
-                  <input
+                  <Input
                     id={inputId}
                     name={criterion.key}
                     type="text"
@@ -309,10 +350,9 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
                     autoComplete="off"
                     placeholder="0–10"
                     title="Nota de 0 a 10 (aceita decimais, ex.: 7,5)"
-                    className={INPUT_CLASS}
+                    className={SCORE_INPUT_CLASS}
                     value={form.scores[criterion.key]}
                     aria-invalid={error ? "true" : "false"}
-                    disabled={saving}
                     onChange={(event) => ui.onScoreChange(criterion.key, event.target.value)}
                   />
                 </div>
@@ -325,8 +365,7 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
                     data-score={n}
                     aria-pressed={isScoreButtonSelected(n, value) ? "true" : "false"}
                     aria-label={`${criterion.label}: nota ${n}`}
-                    disabled={saving}
-                    className={`h-7 min-w-0 flex-1 rounded text-[10px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    className={`h-7 min-w-0 flex-1 rounded text-[10px] font-bold transition-colors ${
                       isScoreButtonFilled(n, value)
                         ? TONE_FILLED[tone]
                         : "bg-muted text-muted-foreground hover:bg-muted-foreground/20"
@@ -357,17 +396,16 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
       </p>
 
       <div className="mt-4">
-        <label htmlFor="evaluation-summary" className="text-sm font-bold text-foreground">
+        <label htmlFor="evaluation-summary" className={LABEL_CLASS}>
           Comentário do avaliador
         </label>
-        <textarea
+        <Textarea
           id="evaluation-summary"
           name="summary"
           rows={5}
           placeholder="Registre observações para a revisão final..."
-          className="mt-1.5 min-h-28 w-full resize-y rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          className="min-h-28 bg-white"
           value={form.summary}
-          disabled={saving}
           aria-invalid={validation.summaryError ? "true" : "false"}
           onChange={(event) => ui.onSummaryChange(event.target.value)}
         />
@@ -416,16 +454,26 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
         </button>
         <button
           type="button"
-          disabled
-          aria-disabled="true"
-          className="inline-flex flex-1 cursor-not-allowed items-center justify-center rounded-xl bg-muted px-4 py-2 text-sm font-semibold text-muted-foreground"
+          data-action="review"
+          className="inline-flex flex-1 items-center justify-center rounded-xl border border-primary px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:opacity-60"
+          disabled={!reviewEnabled}
+          aria-busy={ui.reviewing ? "true" : "false"}
+          onClick={ui.onReview}
         >
-          Concluir avaliação
+          {ui.reviewing ? "Salvando..." : "Revisar avaliação"}
         </button>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        A conclusão da avaliação será liberada na próxima etapa.
-      </p>
+      {ui.reviewError && (
+        <Alert variant="error" role="alert" className="mt-3 flex items-start gap-2">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <p>{ui.reviewError}</p>
+        </Alert>
+      )}
+      {!ui.canReview && (
+        <p className="mt-2 text-xs text-muted-foreground" data-testid="review-hint">
+          Preencha os 7 critérios (0–10) e o comentário para revisar a avaliação.
+        </p>
+      )}
     </section>
   );
 }
@@ -488,7 +536,7 @@ export function EvaluatorEvaluationContent({
           <JobContextSummary interview={state.interview} />
           <QuestionPanel interview={state.interview} index={questionIndex} onChange={onQuestionChange} />
         </div>
-        <div className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
+        <div className="min-w-0">
           <EvaluationForm draft={state.draft} ui={ui} />
         </div>
       </div>

@@ -220,7 +220,7 @@ async function refreshAccessToken(): Promise<boolean> {
 // `/auth/refresh` (mesmo fluxo dos demais serviços reais) e repete.
 async function requestEvaluatorApi(
   path: string,
-  init: { method: "GET" } | { method: "PUT"; body: unknown } = { method: "GET" },
+  init: { method: "GET" } | { method: "POST" } | { method: "PUT"; body: unknown } = { method: "GET" },
 ): Promise<Response | null> {
   const doFetch = () =>
     fetch(`${API_BASE_URL}${path}`, {
@@ -446,4 +446,54 @@ export async function saveEvaluationDraft(
     return { ok: false, reason: "error", message: INVALID_RESPONSE_MESSAGE };
   }
   return { ok: true, data: draft };
+}
+
+// ─── Conclusão da avaliação humana (Fase 5C.3) ───────────────────────────────
+
+export type EvaluationCompletion = {
+  interviewId: string;
+  status: "COMPLETED";
+  evaluationStatus: "COMPLETED";
+  // Nota FINAL recalculada pelo Back (média simples dos 7 critérios).
+  overallScore: number | null;
+  completedAt: string | null;
+};
+
+// POST sem corpo: nada de critérios, comentário, status ou nota final vem do
+// cliente — o Back lê o rascunho do banco, valida e decide o resultado. Após
+// concluir, os GET ativos (ASSIGNED) passam a devolver 404: isso é esperado.
+export async function completeEvaluation(
+  interviewId: string,
+): Promise<EvaluatorInterviewsResult<EvaluationCompletion>> {
+  const response = await requestEvaluatorApi(
+    `/evaluator/interviews/${encodeURIComponent(interviewId)}/evaluation/complete`,
+    { method: "POST" },
+  );
+
+  if (!response) {
+    return { ok: false, reason: "error", message: NETWORK_ERROR_MESSAGE };
+  }
+  if (!response.ok) {
+    return failureFromResponse(
+      response,
+      "Não foi possível concluir a avaliação. Tente novamente.",
+    );
+  }
+
+  // O Back já concluiu: um corpo fora do padrão NÃO vira erro (repetir o POST
+  // daria 404). Os campos que faltarem aparecem como indisponíveis.
+  const body = (await readJson(response)) ?? {};
+  return {
+    ok: true,
+    data: {
+      interviewId,
+      status: "COMPLETED",
+      evaluationStatus: "COMPLETED",
+      overallScore:
+        typeof body.overallScore === "number" && Number.isFinite(body.overallScore)
+          ? body.overallScore
+          : null,
+      completedAt: nullableString(body.completedAt),
+    },
+  };
 }
