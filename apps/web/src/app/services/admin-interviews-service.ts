@@ -8,6 +8,7 @@
  * localStorage, e nenhuma identidade (Admin, status) é enviada no corpo.
  */
 
+import { FRIENDLY_ERROR_MESSAGES, sanitizeServerMessage } from "../domain/user-friendly-error";
 const API_BASE_URL = (
   (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
     .env?.VITE_API_URL ?? "http://localhost:3000"
@@ -54,7 +55,7 @@ export type AdminInterviewsResult<T> =
 
 const NETWORK_ERROR_MESSAGE =
   "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
-const INVALID_RESPONSE_MESSAGE = "Resposta inválida do servidor. Tente novamente.";
+const INVALID_RESPONSE_MESSAGE = FRIENDLY_ERROR_MESSAGES.generic;
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -202,10 +203,10 @@ async function failureFromResponse(
     return {
       ok: false,
       reason: response.status === 404 ? "not_found" : "conflict",
-      message: (await readServerMessage(response)) ?? fallbackMessage,
+      message: sanitizeServerMessage(await readServerMessage(response), { status: response.status, fallback: fallbackMessage, scope: "admin-interviews" }),
     };
   }
-  return { ok: false, reason: "error", message: fallbackMessage };
+  return { ok: false, reason: "error", message: sanitizeServerMessage(null, { status: response.status, fallback: fallbackMessage, scope: "admin-interviews" }) };
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown> | null> {

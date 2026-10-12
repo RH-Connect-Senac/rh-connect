@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import type { InterviewsAiService } from '../interviews-ai/interviews-ai.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import { QUESTION_SELECT } from './interview-flow';
+import { CANDIDATE_QUESTION_SELECT } from './interview-flow';
 import { InterviewQuestionsService } from './interview-questions.service';
 
 const INTERVIEW_ID = '11111111-1111-4111-8111-111111111111';
@@ -52,6 +52,9 @@ function storedQuestion(position: number, overrides = {}) {
     question_text: `Pergunta ${position}?`,
     answer_text: null,
     answered_at: null,
+    draft_text: null,
+    draft_updated_at: null,
+    draft_version: 0,
     ...overrides,
   };
 }
@@ -165,6 +168,9 @@ describe('InterviewQuestionsService.generate', () => {
       text: 'Pergunta 1?',
       answer: null,
       answeredAt: null,
+      draftText: null,
+      draftUpdatedAt: null,
+      draftVersion: 0,
     });
     expect(prisma.interview_question.findMany.mock.calls[1][0].orderBy).toEqual(
       {
@@ -261,10 +267,60 @@ describe('InterviewQuestionsService.list', () => {
     expect(prisma.interview_question.findMany).not.toHaveBeenCalled();
   });
 
+  it('GET devolve o rascunho (texto, data e versão) além da resposta oficial', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findFirst.mockResolvedValue({
+      interview_id: INTERVIEW_ID,
+      status: 'IN_PROGRESS',
+    });
+    prisma.interview_question.findMany.mockResolvedValue([
+      storedQuestion(1, {
+        answer_text: 'oficial',
+        answered_at: at,
+        draft_text: 'oficial editada',
+        draft_updated_at: at,
+        draft_version: 4,
+      }),
+      storedQuestion(2),
+    ]);
+
+    const result = await service.list(42, INTERVIEW_ID);
+
+    expect(result.questions[0]).toMatchObject({
+      answer: 'oficial',
+      answeredAt: at,
+      draftText: 'oficial editada',
+      draftUpdatedAt: at,
+      draftVersion: 4,
+    });
+    expect(result.questions[1]).toMatchObject({
+      answer: null,
+      draftText: null,
+      draftUpdatedAt: null,
+      draftVersion: 0,
+    });
+  });
+
+  it('GET devolve interviewStatus (IN_PROGRESS e, depois do envio, o status vigente) sem remover campos', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findFirst.mockResolvedValue({
+      interview_id: INTERVIEW_ID,
+      status: 'PENDING_ASSIGNMENT',
+    });
+    prisma.interview_question.findMany.mockResolvedValue([storedQuestion(1)]);
+
+    const result = await service.list(42, INTERVIEW_ID);
+
+    expect(result.interviewStatus).toBe('PENDING_ASSIGNMENT');
+    expect(result.interviewId).toBe(INTERVIEW_ID);
+    expect(result.questions).toHaveLength(1);
+  });
+
   it('lista ordenada por posição com respostas', async () => {
     const { service, prisma } = makeService();
     prisma.interview.findFirst.mockResolvedValue({
       interview_id: INTERVIEW_ID,
+      status: 'IN_PROGRESS',
     });
     prisma.interview_question.findMany.mockResolvedValue([
       storedQuestion(1, { answer_text: 'Minha resposta', answered_at: at }),
@@ -276,7 +332,7 @@ describe('InterviewQuestionsService.list', () => {
     expect(result.questions[0].answeredAt).toBe(at);
     const args = prisma.interview_question.findMany.mock.calls[0][0];
     expect(args.where).toEqual({ interview_id: INTERVIEW_ID });
-    expect(args.select).toBe(QUESTION_SELECT);
+    expect(args.select).toBe(CANDIDATE_QUESTION_SELECT);
   });
 });
 
@@ -293,12 +349,14 @@ describe('InterviewQuestionsService.saveAnswer', () => {
       INTERVIEW_ID,
       QUESTION_ID,
       '  linha 1\n\nlinha 2  ',
+      3,
     );
 
     const args = prisma.interview_question.updateMany.mock.calls[0][0];
     expect(args.where).toEqual({
       question_id: QUESTION_ID,
       interview_id: INTERVIEW_ID,
+      draft_version: 3,
       interview: { candidate_user_id: 42, status: 'IN_PROGRESS' },
     });
     expect(args.data.answer_text).toBe('linha 1\n\nlinha 2');
@@ -312,7 +370,7 @@ describe('InterviewQuestionsService.saveAnswer', () => {
       const { service, prisma } = makeService();
       prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
       prisma.interview_question.findFirst.mockResolvedValue(storedQuestion(1));
-      await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, input);
+      await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, input, 0);
       return prisma.interview_question.updateMany.mock.calls[0][0].data
         .answer_text;
     }
@@ -350,10 +408,46 @@ describe('InterviewQuestionsService.saveAnswer', () => {
           INTERVIEW_ID,
           QUESTION_ID,
           'a'.repeat(500) + '\n' + 'b'.repeat(500),
+          0,
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.interview_question.updateMany).not.toHaveBeenCalled();
     });
+  });
+
+  it('a confirmação oficial limpa o rascunho e avança a versão (mesma operação atômica)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(
+      storedQuestion(1, {
+        answer_text: 'final',
+        answered_at: at,
+        draft_version: 5,
+      }),
+    );
+
+    const result = await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'final', 0);
+
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+    const data = prisma.interview_question.updateMany.mock.calls[0][0].data;
+    expect(data.answer_text).toBe('final');
+    expect(data.draft_text).toBeNull();
+    expect(data.draft_updated_at).toBeNull();
+    expect(data.draft_version).toEqual({ increment: 1 });
+    expect(result.draftText).toBeNull();
+  });
+
+  it('confirmar resposta em branco também limpa o rascunho', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(storedQuestion(1));
+
+    await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, '   ', 0);
+
+    const data = prisma.interview_question.updateMany.mock.calls[0][0].data;
+    expect(data.answer_text).toBeNull();
+    expect(data.draft_text).toBeNull();
+    expect(data.draft_version).toEqual({ increment: 1 });
   });
 
   it('resposta em branco limpa a resposta (null) e o answered_at', async () => {
@@ -361,7 +455,7 @@ describe('InterviewQuestionsService.saveAnswer', () => {
     prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
     prisma.interview_question.findFirst.mockResolvedValue(storedQuestion(1));
 
-    await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, '  \n  ');
+    await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, '  \n  ', 0);
 
     const data = prisma.interview_question.updateMany.mock.calls[0][0].data;
     expect(data.answer_text).toBeNull();
@@ -373,7 +467,7 @@ describe('InterviewQuestionsService.saveAnswer', () => {
     prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
     prisma.interview_question.findFirst.mockResolvedValue(storedQuestion(1));
 
-    await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'a'.repeat(1000));
+    await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'a'.repeat(1000), 0);
 
     expect(
       prisma.interview_question.updateMany.mock.calls[0][0].data.answer_text,
@@ -384,7 +478,7 @@ describe('InterviewQuestionsService.saveAnswer', () => {
     const { service, prisma } = makeService();
 
     await expect(
-      service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'a'.repeat(1001)),
+      service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'a'.repeat(1001), 0),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.interview_question.updateMany).not.toHaveBeenCalled();
   });
@@ -395,7 +489,7 @@ describe('InterviewQuestionsService.saveAnswer', () => {
     prisma.interview_question.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.saveAnswer(99, INTERVIEW_ID, QUESTION_ID, 'resposta'),
+      service.saveAnswer(99, INTERVIEW_ID, QUESTION_ID, 'resposta', 0),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.interview_question.findFirst.mock.calls[0][0].where).toEqual({
       question_id: QUESTION_ID,
@@ -409,10 +503,404 @@ describe('InterviewQuestionsService.saveAnswer', () => {
     prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
     prisma.interview_question.findFirst.mockResolvedValue({
       question_id: QUESTION_ID,
+      answer_text: 'oficial',
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 6,
+      interview: { status: 'PENDING_ASSIGNMENT' },
     });
 
+    const error = await service
+      .saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'resposta', 6)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'INTERVIEW_NOT_IN_PROGRESS',
+      interviewStatus: 'PENDING_ASSIGNMENT',
+    });
+  });
+});
+
+describe('InterviewQuestionsService.saveAnswer: controle otimista (draftVersion)', () => {
+  it('versão correta confirma, grava a resposta, limpa o rascunho e incrementa a versão', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(
+      storedQuestion(1, { answer_text: 'Resposta A', answered_at: at, draft_version: 5 }),
+    );
+
+    const result = await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'Resposta A', 4);
+
+    const { where, data } = prisma.interview_question.updateMany.mock.calls[0][0];
+    expect(where.draft_version).toBe(4);
+    expect(where.interview).toEqual({ candidate_user_id: 42, status: 'IN_PROGRESS' });
+    expect(data.answer_text).toBe('Resposta A');
+    expect(data.draft_text).toBeNull();
+    expect(data.draft_updated_at).toBeNull();
+    expect(data.draft_version).toEqual({ increment: 1 });
+    expect(result.draftVersion).toBe(5);
+  });
+
+  it('resposta IGUAL à oficial também respeita a versão (WHERE draft_version)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      answer_text: 'igual',
+      draft_text: 'outro',
+      draft_updated_at: at,
+      draft_version: 7,
+      interview: { status: 'IN_PROGRESS' },
+    });
+
+    const error = await service
+      .saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'igual', 4)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect(
+      prisma.interview_question.updateMany.mock.calls[0][0].where.draft_version,
+    ).toBe(4);
+  });
+
+  it('versão antiga => 409 DRAFT_VERSION_CONFLICT com o estado vigente; NÃO sobrescreve a resposta', async () => {
+    const { service, prisma } = makeService();
+    // PC confirmou "Resposta A" (v4 -> v5); o celular ainda está na v4
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      answer_text: 'Resposta A',
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 5,
+      interview: { status: 'IN_PROGRESS' },
+    });
+
+    const error = await service
+      .saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'Resposta B', 4)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      statusCode: 409,
+      code: 'DRAFT_VERSION_CONFLICT',
+      answer: 'Resposta A',
+      draftText: null,
+      draftUpdatedAt: null,
+      draftVersion: 5,
+    });
+    // nenhuma outra escrita: a única tentativa condicional não casou
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('reenvio após timeout (já aplicado): o 409 traz answer igual e rascunho vazio, reconhecível pelo cliente', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      answer_text: 'minha resposta',
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 5,
+      interview: { status: 'IN_PROGRESS' },
+    });
+
+    const error = await service
+      .saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'minha resposta', 4)
+      .catch((e: unknown) => e);
+
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'DRAFT_VERSION_CONFLICT',
+      answer: 'minha resposta',
+      draftText: null,
+      draftVersion: 5,
+    });
+  });
+
+  it('entrevista não IN_PROGRESS tem prioridade sobre a versão: INTERVIEW_NOT_IN_PROGRESS', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      answer_text: 'x',
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 9,
+      interview: { status: 'COMPLETED' },
+    });
+
+    const error = await service
+      .saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'x', 1)
+      .catch((e: unknown) => e);
+
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'INTERVIEW_NOT_IN_PROGRESS',
+      interviewStatus: 'COMPLETED',
+    });
+  });
+
+  it('404 continua sendo 404 (pergunta de outro candidato), sem vazar estado', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue(null);
+
     await expect(
-      service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'resposta'),
-    ).rejects.toBeInstanceOf(ConflictException);
+      service.saveAnswer(99, INTERVIEW_ID, QUESTION_ID, 'x', 0),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('InterviewQuestionsService.saveDraft', () => {
+  function stored(overrides = {}) {
+    return storedQuestion(1, overrides);
+  }
+
+  it('grava SÓ o rascunho: não toca em answer_text, answered_at nem no status', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(
+      stored({ draft_text: 'parcial', draft_updated_at: at, draft_version: 1 }),
+    );
+
+    const result = await service.saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'parcial', 0);
+
+    const args = prisma.interview_question.updateMany.mock.calls[0][0];
+    expect(args.data.draft_text).toBe('parcial');
+    expect(args.data.draft_updated_at).toBeInstanceOf(Date);
+    expect(args.data.draft_version).toEqual({ increment: 1 });
+    expect(args.data).not.toHaveProperty('answer_text');
+    expect(args.data).not.toHaveProperty('answered_at');
+    expect(args.data).not.toHaveProperty('status');
+    expect(prisma.interview.findFirst).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      id: stored().question_id,
+      draftText: 'parcial',
+      draftUpdatedAt: at,
+      draftVersion: 1,
+    });
+  });
+
+  it('dono, IN_PROGRESS e versão base ficam no WHERE da gravação', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(stored());
+
+    await service.saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'x', 7);
+
+    expect(prisma.interview_question.updateMany.mock.calls[0][0].where).toEqual({
+      question_id: QUESTION_ID,
+      interview_id: INTERVIEW_ID,
+      draft_version: 7,
+      interview: { candidate_user_id: 42, status: 'IN_PROGRESS' },
+    });
+  });
+
+  it('rascunho vazio limpa só o rascunho (e avança a versão)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(stored({ draft_version: 3 }));
+
+    await service.saveDraft(42, INTERVIEW_ID, QUESTION_ID, '  \n ', 2);
+
+    const data = prisma.interview_question.updateMany.mock.calls[0][0].data;
+    expect(data.draft_text).toBeNull();
+    expect(data.draft_updated_at).toBeNull();
+    expect(data.draft_version).toEqual({ increment: 1 });
+    expect(data).not.toHaveProperty('answer_text');
+    expect(data).not.toHaveProperty('answered_at');
+  });
+
+  it('normaliza CRLF para LF e preserva espaços das pontas (sem trim)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(stored());
+
+    await service.saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'a\r\nb ', 0);
+
+    expect(prisma.interview_question.updateMany.mock.calls[0][0].data.draft_text).toBe(
+      'a\nb ',
+    );
+  });
+
+  it('aceita 1000 caracteres e recusa 1001 com 400 (nada é gravado)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(stored());
+
+    await service.saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'a'.repeat(1000), 0);
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+
+    await expect(
+      service.saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'a'.repeat(1001), 0),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('404 para pergunta/entrevista de outro candidato', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.saveDraft(99, INTERVIEW_ID, QUESTION_ID, 'x', 0),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.interview_question.findFirst.mock.calls[0][0].where).toEqual({
+      question_id: QUESTION_ID,
+      interview_id: INTERVIEW_ID,
+      interview: { candidate_user_id: 99 },
+    });
+  });
+
+  it('409 quando a entrevista já foi enviada (não IN_PROGRESS)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 0,
+      interview: { status: 'PENDING_ASSIGNMENT' },
+    });
+
+    const error = await service
+      .saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'x', 0)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'INTERVIEW_NOT_IN_PROGRESS',
+      interviewStatus: 'PENDING_ASSIGNMENT',
+    });
+  });
+
+  it('versão antiga => 409 com o estado vigente; a versão nova NÃO é sobrescrita', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      answer_text: 'oficial',
+      draft_text: 'texto do dispositivo B',
+      draft_updated_at: at,
+      draft_version: 5,
+      interview: { status: 'IN_PROGRESS' },
+    });
+
+    const error = await service
+      .saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'texto antigo do A', 4)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'DRAFT_VERSION_CONFLICT',
+      answer: 'oficial',
+      draftText: 'texto do dispositivo B',
+      draftVersion: 5,
+    });
+    // uma única escrita condicional (WHERE draft_version = 4) que não casou
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+    expect(
+      prisma.interview_question.updateMany.mock.calls[0][0].where.draft_version,
+    ).toBe(4);
+  });
+});
+
+describe('rascunho x confirmação oficial (texto igual, dispositivo antigo, depois do envio)', () => {
+  it('texto IGUAL ao answer_text com rascunho existente: um único UPDATE que mantém a resposta e limpa o rascunho', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(
+      storedQuestion(1, {
+        answer_text: 'abc',
+        answered_at: at,
+        draft_text: null,
+        draft_updated_at: null,
+        draft_version: 5,
+      }),
+    );
+
+    const result = await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, ' abc ', 0);
+
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = prisma.interview_question.updateMany.mock.calls[0][0];
+    expect(where).toEqual({
+      question_id: QUESTION_ID,
+      interview_id: INTERVIEW_ID,
+      draft_version: 0,
+      interview: { candidate_user_id: 42, status: 'IN_PROGRESS' },
+    });
+    expect(data.answer_text).toBe('abc');
+    expect(data.answered_at).toBeInstanceOf(Date);
+    expect(data.draft_text).toBeNull();
+    expect(data.draft_updated_at).toBeNull();
+    expect(data.draft_version).toEqual({ increment: 1 });
+    expect(result.answer).toBe('abc');
+    expect(result.draftText).toBeNull();
+    expect(result.draftUpdatedAt).toBeNull();
+    expect(result.draftVersion).toBe(5);
+  });
+
+  it('a versão do rascunho só AVANÇA (increment), nunca é zerada pela confirmação', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 1 });
+    prisma.interview_question.findFirst.mockResolvedValue(storedQuestion(1));
+
+    await service.saveAnswer(42, INTERVIEW_ID, QUESTION_ID, 'x', 0);
+
+    const data = prisma.interview_question.updateMany.mock.calls[0][0].data;
+    expect(data.draft_version).toEqual({ increment: 1 });
+    expect(data.draft_version).not.toBe(0);
+  });
+
+  it('dispositivo antigo (versão 4) depois da confirmação (versão 5) recebe 409 e não recria o rascunho', async () => {
+    const { service, prisma } = makeService();
+    // o WHERE draft_version = 4 não casa mais (a confirmação levou a 5)
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 5,
+      interview: { status: 'IN_PROGRESS' },
+    });
+
+    const error = await service
+      .saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'rascunho antigo do A', 4)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'DRAFT_VERSION_CONFLICT',
+      draftText: null,
+      draftVersion: 5,
+    });
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledTimes(1);
+    expect(
+      prisma.interview_question.updateMany.mock.calls[0][0].where.draft_version,
+    ).toBe(4);
+  });
+
+  it('depois do envio nenhum dispositivo recria rascunho: o WHERE exige IN_PROGRESS e a resposta é 409 de entrevista enviada', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview_question.updateMany.mockResolvedValue({ count: 0 });
+    prisma.interview_question.findFirst.mockResolvedValue({
+      question_id: QUESTION_ID,
+      draft_text: null,
+      draft_updated_at: null,
+      draft_version: 6,
+      interview: { status: 'PENDING_ASSIGNMENT' },
+    });
+
+    const error = await service
+      .saveDraft(42, INTERVIEW_ID, QUESTION_ID, 'tentando recriar', 4)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'INTERVIEW_NOT_IN_PROGRESS',
+    });
+    expect(
+      prisma.interview_question.updateMany.mock.calls[0][0].where.interview,
+    ).toEqual({ candidate_user_id: 42, status: 'IN_PROGRESS' });
   });
 });

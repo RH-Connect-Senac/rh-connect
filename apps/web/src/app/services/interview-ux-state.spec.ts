@@ -16,6 +16,7 @@ import {
   shouldShowCopiedLinkNotice,
   resolveAnswerText,
   resolveInitialQuestionIndex,
+  resolveRestoredAnswer,
   saveAnswerDraft,
   storeInterviewUrlPrefill,
   type AnswerDraftScope,
@@ -297,7 +298,28 @@ describe("painel Progresso: navegação x resposta", () => {
   });
 
   it("rascunho antigo sem o valor guardado: as respondidas contam como alcançadas", () => {
-    expect(deriveHighestReachedIndex({ currentIndex: 0, answeredIndexes: [0, 1, 2], questionCount: COUNT })).toBe(2);
+    expect(deriveHighestReachedIndex({ currentIndex: 0, answeredIndexes: [0, 1, 2], questionCount: COUNT })).toBe(3);
+  });
+
+  it("F5: com Q1 e Q2 oficiais, a Q3 (sem resposta) fica acessível mesmo com índice local antigo", () => {
+    expect(deriveHighestReachedIndex({ storedHighest: 0, currentIndex: 0, answeredIndexes: [0, 1], questionCount: COUNT })).toBe(2);
+    const list = states({ current: 0, answers: [0, 1], stored: 0 });
+    expect(list[2]).not.toBe("LOCKED");
+    expect(list[3]).toBe("LOCKED");
+  });
+
+  it("highestReached local antigo nunca reduz o progresso derivado do servidor", () => {
+    expect(deriveHighestReachedIndex({ storedHighest: 0, currentIndex: 0, answeredIndexes: [0, 1, 2], questionCount: COUNT })).toBe(3);
+    expect(deriveHighestReachedIndex({ storedHighest: 4, currentIndex: 0, answeredIndexes: [0], questionCount: COUNT })).toBe(4);
+  });
+
+  it("rascunho remoto só da Q3 libera a Q3 mas não a conta como respondida", () => {
+    const highest = deriveHighestReachedIndex({ storedHighest: 0, currentIndex: 0, answeredIndexes: [0, 1], draftedIndexes: [2], questionCount: COUNT });
+    expect(highest).toBe(2);
+    const list = states({ current: 0, answers: [0, 1], stored: 0 });
+    expect(list.filter((state) => state === "ANSWERED").length).toBe(1);
+    expect(list[1]).toBe("ANSWERED");
+    expect(list[2]).toBe("VISITED_PENDING");
   });
 
   it("valor guardado inválido ou fora do intervalo é saneado", () => {
@@ -309,5 +331,97 @@ describe("painel Progresso: navegação x resposta", () => {
   it("alcançada não é respondida: o contador usa só respostas válidas", () => {
     const list = states({ current: 0, answers: [1], stored: 2 });
     expect(list.filter((state) => state === "ANSWERED").length).toBe(1);
+  });
+});
+
+describe("precedência ao abrir a pergunta: oficial > rascunho local > rascunho do Back", () => {
+  const noRemote = { text: null, version: 0 };
+
+  it("guarda a versão do rascunho do Back conhecida na edição (baseVersion)", () => {
+    saveAnswerDraft(scope(), "texto", "", storage, 1_000, 4);
+    expect(getAnswerDraft(scope(), storage, 1_000)?.baseVersion).toBe(4);
+    // sem baseVersion (rascunhos antigos) continua válido
+    saveAnswerDraft(scope({ questionId: "q-9" }), "texto", "", storage, 1_000);
+    expect(getAnswerDraft(scope({ questionId: "q-9" }), storage, 1_000)?.baseVersion).toBeUndefined();
+  });
+
+  it("outro dispositivo: sem cópia local, o rascunho do Back é restaurado", () => {
+    const resolved = resolveRestoredAnswer({
+      official: null,
+      remote: { text: "texto do dispositivo A", version: 3 },
+      local: null,
+    });
+    expect(resolved).toEqual({ text: "texto do dispositivo A", source: "remote-draft", discardLocal: false });
+  });
+
+  it("sem rascunho nenhum vale a resposta oficial", () => {
+    expect(resolveRestoredAnswer({ official: "oficial", remote: noRemote, local: null })).toEqual({
+      text: "oficial",
+      source: "official",
+      discardLocal: false,
+    });
+  });
+
+  it("rascunho do Back igual à resposta oficial é ignorado", () => {
+    const resolved = resolveRestoredAnswer({ official: "mesmo", remote: { text: "mesmo ", version: 2 }, local: null });
+    expect(resolved.source).toBe("official");
+  });
+
+  it("cópia local MAIS NOVA (mesma versão do Back, texto diferente) é preservada", () => {
+    saveAnswerDraft(scope(), "offline mais novo", "", storage, 1_000, 3);
+    const resolved = resolveRestoredAnswer({
+      official: "",
+      remote: { text: "último que o Back recebeu", version: 3 },
+      local: getAnswerDraft(scope(), storage, 1_000),
+    });
+    expect(resolved).toEqual({ text: "offline mais novo", source: "local-draft", discardLocal: false });
+  });
+
+  it("cópia local VELHA (outro dispositivo salvou depois) é descartada e o Back vence", () => {
+    saveAnswerDraft(scope(), "meu texto velho", "", storage, 1_000, 3);
+    const resolved = resolveRestoredAnswer({
+      official: "",
+      remote: { text: "texto do outro dispositivo", version: 5 },
+      local: getAnswerDraft(scope(), storage, 1_000),
+    });
+    expect(resolved).toEqual({ text: "texto do outro dispositivo", source: "remote-draft", discardLocal: true });
+  });
+
+  it("rascunho local de uma resposta oficial que mudou é velho: vale a oficial", () => {
+    saveAnswerDraft(scope(), "rascunho velho", "versão 1", storage, 1_000, 0);
+    const resolved = resolveRestoredAnswer({
+      official: "versão 2 mais nova",
+      remote: noRemote,
+      local: getAnswerDraft(scope(), storage, 1_000),
+    });
+    expect(resolved).toEqual({ text: "versão 2 mais nova", source: "official", discardLocal: true });
+  });
+
+  it("rascunho local sem baseVersion (legado) só vale se o Back não tem rascunho", () => {
+    saveAnswerDraft(scope(), "legado", "", storage, 1_000);
+    const local = getAnswerDraft(scope(), storage, 1_000);
+    expect(resolveRestoredAnswer({ official: "", remote: noRemote, local }).source).toBe("local-draft");
+    expect(resolveRestoredAnswer({ official: "", remote: { text: "do Back", version: 2 }, local }).source).toBe("remote-draft");
+  });
+
+  it("rascunho remoto limpo (confirmado/limpo em outro dispositivo) descarta cópia local velha", () => {
+    saveAnswerDraft(scope(), "antigo", "", storage, 1_000, 2);
+    const resolved = resolveRestoredAnswer({
+      official: "",
+      remote: { text: null, version: 4 },
+      local: getAnswerDraft(scope(), storage, 1_000),
+    });
+    expect(resolved.source).toBe("official");
+    expect(resolved.discardLocal).toBe(true);
+  });
+
+  it("rascunho NUNCA vira resposta: o estado de navegação depende só da resposta oficial", () => {
+    // Pergunta já alcançada, com rascunho local/remoto mas sem resposta oficial => pendente.
+    expect(
+      getQuestionNavState({ index: 1, currentIndex: 2, highestReached: 2, answered: false }),
+    ).toBe("VISITED_PENDING");
+    expect(
+      getQuestionNavState({ index: 1, currentIndex: 2, highestReached: 2, answered: true }),
+    ).toBe("ANSWERED");
   });
 });

@@ -6,10 +6,13 @@ import {
 import { InterviewsAiService } from '../interviews-ai/interviews-ai.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  QUESTION_SELECT,
+  CANDIDATE_QUESTION_SELECT,
+  INTERVIEW_ERROR_CODES,
+  interviewNotInProgress,
   parseGeneratedQuestions,
-  toQuestionResponse,
+  toCandidateQuestionResponse,
   validateAnswer,
+  validateDraft,
 } from './interview-flow';
 import { INTERVIEW_SELECT, toInterviewResponse } from './interviews.service';
 
@@ -37,14 +40,23 @@ export class InterviewQuestionsService {
       throw new NotFoundException('Entrevista não encontrada.');
     }
 
+    // Cancelada: nada de gerar nem reabrir a leitura pelo caminho de geração.
+    if (interview.status === 'CANCELLED') {
+      throw interviewNotInProgress(
+        'Esta entrevista foi cancelada.',
+        interview.status,
+      );
+    }
+
     const existing = await this.listStored(interviewId);
     if (existing.length > 0) {
-      return this.toList(interviewId, existing);
+      return this.toList(interviewId, interview.status, existing);
     }
 
     if (interview.status !== 'IN_PROGRESS') {
-      throw new ConflictException(
+      throw interviewNotInProgress(
         'Esta entrevista já foi enviada e não aceita novas perguntas.',
+        interview.status,
       );
     }
 
@@ -69,21 +81,31 @@ export class InterviewQuestionsService {
       skipDuplicates: true,
     });
 
-    return this.toList(interviewId, await this.listStored(interviewId));
+    return this.toList(
+      interviewId,
+      interview.status,
+      await this.listStored(interviewId),
+    );
   }
 
+  // Devolve também `interviewStatus`: o wizard revalida (focus/visibilidade)
+  // com esta única chamada, sem precisar de um GET extra da entrevista.
   async list(candidateUserId: number, interviewId: string) {
-    await this.assertOwned(candidateUserId, interviewId);
-    return this.toList(interviewId, await this.listStored(interviewId));
+    const status = await this.assertOwned(candidateUserId, interviewId);
+    return this.toList(interviewId, status, await this.listStored(interviewId));
   }
 
-  // Salva (ou limpa, se vier em branco) a resposta de UMA pergunta. A
-  // propriedade e o status IN_PROGRESS são checados no próprio UPDATE.
+  // CONFIRMA (ou limpa, se vier em branco) a resposta OFICIAL de UMA pergunta.
+  // Controle otimista: só grava se `draftVersion` for a versão vigente da
+  // pergunta; propriedade, status IN_PROGRESS e versão ficam no próprio UPDATE
+  // (atômico). Versão antiga => 409 DRAFT_VERSION_CONFLICT com o estado vigente,
+  // sem sobrescrever a resposta de outro dispositivo.
   async saveAnswer(
     candidateUserId: number,
     interviewId: string,
     questionId: string,
     rawAnswer: string,
+    draftVersion: number,
   ) {
     const answer = validateAnswer(rawAnswer);
     const now = new Date();
@@ -92,74 +114,197 @@ export class InterviewQuestionsService {
       where: {
         question_id: questionId,
         interview_id: interviewId,
+        draft_version: draftVersion,
         interview: {
           candidate_user_id: candidateUserId,
           status: 'IN_PROGRESS',
         },
       },
+      // A confirmação (inclusive de resposta vazia, e mesmo quando o texto é IGUAL
+      // ao já salvo) PROMOVE e limpa o rascunho na MESMA operação atômica. Texto
+      // igual mantém answer_text e renova answered_at (= "confirmada agora"). A
+      // versão sempre avança (nunca volta a 0) para que um dispositivo com
+      // rascunho antigo receba 409 em vez de ressuscitá-lo.
       data: {
         answer_text: answer || null,
         answered_at: answer ? now : null,
+        draft_text: null,
+        draft_updated_at: null,
+        draft_version: { increment: 1 },
         updated_at: now,
       },
     });
 
     if (count === 0) {
-      const owned = await this.prisma.interview_question.findFirst({
+      const current = await this.prisma.interview_question.findFirst({
         where: {
           question_id: questionId,
           interview_id: interviewId,
           interview: { candidate_user_id: candidateUserId },
         },
-        select: { question_id: true },
+        select: {
+          question_id: true,
+          answer_text: true,
+          draft_text: true,
+          draft_updated_at: true,
+          draft_version: true,
+          interview: { select: { status: true } },
+        },
       });
 
-      if (!owned) {
+      if (!current) {
         throw new NotFoundException('Pergunta não encontrada.');
       }
-      throw new ConflictException(
-        'Esta entrevista já foi enviada e não aceita novas respostas.',
-      );
+      if (current.interview.status !== 'IN_PROGRESS') {
+        throw interviewNotInProgress(
+          'Esta entrevista já foi enviada e não aceita novas respostas.',
+          current.interview.status,
+        );
+      }
+      // Estado vigente para o cliente reconciliar (inclusive reconhecer um
+      // reenvio cuja primeira tentativa já tinha sido aplicada).
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: INTERVIEW_ERROR_CODES.draftVersionConflict,
+        message:
+          'A resposta foi alterada em outro dispositivo. Recarregue para continuar.',
+        answer: current.answer_text,
+        draftText: current.draft_text,
+        draftUpdatedAt: current.draft_updated_at,
+        draftVersion: current.draft_version,
+      });
     }
 
     const stored = await this.prisma.interview_question.findFirst({
       where: { question_id: questionId, interview_id: interviewId },
-      select: QUESTION_SELECT,
+      select: CANDIDATE_QUESTION_SELECT,
     });
 
     if (!stored) {
       throw new NotFoundException('Pergunta não encontrada.');
     }
 
-    return toQuestionResponse(stored);
+    return toCandidateQuestionResponse(stored);
+  }
+
+  // Autosave do RASCUNHO de UMA pergunta. Nunca toca em answer_text/answered_at
+  // nem no status da entrevista: rascunho não é resposta. Controle otimista:
+  // só grava se `version` for a versão atual; senão 409 com o estado vigente
+  // (o cliente decide, nada é sobrescrito em silêncio). Texto vazio limpa o
+  // rascunho (e também avança a versão).
+  async saveDraft(
+    candidateUserId: number,
+    interviewId: string,
+    questionId: string,
+    rawDraft: string,
+    version: number,
+  ) {
+    const draft = validateDraft(rawDraft);
+    const now = new Date();
+
+    const { count } = await this.prisma.interview_question.updateMany({
+      where: {
+        question_id: questionId,
+        interview_id: interviewId,
+        draft_version: version,
+        interview: {
+          candidate_user_id: candidateUserId,
+          status: 'IN_PROGRESS',
+        },
+      },
+      data: {
+        draft_text: draft,
+        draft_updated_at: draft === null ? null : now,
+        draft_version: { increment: 1 },
+      },
+    });
+
+    if (count === 0) {
+      const current = await this.prisma.interview_question.findFirst({
+        where: {
+          question_id: questionId,
+          interview_id: interviewId,
+          interview: { candidate_user_id: candidateUserId },
+        },
+        select: {
+          question_id: true,
+          answer_text: true,
+          draft_text: true,
+          draft_updated_at: true,
+          draft_version: true,
+          interview: { select: { status: true } },
+        },
+      });
+
+      if (!current) {
+        throw new NotFoundException('Pergunta não encontrada.');
+      }
+      if (current.interview.status !== 'IN_PROGRESS') {
+        throw interviewNotInProgress(
+          'Esta entrevista já foi enviada e não aceita novos rascunhos.',
+          current.interview.status,
+        );
+      }
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: INTERVIEW_ERROR_CODES.draftVersionConflict,
+        message:
+          'O rascunho foi alterado em outro dispositivo. Recarregue para continuar.',
+        answer: current.answer_text,
+        draftText: current.draft_text,
+        draftUpdatedAt: current.draft_updated_at,
+        draftVersion: current.draft_version,
+      });
+    }
+
+    const stored = await this.prisma.interview_question.findFirst({
+      where: { question_id: questionId, interview_id: interviewId },
+      select: CANDIDATE_QUESTION_SELECT,
+    });
+
+    if (!stored) {
+      throw new NotFoundException('Pergunta não encontrada.');
+    }
+
+    return {
+      id: stored.question_id,
+      draftText: stored.draft_text,
+      draftUpdatedAt: stored.draft_updated_at,
+      draftVersion: stored.draft_version,
+    };
   }
 
   private async assertOwned(candidateUserId: number, interviewId: string) {
     const owned = await this.prisma.interview.findFirst({
       where: { interview_id: interviewId, candidate_user_id: candidateUserId },
-      select: { interview_id: true },
+      select: { interview_id: true, status: true },
     });
 
     if (!owned) {
       throw new NotFoundException('Entrevista não encontrada.');
     }
+    return owned.status;
   }
 
   private listStored(interviewId: string) {
     return this.prisma.interview_question.findMany({
       where: { interview_id: interviewId },
       orderBy: { position: 'asc' },
-      select: QUESTION_SELECT,
+      select: CANDIDATE_QUESTION_SELECT,
     });
   }
 
   private toList(
     interviewId: string,
-    records: Parameters<typeof toQuestionResponse>[0][],
+    interviewStatus: string,
+    records: Parameters<typeof toCandidateQuestionResponse>[0][],
   ) {
     return {
       interviewId,
-      questions: records.map(toQuestionResponse),
+      interviewStatus,
+      questions: records.map(toCandidateQuestionResponse),
     };
   }
 }

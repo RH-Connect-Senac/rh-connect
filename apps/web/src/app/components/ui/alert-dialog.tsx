@@ -46,11 +46,15 @@ function AlertDialogOverlay({
 
 function AlertDialogContent({
   className,
+  onOverlayClick,
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+}: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  /** Opcional: clique na área escura fora do conteúdo. Sem esta prop, o overlay não fecha nada. */
+  onOverlayClick?: () => void;
+}) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      <AlertDialogOverlay onClick={onOverlayClick ? (event) => { if (event.target === event.currentTarget) onOverlayClick(); } : undefined} />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(

@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { CreateInterviewDto } from './dto/create-interview.dto';
 import { INTERVIEW_SELECT, InterviewsService } from './interviews.service';
@@ -94,15 +94,21 @@ describe('InterviewsService.create', () => {
     },
   );
 
-  it('permite várias entrevistas IN_PROGRESS: não consulta nem bloqueia por existente', async () => {
+  it('regra V1: consulta a IN_PROGRESS do dono antes de criar e bloqueia a segunda (409)', async () => {
     const { service, prisma } = makeService();
     prisma.interview.create.mockResolvedValue(makeRecord());
+    prisma.interview.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ interview_id: INTERVIEW_ID });
 
     await service.create(42, dto);
-    await service.create(42, dto);
+    await expect(service.create(42, dto)).rejects.toBeInstanceOf(ConflictException);
 
-    expect(prisma.interview.create).toHaveBeenCalledTimes(2);
-    expect(prisma.interview.findFirst).not.toHaveBeenCalled();
+    expect(prisma.interview.create).toHaveBeenCalledTimes(1);
+    expect(prisma.interview.findFirst.mock.calls[0][0].where).toEqual({
+      candidate_user_id: 42,
+      status: 'IN_PROGRESS',
+    });
   });
 
   it('exige apenas o usuário autenticado: não consulta perfil/onboarding do candidato', async () => {

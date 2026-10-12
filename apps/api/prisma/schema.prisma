@@ -245,6 +245,12 @@ model interview_question {
   question_text String                          @db.VarChar(500)
   answer_text   String?                         @db.VarChar(1000)
   answered_at   DateTime?                       @db.Timestamptz(6)
+  // RASCUNHO em andamento (autosave do candidato). NUNCA conta como resposta:
+  // o submit e a avaliação olham só answer_text. draft_version é o contador
+  // otimista entre dispositivos (incrementa a cada gravação/confirmação).
+  draft_text       String?                      @db.VarChar(1000)
+  draft_updated_at DateTime?                    @db.Timestamptz(6)
+  draft_version    Int                          @default(0)
   created_at    DateTime                        @default(now()) @db.Timestamptz(6)
   updated_at    DateTime                        @default(now()) @db.Timestamptz(6)
   interview     interview                       @relation(fields: [interview_id], references: [interview_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_interview_question_interview")
@@ -417,6 +423,9 @@ enum interview_status {
   PENDING_ASSIGNMENT
   ASSIGNED
   COMPLETED
+  // Encerrada pelo candidato antes do envio (POST /interviews/:id/cancel). Não é
+  // uma entrevista enviada: sem submitted_at e fora do fluxo de avaliação.
+  CANCELLED
 }
 
 enum evaluation_status {

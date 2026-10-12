@@ -146,3 +146,49 @@ describe("analyzeJobUrl (requisição real + mensagem amigável)", () => {
     expect(requests).toHaveLength(0);
   });
 });
+
+describe("analyzeJobUrl: mensagens seguras para o usuário", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const failWith = (status: number, body: unknown) => {
+    globalThis.fetch = (async () =>
+      ({ ok: false, status, json: async () => body }) as unknown as Response) as typeof fetch;
+  };
+  const FORBIDDEN = /groq|llama|bad gateway|fetch|econn|\b50[0-9]\b/i;
+
+  it("502 com detalhe do provider não chega à tela", async () => {
+    failWith(502, { statusCode: 502, error: "Bad Gateway", message: "Erro Groq 502: model unavailable" });
+    const error = await analyzeJobUrl(EXTERNAL_URL).catch((e: Error) => e);
+    expect(error instanceof Error).toBe(true);
+    expect(FORBIDDEN.test((error as Error).message)).toBe(false);
+    expect((error as Error).message).toBe("Não foi possível analisar a vaga. Verifique o link e tente novamente.");
+  });
+
+  it("503 e 504 usam a cópia de indisponibilidade e de demora", async () => {
+    failWith(503, { message: "Service Unavailable" });
+    await expect(analyzeJobUrl(EXTERNAL_URL)).rejects.toThrow("O serviço está temporariamente indisponível. Tente novamente em alguns instantes.");
+    failWith(504, { message: "Gateway Timeout" });
+    await expect(analyzeJobUrl(EXTERNAL_URL)).rejects.toThrow("A operação está demorando mais que o esperado. Tente novamente.");
+  });
+
+  it("falha de rede (Failed to fetch) não aparece crua", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch;
+    const error = await analyzeJobUrl(EXTERNAL_URL).catch((e: Error) => e);
+    expect(FORBIDDEN.test((error as Error).message)).toBe(false);
+  });
+
+  it("mensagem de negócio em 4xx continua específica", async () => {
+    failWith(400, { message: "A vaga informada não está mais disponível." });
+    await expect(analyzeJobUrl(EXTERNAL_URL)).rejects.toThrow("A vaga informada não está mais disponível.");
+  });
+
+  it("4xx com texto técnico cai no fallback amigável", async () => {
+    failWith(400, { message: "PrismaClientKnownRequestError at Object.<anonymous> (job.ts:10)" });
+    await expect(analyzeJobUrl(EXTERNAL_URL)).rejects.toThrow("Não foi possível analisar a vaga. Verifique o link e tente novamente.");
+  });
+});

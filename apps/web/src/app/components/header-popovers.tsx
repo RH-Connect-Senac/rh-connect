@@ -151,8 +151,9 @@ export function AccountDropdown({ config, onNavigate }: { config: AccountConfig;
                 {config.initials}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-bold text-foreground truncate">{config.name}</p>
-                <p className="text-xs text-muted-foreground truncate">{config.email}</p>
+                {/* Nome: até 2 linhas (quebra natural); só trunca se nem assim couber. E-mail: 1 linha. */}
+                <p className="text-sm font-bold text-foreground leading-snug break-words line-clamp-2" title={config.name}>{config.name}</p>
+                <p className="text-xs text-muted-foreground truncate" title={config.email}>{config.email}</p>
               </div>
             </div>
           </div>

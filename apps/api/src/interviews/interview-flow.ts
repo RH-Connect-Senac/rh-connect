@@ -1,5 +1,48 @@
-import { BadGatewayException, BadRequestException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { textLength } from './job-context';
+
+// Códigos estáveis dos 409 da entrevista do candidato: o frontend decide pelo
+// `code`, nunca pelo texto da mensagem.
+export const INTERVIEW_ERROR_CODES = {
+  notInProgress: 'INTERVIEW_NOT_IN_PROGRESS',
+  draftVersionConflict: 'DRAFT_VERSION_CONFLICT',
+  alreadyInProgress: 'INTERVIEW_ALREADY_IN_PROGRESS',
+} as const;
+
+// 409: a entrevista já saiu de IN_PROGRESS (enviada/encerrada) e não aceita mais
+// mutações. `interviewStatus` informa o estado vigente quando conhecido.
+export function interviewNotInProgress(
+  message: string,
+  interviewStatus?: string,
+) {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: INTERVIEW_ERROR_CODES.notInProgress,
+    // Cancelada não é "enviada": a mensagem diz o que realmente aconteceu.
+    message:
+      interviewStatus === 'CANCELLED'
+        ? 'Esta entrevista foi cancelada e não aceita mais alterações.'
+        : message,
+    ...(interviewStatus ? { interviewStatus } : {}),
+  });
+}
+
+// 409 (regra V1): o candidato só pode ter UMA entrevista IN_PROGRESS por vez.
+// `interviewId` é a entrevista existente (o frontend oferece "Continuar entrevista").
+export function interviewAlreadyInProgress(interviewId: string | null) {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: INTERVIEW_ERROR_CODES.alreadyInProgress,
+    message: 'Você já possui uma entrevista em andamento.',
+    ...(interviewId ? { interviewId } : {}),
+  });
+}
 
 export const EVALUATION_MODES = ['AI', 'HUMAN'] as const;
 export type EvaluationMode = (typeof EVALUATION_MODES)[number];
@@ -34,6 +77,22 @@ export function validateAnswer(raw: string): string {
   return answer;
 }
 
+// Rascunho: só padroniza o fim de linha (CRLF/CR => LF). NÃO faz trim, para não
+// "comer" o espaço/quebra que o candidato acabou de digitar. Só espaços/quebras
+// => null (limpa o rascunho). Acima do limite => 400, nunca corta em silêncio.
+export function validateDraft(raw: string): string | null {
+  const draft = raw.replace(/\r\n?/g, '\n');
+  if (draft.trim() === '') {
+    return null;
+  }
+  if (textLength(draft) > FLOW_LIMITS.answer) {
+    throw new BadRequestException(
+      `O rascunho deve ter no máximo ${FLOW_LIMITS.answer} caracteres.`,
+    );
+  }
+  return draft;
+}
+
 export interface GeneratedQuestion {
   position: number;
   type: QuestionType;
@@ -57,7 +116,7 @@ function typeKey(value: unknown): string {
 
 function invalidGeneration() {
   return new BadGatewayException(
-    'O serviço de IA retornou perguntas em formato inválido.',
+    'Não foi possível gerar as perguntas agora. Tente novamente em instantes.',
   );
 }
 
@@ -107,6 +166,30 @@ export interface QuestionRecord {
   question_text: string;
   answer_text: string | null;
   answered_at: Date | null;
+}
+
+// Projeção do CANDIDATO: além da resposta oficial, devolve o rascunho dele.
+// Avaliador/Admin continuam usando QUESTION_SELECT (nunca veem rascunho).
+export const CANDIDATE_QUESTION_SELECT = {
+  ...QUESTION_SELECT,
+  draft_text: true,
+  draft_updated_at: true,
+  draft_version: true,
+} as const;
+
+export interface CandidateQuestionRecord extends QuestionRecord {
+  draft_text: string | null;
+  draft_updated_at: Date | null;
+  draft_version: number;
+}
+
+export function toCandidateQuestionResponse(record: CandidateQuestionRecord) {
+  return {
+    ...toQuestionResponse(record),
+    draftText: record.draft_text,
+    draftUpdatedAt: record.draft_updated_at,
+    draftVersion: record.draft_version,
+  };
 }
 
 export function toQuestionResponse(record: QuestionRecord) {

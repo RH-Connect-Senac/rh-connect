@@ -13,6 +13,7 @@ import {
   type CriterionKey,
   type EvaluationDraft,
 } from "../domain/evaluator-evaluation-form";
+import { FRIENDLY_ERROR_MESSAGES, sanitizeServerMessage } from "../domain/user-friendly-error";
 
 const API_BASE_URL = (
   (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
@@ -85,7 +86,7 @@ export type EvaluatorInterviewsResult<T> =
 
 const NETWORK_ERROR_MESSAGE =
   "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
-const INVALID_RESPONSE_MESSAGE = "Resposta inválida do servidor. Tente novamente.";
+const INVALID_RESPONSE_MESSAGE = FRIENDLY_ERROR_MESSAGES.generic;
 export const NOT_FOUND_MESSAGE = "Entrevista não encontrada ou indisponível.";
 
 function nullableString(value: unknown): string | null {
@@ -301,7 +302,7 @@ async function failureFromResponse(
       message: (await readBusinessMessage(response)) ?? fallbackMessage,
     };
   }
-  return { ok: false, reason: "error", message: fallbackMessage };
+  return { ok: false, reason: "error", message: sanitizeServerMessage(null, { status: response.status, fallback: fallbackMessage, scope: "evaluator-interviews" }) };
 }
 
 export async function listAssignedInterviews(): Promise<

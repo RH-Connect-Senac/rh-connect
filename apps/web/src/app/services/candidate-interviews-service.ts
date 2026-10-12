@@ -5,7 +5,8 @@
  *   GET   /interviews/:id                             lê a Interview
  *   POST  /interviews/:id/questions/generate          gera/recupera as 5 perguntas (idempotente)
  *   GET   /interviews/:id/questions                   lê perguntas + respostas persistidas
- *   PUT   /interviews/:id/questions/:qid/answer       grava a resposta
+ *   PUT   /interviews/:id/questions/:qid/answer       grava a resposta OFICIAL (confirmação)
+ *   PUT   /interviews/:id/questions/:qid/answer/draft grava o RASCUNHO (autosave; nunca é resposta)
  *   PATCH /interviews/:id/evaluation-mode             grava a modalidade (AI | HUMAN)
  *   POST  /interviews/:id/submit                      envia (HUMAN → PENDING_ASSIGNMENT,
  *                                                     AI → PENDING_AI_EVALUATION)
@@ -19,6 +20,7 @@
  */
 
 import type { JobInterviewContext } from "./interview-context-service";
+import { FRIENDLY_ERROR_MESSAGES, sanitizeServerMessage } from "../domain/user-friendly-error";
 
 const API_BASE_URL = (
   (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
@@ -32,7 +34,9 @@ export type RealInterviewStatus =
   | "PENDING_AI_EVALUATION"
   | "PENDING_ASSIGNMENT"
   | "ASSIGNED"
-  | "COMPLETED";
+  | "COMPLETED"
+  // Encerrada pelo candidato (POST /interviews/:id/cancel). Nunca é retomada nem vira enviada.
+  | "CANCELLED";
 
 /** Tipos usados pela UI do wizard (mesmos rótulos de antes). */
 export type WizardQuestionType = "Tecnica" | "Comportamental" | "Carreira";
@@ -43,7 +47,60 @@ export type RealInterviewQuestion = {
   position: number;
   type: WizardQuestionType;
   text: string;
+  /** Resposta OFICIAL (confirmada). Só ela conta como "respondida". */
   answer: string | null;
+  /** Rascunho em andamento (pode atravessar dispositivos; NÃO é resposta). */
+  draftText: string | null;
+  draftUpdatedAt: string | null;
+  /** Versão do rascunho (controle otimista entre dispositivos). */
+  draftVersion: number;
+};
+
+export type RealAnswerDraft = {
+  id: string;
+  draftText: string | null;
+  draftUpdatedAt: string | null;
+  draftVersion: number;
+};
+
+/** Estado vigente da pergunta no Back devolvido num 409 DRAFT_VERSION_CONFLICT. */
+export type RealAnswerConflict = RealAnswerDraft & {
+  /** Resposta OFICIAL vigente no Back (null = nenhuma). */
+  answer: string | null;
+};
+
+/** Códigos estáveis dos 409 do Back (a decisão nunca depende do texto da mensagem). */
+export const DRAFT_VERSION_CONFLICT_CODE = "DRAFT_VERSION_CONFLICT";
+export const INTERVIEW_NOT_IN_PROGRESS_CODE = "INTERVIEW_NOT_IN_PROGRESS";
+export const INTERVIEW_ALREADY_IN_PROGRESS_CODE = "INTERVIEW_ALREADY_IN_PROGRESS";
+
+export type SaveDraftResult =
+  | { ok: true; data: RealAnswerDraft }
+  | {
+      ok: false;
+      reason: CandidateInterviewFailure;
+      message: string;
+      conflict?: RealAnswerDraft;
+      interviewStatus?: RealInterviewStatus;
+    };
+
+export type SaveAnswerResult =
+  | { ok: true; data: RealInterviewQuestion }
+  | {
+      ok: false;
+      reason: CandidateInterviewFailure;
+      message: string;
+      /** Só em `conflict` por versão: estado vigente para reconciliar. */
+      conflict?: RealAnswerConflict;
+      /** Só em `not_in_progress`: status vigente da entrevista, quando o Back informa. */
+      interviewStatus?: RealInterviewStatus;
+    };
+
+/** Perguntas + status vigente da entrevista (uma única chamada para revalidar). */
+export type RealQuestionsState = {
+  questions: RealInterviewQuestion[];
+  /** null = o Back não informou (cliente tolerante a Back mais antigo). */
+  interviewStatus: RealInterviewStatus | null;
 };
 
 export type RealInterview = {
@@ -54,23 +111,49 @@ export type RealInterview = {
   createdAt: string;
   title: string;
   company: string | null;
+  /** Contexto COMPLETO da vaga (necessário para reconstruir o wizard em outro dispositivo). */
+  context: JobInterviewContext;
+};
+
+/** Item de `GET /interviews/in-progress` (sem texto de resposta/rascunho). */
+export type RealInProgressInterview = {
+  id: string;
+  title: string;
+  company: string | null;
+  evaluationMode: RealEvaluationMode | null;
+  interviewStatus: "IN_PROGRESS";
+  createdAt: string;
+  questionCount: number;
+  answeredQuestionCount: number;
+  latestDraftUpdatedAt: string | null;
 };
 
 export type CandidateInterviewFailure =
   | "validation"
   | "not_found"
   | "conflict"
+  // 409 INTERVIEW_NOT_IN_PROGRESS: a entrevista já foi enviada/encerrada.
+  | "not_in_progress"
+  // 409 INTERVIEW_ALREADY_IN_PROGRESS: regra V1 (uma IN_PROGRESS por candidato).
+  | "already_in_progress"
   | "unauthorized"
   | "forbidden"
   | "error";
 
 export type CandidateInterviewResult<T> =
   | { ok: true; data: T }
-  | { ok: false; reason: CandidateInterviewFailure; message: string };
+  | {
+      ok: false;
+      reason: CandidateInterviewFailure;
+      message: string;
+      interviewStatus?: RealInterviewStatus;
+      /** Só em `already_in_progress`: a entrevista IN_PROGRESS existente. */
+      existingInterviewId?: string;
+    };
 
 const NETWORK_ERROR_MESSAGE =
   "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.";
-const INVALID_RESPONSE_MESSAGE = "Resposta inválida do servidor. Tente novamente.";
+const INVALID_RESPONSE_MESSAGE = FRIENDLY_ERROR_MESSAGES.generic;
 
 const STATUSES: RealInterviewStatus[] = [
   "IN_PROGRESS",
@@ -78,6 +161,7 @@ const STATUSES: RealInterviewStatus[] = [
   "PENDING_ASSIGNMENT",
   "ASSIGNED",
   "COMPLETED",
+  "CANCELLED",
 ];
 
 const QUESTION_TYPE_LABEL: Record<string, WizardQuestionType> = {
@@ -116,7 +200,17 @@ function toQuestion(payload: unknown): RealInterviewQuestion | null {
     type,
     text: item.text,
     answer: nullableString(item.answer),
+    draftText: nullableString(item.draftText),
+    draftUpdatedAt: nullableString(item.draftUpdatedAt),
+    draftVersion:
+      typeof item.draftVersion === "number" && Number.isInteger(item.draftVersion) && item.draftVersion >= 0
+        ? item.draftVersion
+        : 0,
   };
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
 function toInterview(payload: unknown): RealInterview | null {
@@ -145,6 +239,51 @@ function toInterview(payload: unknown): RealInterview | null {
     createdAt: item.createdAt,
     title: context.title,
     company: nullableString(context.company),
+    context: {
+      sourceUrl: typeof context.sourceUrl === "string" ? context.sourceUrl : "",
+      title: context.title,
+      company: typeof context.company === "string" ? context.company : "",
+      summary: typeof context.summary === "string" ? context.summary : "",
+      activities: toStringArray(context.activities),
+      requirements: toStringArray(context.requirements),
+      location: nullableString(context.location),
+      contractType: nullableString(context.contractType),
+      workMode:
+        context.workMode === "REMOTE" || context.workMode === "HYBRID" || context.workMode === "ONSITE"
+          ? context.workMode
+          : null,
+    },
+  };
+}
+
+function toInProgressInterview(payload: unknown): RealInProgressInterview | null {
+  if (!payload || typeof payload !== "object") return null;
+  const item = payload as Record<string, unknown>;
+  const count = (v: unknown) =>
+    typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+  const questionCount = count(item.questionCount);
+  const answeredQuestionCount = count(item.answeredQuestionCount);
+  if (
+    !isUuid(item.id) ||
+    item.interviewStatus !== "IN_PROGRESS" ||
+    typeof item.title !== "string" ||
+    typeof item.createdAt !== "string" ||
+    questionCount === null ||
+    answeredQuestionCount === null
+  ) {
+    return null;
+  }
+  return {
+    id: item.id,
+    title: item.title,
+    company: nullableString(item.company),
+    evaluationMode:
+      item.evaluationMode === "AI" || item.evaluationMode === "HUMAN" ? item.evaluationMode : null,
+    interviewStatus: "IN_PROGRESS",
+    createdAt: item.createdAt,
+    questionCount,
+    answeredQuestionCount,
+    latestDraftUpdatedAt: nullableString(item.latestDraftUpdatedAt),
   };
 }
 
@@ -197,8 +336,7 @@ async function readJson(response: Response): Promise<Record<string, unknown> | n
   }
 }
 
-async function readServerMessage(response: Response): Promise<string | null> {
-  const body = await readJson(response);
+function messageFromBody(body: Record<string, unknown> | null): string | null {
   if (!body) return null;
   if (typeof body.message === "string" && body.message.trim()) return body.message;
   if (Array.isArray(body.message)) {
@@ -208,18 +346,34 @@ async function readServerMessage(response: Response): Promise<string | null> {
   return null;
 }
 
-async function failureFromResponse(
-  response: Response,
+function toStatus(value: unknown): RealInterviewStatus | undefined {
+  return typeof value === "string" && STATUSES.includes(value as RealInterviewStatus)
+    ? (value as RealInterviewStatus)
+    : undefined;
+}
+
+type Failure = {
+  ok: false;
+  reason: CandidateInterviewFailure;
+  message: string;
+  interviewStatus?: RealInterviewStatus;
+  existingInterviewId?: string;
+};
+
+/** Falha a partir do status HTTP e do corpo JÁ lido (o corpo só pode ser lido uma vez). */
+function failureFromBody(
+  status: number,
+  body: Record<string, unknown> | null,
   fallbackMessage: string,
-): Promise<{ ok: false; reason: CandidateInterviewFailure; message: string }> {
-  if (response.status === 401) {
+): Failure {
+  if (status === 401) {
     return {
       ok: false,
       reason: "unauthorized",
       message: "Sua sessão expirou. Entre novamente para continuar.",
     };
   }
-  if (response.status === 403) {
+  if (status === 403) {
     return {
       ok: false,
       reason: "forbidden",
@@ -227,15 +381,43 @@ async function failureFromResponse(
     };
   }
   // 400/404/409 trazem mensagem de negócio do Back (ex.: texto acima do limite).
-  if (response.status === 400 || response.status === 404 || response.status === 409) {
+  if (status === 400 || status === 404 || status === 409) {
+    const message = sanitizeServerMessage(messageFromBody(body), { status, fallback: fallbackMessage, scope: "interviews" });
+    if (status === 409 && body?.code === INTERVIEW_ALREADY_IN_PROGRESS_CODE) {
+      return {
+        ok: false,
+        reason: "already_in_progress",
+        message,
+        ...(isUuid(body.interviewId) ? { existingInterviewId: body.interviewId } : {}),
+      };
+    }
+    if (status === 409 && body?.code === INTERVIEW_NOT_IN_PROGRESS_CODE) {
+      const interviewStatus = toStatus(body.interviewStatus);
+      return {
+        ok: false,
+        reason: "not_in_progress",
+        message,
+        ...(interviewStatus ? { interviewStatus } : {}),
+      };
+    }
     return {
       ok: false,
-      reason:
-        response.status === 400 ? "validation" : response.status === 404 ? "not_found" : "conflict",
-      message: (await readServerMessage(response)) ?? fallbackMessage,
+      reason: status === 400 ? "validation" : status === 404 ? "not_found" : "conflict",
+      message,
     };
   }
-  return { ok: false, reason: "error", message: fallbackMessage };
+  // 5xx/timeout/indisponível: texto do servidor nunca vai para a tela; o detalhe fica no console.
+  return { ok: false, reason: "error", message: sanitizeServerMessage(null, { status, fallback: fallbackMessage, scope: "interviews" }) };
+}
+
+async function failureFromResponse(response: Response, fallbackMessage: string): Promise<Failure> {
+  const needsBody =
+    response.status === 400 || response.status === 404 || response.status === 409;
+  return failureFromBody(
+    response.status,
+    needsBody ? await readJson(response) : null,
+    fallbackMessage,
+  );
 }
 
 function networkFailure(): { ok: false; reason: "error"; message: string } {
@@ -276,6 +458,56 @@ export async function createRealInterview(
   return interview ? { ok: true, data: interview } : invalidResponse();
 }
 
+/** Lista as entrevistas IN_PROGRESS do candidato logado (mais recente primeiro). */
+export async function listInProgressInterviews(): Promise<
+  CandidateInterviewResult<RealInProgressInterview[]>
+> {
+  const response = await request("/interviews/in-progress", { method: "GET" });
+  if (!response) return networkFailure();
+  if (!response.ok) {
+    return failureFromResponse(response, "Não foi possível carregar suas entrevistas em andamento.");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return invalidResponse();
+  }
+  if (!Array.isArray(payload)) return invalidResponse();
+  const items = payload.map(toInProgressInterview);
+  if (items.some((i) => i === null)) return invalidResponse();
+  return { ok: true, data: items as RealInProgressInterview[] };
+}
+
+export const CANCEL_OFFLINE_MESSAGE =
+  "Não foi possível cancelar a entrevista porque o servidor não respondeu. Verifique sua conexão e tente novamente. Nada foi alterado.";
+export const CANCEL_GENERIC_ERROR_MESSAGE =
+  "Não foi possível cancelar a entrevista. Tente novamente. Nada foi alterado.";
+
+/**
+ * CANCELA a entrevista no servidor (global: vale para todos os dispositivos).
+ * Exige o servidor: sem rede devolve falha, nunca finge sucesso. Idempotente no
+ * Back (cancelar uma já CANCELLED também é sucesso).
+ */
+export async function cancelRealInterview(
+  interviewId: string,
+): Promise<CandidateInterviewResult<RealInterview>> {
+  const response = await request(`${idPath(interviewId)}/cancel`, { method: "POST" });
+  if (!response) {
+    return { ok: false, reason: "error", message: CANCEL_OFFLINE_MESSAGE };
+  }
+  if (!response.ok) {
+    const failure = await failureFromResponse(response, CANCEL_GENERIC_ERROR_MESSAGE);
+    // Falha de servidor no cancelamento mantém a garantia "Nada foi alterado" (sem copy genérica de status).
+    return failure.reason === "error" ? { ...failure, message: CANCEL_GENERIC_ERROR_MESSAGE } : failure;
+  }
+  const interview = toInterview(await readJson(response));
+  if (!interview || interview.status !== "CANCELLED") {
+    return { ok: false, reason: "error", message: CANCEL_GENERIC_ERROR_MESSAGE };
+  }
+  return { ok: true, data: interview };
+}
+
 export async function getRealInterview(
   interviewId: string,
 ): Promise<CandidateInterviewResult<RealInterview>> {
@@ -288,16 +520,29 @@ export async function getRealInterview(
   return interview ? { ok: true, data: interview } : invalidResponse();
 }
 
+function parseQuestionsState(
+  body: Record<string, unknown> | null,
+  options: { allowEmpty?: boolean } = {},
+): CandidateInterviewResult<RealQuestionsState> {
+  if (!body || !Array.isArray(body.questions)) return invalidResponse();
+  const questions = body.questions.map(toQuestion);
+  if ((questions.length === 0 && !options.allowEmpty) || questions.some((q) => q === null)) {
+    return invalidResponse();
+  }
+  return {
+    ok: true,
+    data: {
+      questions: (questions as RealInterviewQuestion[]).sort((a, b) => a.position - b.position),
+      interviewStatus: toStatus(body.interviewStatus) ?? null,
+    },
+  };
+}
+
 function parseQuestions(
   body: Record<string, unknown> | null,
 ): CandidateInterviewResult<RealInterviewQuestion[]> {
-  if (!body || !Array.isArray(body.questions)) return invalidResponse();
-  const questions = body.questions.map(toQuestion);
-  if (questions.length === 0 || questions.some((q) => q === null)) return invalidResponse();
-  return {
-    ok: true,
-    data: (questions as RealInterviewQuestion[]).sort((a, b) => a.position - b.position),
-  };
+  const parsed = parseQuestionsState(body);
+  return parsed.ok ? { ok: true, data: parsed.data.questions } : parsed;
 }
 
 /** Gera (ou recupera, se já existem) as perguntas persistidas. Idempotente. */
@@ -309,10 +554,48 @@ export async function generateRealQuestions(
   if (!response.ok) {
     return failureFromResponse(
       response,
-      "Não foi possível gerar as perguntas da entrevista. Tente novamente.",
+      "Não foi possível gerar as perguntas agora. Tente novamente em instantes.",
     );
   }
   return parseQuestions(await readJson(response));
+}
+
+/**
+ * Lê as perguntas, as respostas JÁ persistidas e o status vigente da entrevista.
+ * É a chamada usada para REVALIDAR a sessão (focus/visibilidade): se o status
+ * deixou de ser IN_PROGRESS, o wizard bloqueia a edição.
+ */
+export async function getRealQuestionsState(
+  interviewId: string,
+): Promise<CandidateInterviewResult<RealQuestionsState>> {
+  const response = await request(`${idPath(interviewId)}/questions`, { method: "GET" });
+  if (!response) return networkFailure();
+  if (!response.ok) {
+    return failureFromResponse(
+      response,
+      "Não foi possível carregar as perguntas da entrevista. Tente novamente.",
+    );
+  }
+  return parseQuestionsState(await readJson(response));
+}
+
+/**
+ * Retomada pelo Dashboard: igual a `getRealQuestionsState`, mas aceita lista
+ * VAZIA (entrevista criada cujas perguntas ainda não foram geradas — o wizard
+ * volta a uma etapa anterior em vez de tratar como erro).
+ */
+export async function getRealQuestionsStateForResume(
+  interviewId: string,
+): Promise<CandidateInterviewResult<RealQuestionsState>> {
+  const response = await request(`${idPath(interviewId)}/questions`, { method: "GET" });
+  if (!response) return networkFailure();
+  if (!response.ok) {
+    return failureFromResponse(
+      response,
+      "Não foi possível carregar as perguntas da entrevista. Tente novamente.",
+    );
+  }
+  return parseQuestionsState(await readJson(response), { allowEmpty: true });
 }
 
 /** Lê as perguntas e as respostas JÁ persistidas (fonte da verdade). */
@@ -330,25 +613,103 @@ export async function getRealQuestions(
   return parseQuestions(await readJson(response));
 }
 
-/** Grava a resposta (resposta em branco limpa a resposta no Back). */
+/**
+ * CONFIRMA a resposta OFICIAL (resposta em branco limpa a resposta no Back).
+ * `draftVersion` é a versão do rascunho que este dispositivo conhece: o Back só
+ * confirma se ela ainda for a vigente. Versão antiga => 409
+ * DRAFT_VERSION_CONFLICT com o estado vigente em `conflict` (nada é sobrescrito).
+ */
 export async function saveRealAnswer(
   interviewId: string,
   questionId: string,
   answer: string,
-): Promise<CandidateInterviewResult<RealInterviewQuestion>> {
+  draftVersion: number,
+): Promise<SaveAnswerResult> {
   const response = await request(
     `${idPath(interviewId)}/questions/${encodeURIComponent(questionId)}/answer`,
-    { method: "PUT", body: { answer } },
+    { method: "PUT", body: { answer, draftVersion } },
   );
   if (!response) return networkFailure();
   if (!response.ok) {
-    return failureFromResponse(
-      response,
-      "Não foi possível salvar sua resposta. Tente novamente.",
-    );
+    const needsBody =
+      response.status === 400 || response.status === 404 || response.status === 409;
+    const body = needsBody ? await readJson(response) : null;
+    const fallback = "Não foi possível salvar sua resposta. Tente novamente.";
+    if (response.status === 409 && body?.code === DRAFT_VERSION_CONFLICT_CODE) {
+      const state = toDraftState(body);
+      const message =
+        sanitizeServerMessage(messageFromBody(body), { status: 409, fallback: "A resposta foi alterada em outro dispositivo." });
+      return state
+        ? {
+            ok: false,
+            reason: "conflict",
+            message,
+            conflict: { ...state, answer: nullableString(body.answer) },
+          }
+        : { ok: false, reason: "conflict", message };
+    }
+    return failureFromBody(response.status, body, fallback);
   }
   const question = toQuestion(await readJson(response));
   return question ? { ok: true, data: question } : invalidResponse();
+}
+
+function toDraftState(payload: unknown): RealAnswerDraft | null {
+  if (!payload || typeof payload !== "object") return null;
+  const item = payload as Record<string, unknown>;
+  if (
+    typeof item.draftVersion !== "number" ||
+    !Number.isInteger(item.draftVersion) ||
+    item.draftVersion < 0
+  ) {
+    return null;
+  }
+  return {
+    id: typeof item.id === "string" ? item.id : "",
+    draftText: nullableString(item.draftText),
+    draftUpdatedAt: nullableString(item.draftUpdatedAt),
+    draftVersion: item.draftVersion,
+  };
+}
+
+/**
+ * Autosave do RASCUNHO de uma pergunta. NÃO é a confirmação: o Back não toca
+ * na resposta oficial. `version` é a versão do rascunho que este dispositivo
+ * conhece; se outro dispositivo salvou depois, o Back responde 409 com o
+ * estado vigente (`conflict`) e nada é sobrescrito.
+ */
+export async function saveRealAnswerDraft(
+  interviewId: string,
+  questionId: string,
+  draft: string,
+  version: number,
+): Promise<SaveDraftResult> {
+  const response = await request(
+    `${idPath(interviewId)}/questions/${encodeURIComponent(questionId)}/answer/draft`,
+    { method: "PUT", body: { draft, version } },
+  );
+  if (!response) return networkFailure();
+
+  if (!response.ok) {
+    const needsBody =
+      response.status === 400 || response.status === 404 || response.status === 409;
+    const body = needsBody ? await readJson(response) : null;
+    if (response.status === 409 && body?.code === DRAFT_VERSION_CONFLICT_CODE) {
+      const conflict = toDraftState(body);
+      const message =
+        sanitizeServerMessage(messageFromBody(body), { status: 409, fallback: "O rascunho foi alterado em outro dispositivo." });
+      return conflict
+        ? { ok: false, reason: "conflict", message, conflict }
+        : { ok: false, reason: "conflict", message };
+    }
+    return failureFromBody(
+      response.status,
+      body,
+      "Não foi possível salvar o rascunho. Tente novamente.",
+    );
+  }
+  const state = toDraftState(await readJson(response));
+  return state ? { ok: true, data: state } : invalidResponse();
 }
 
 export async function saveRealEvaluationMode(

@@ -1,6 +1,7 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, useCallback, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { friendlyErrorMessage } from "./domain/user-friendly-error";
+import { useState, useRef, useEffect, useCallback, useContext, useId, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -111,16 +112,21 @@ import {
   type JobInterviewContext,
 } from "./services/interview-context-service";
 import {
+  cancelRealInterview,
   createRealInterview,
   generateRealQuestions,
   getRealInterview,
   getRealQuestions,
+  getRealQuestionsState,
+  getRealQuestionsStateForResume,
   isUuid,
   saveRealAnswer,
+  saveRealAnswerDraft,
   saveRealEvaluationMode,
   submitRealInterview,
   type RealInterview,
   type RealInterviewQuestion,
+  type RealInterviewStatus,
 } from "./services/candidate-interviews-service";
 import {
   clearAnswerDraft,
@@ -132,13 +138,57 @@ import {
   isQuestionNavigable,
   normalizeInterviewAnswer,
   peekInterviewUrlPrefill,
-  resolveAnswerText,
   resolveLinkCopyEffect,
+  resolveRestoredAnswer,
   shouldShowCopiedLinkNotice,
   resolveInitialQuestionIndex,
-  saveAnswerDraft,
+  safeLocalStorage,
   storeInterviewUrlPrefill,
 } from "./services/interview-ux-state";
+import {
+  ANSWER_SYNC_TONE_CLASS,
+  AnswerDraftAutosave,
+  describeAnswerSync,
+  describeAnswerSyncTone,
+  type AnswerAutosaveSnapshot,
+  type RemoteDraft,
+} from "./domain/interview-answer-autosave";
+import { confirmOfficialAnswer, withOfficialAnswer } from "./domain/interview-answer-confirmation";
+import {
+  attachExitProtection,
+  describeStaleInterview,
+  flushBeforeLeaving,
+  isExitProtectionActive,
+  shouldDiscardTerminalDraft,
+  isInterviewEditable,
+  staleNoticeTone,
+} from "./domain/interview-session-guard";
+import { startInterviewForContext } from "./domain/interview-start";
+import { diffServerState } from "./domain/interview-sync-reconcile";
+import { CANCELLED_TEXTAREA_CLASS, PROGRESS_LABELS, isCancelledSession, resolveProgressVisual } from "./domain/interview-terminal-view";
+import type { InterviewSyncResult } from "./domain/interview-sync-poller";
+import { useInterviewSyncPolling } from "./hooks/use-interview-sync-polling";
+import { InterviewSessionTerminalContext } from "./hooks/interview-session-terminal";
+import { useInterviewSessionGuard } from "./hooks/use-interview-session-guard";
+import { useInProgressInterviews } from "./hooks/use-in-progress-interviews";
+import { useDashboardInterviewsSync } from "./hooks/use-dashboard-interviews-sync";
+import {
+  CONFIRM_MODAL_DANGER_FOCUS_RING,
+  CONFIRM_MODAL_FOCUS_RING,
+  CONFIRM_MODAL_HIDDEN_FOCUS_RING,
+  resolveInitialFocus,
+  shouldHideInitialFocusRing,
+  type ConfirmInitialFocus,
+} from "./domain/confirm-modal-focus";
+import {
+  NEW_INTERVIEW_BLOCKED_MESSAGE,
+  buildResumePlan,
+  formatInProgressProgress,
+  mergeInProgressEntries,
+  resolveNewInterviewGate,
+  resolveDashboardInterviewAccess,
+} from "./domain/interview-resume";
+import { SavedNotice } from "./domain/evaluator-save-notice";
 import {
   PROFESSIONAL_AREAS,
   type ProfessionalAreaId,
@@ -321,6 +371,10 @@ type InterviewDraft = {
   answers: Record<string, string>;
   evaluationMode: EvaluationMode | null;
 };
+
+type ResumeInterviewResult =
+  | { ok: true }
+  | { ok: false; reason: "not_in_progress" | "not_found" | "error"; message: string };
 
 type InterviewDraftScreen =
   | "interview-setup"
@@ -551,8 +605,9 @@ declare global {
 // ─── Shared UI Components ─────────────────────────────────────────────────────
 
 function Btn({
-  variant = "primary", size = "md", children, onClick, disabled = false, className = "",
+  variant = "primary", size = "md", children, onClick, disabled = false, className = "", type,
 }: {
+  type?: "button" | "submit";
   variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   children: React.ReactNode;
@@ -570,6 +625,7 @@ function Btn({
       className={buttonClassName}
       onClick={onClick}
       disabled={disabled}
+      type={type}
     >
       {children}
     </UIButton>
@@ -647,21 +703,25 @@ type FieldProps = {
   hint?: string;
 } & React.InputHTMLAttributes<HTMLInputElement>;
 
-function Field({ label, type = "text", placeholder, hint, required, ...props }: FieldProps) {
+function Field({ label, type = "text", placeholder, hint, required, id, labelClassName, ...props }: FieldProps & { labelClassName?: string }) {
   const isPassword = type === "password";
+  const generatedId = useId();
+  const fieldId = id ?? generatedId;
   return (
     <div>
-      <label className="block text-sm font-semibold text-foreground mb-1.5">
+      <label htmlFor={fieldId} className={labelClassName ?? "block text-sm font-semibold text-foreground mb-1.5"}>
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
       {isPassword ? (
         <PasswordInput
+          id={fieldId}
           placeholder={placeholder}
           required={required}
           {...props}
         />
       ) : (
         <Input
+          id={fieldId}
           type={type}
           placeholder={placeholder}
           required={required}
@@ -781,6 +841,12 @@ function LandingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 2: Auth ───────────────────────────────────────────────────────────
 
+// Tipografia compartilhada por Login e Cadastro (mesmos tokens para elementos equivalentes).
+// Atenção: <label>/<button> têm tamanho-base próprio no tema (16px); por isso o tamanho é explícito.
+const AUTH_LABEL_CLASS = "block text-sm font-medium text-foreground mb-1.5";
+const AUTH_FIELD_PROPS = { labelClassName: AUTH_LABEL_CLASS, className: "text-sm font-normal" } as const;
+const AUTH_SMALL_TEXT_CLASS = "text-[13px] leading-relaxed";
+
 function AuthScreen({
   onNavigate,
   onLoginWithCredentials,
@@ -829,7 +895,11 @@ function AuthScreen({
     authNavigate(nextTab === "login" ? "/login" : "/register");
   };
 
+  const loginSubmittingRef = useRef(false);
   const handleLoginSubmit = async () => {
+    // Enter e o botão passam pelo mesmo caminho; sem double submit enquanto carrega.
+    if (loginSubmittingRef.current) return;
+    loginSubmittingRef.current = true;
     setLoginError("");
 
     setIsLoginSubmitting(true);
@@ -846,6 +916,7 @@ function AuthScreen({
         clearRememberedLoginEmail();
       }
     } finally {
+      loginSubmittingRef.current = false;
       setIsLoginSubmitting(false);
     }
   };
@@ -917,7 +988,7 @@ function AuthScreen({
                 key={t}
                 onClick={() => selectAuthTab(t)}
                 aria-pressed={tab === t}
-                className={`py-4 text-sm font-semibold transition-all ${tab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
+                className={`py-4 text-sm font-medium transition-all ${tab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {t === "login" ? "Entrar" : "Criar conta"}
               </button>
@@ -926,10 +997,21 @@ function AuthScreen({
 
           <div className="p-5 sm:p-7">
             {tab === "login" ? (
-              <div className="space-y-4">
+              // Formulário semântico: Enter nos campos e o botão "Entrar na plataforma" disparam o mesmo submit.
+              // noValidate mantém a validação atual (feita pelo login), sem balões nativos do navegador.
+              <form
+                className="space-y-4"
+                noValidate
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleLoginSubmit();
+                }}
+              >
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="E-mail"
                   type="email"
+                  autoComplete="username"
                   placeholder="seuemail@gmail.com"
                   value={loginEmail}
                   onChange={(event) => {
@@ -939,18 +1021,15 @@ function AuthScreen({
                   required
                 />
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="Senha"
                   type="password"
+                  autoComplete="current-password"
                   placeholder="Sua senha"
                   value={loginPassword}
                   onChange={(event) => {
                     setLoginPassword(event.target.value);
                     setLoginError("");
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      handleLoginSubmit();
-                    }
                   }}
                   required
                 />
@@ -972,19 +1051,20 @@ function AuthScreen({
                         }
                       }}
                     />
-                    <label htmlFor="remember-access" className="text-muted-foreground cursor-pointer">
+                    <label htmlFor="remember-access" className="text-sm font-normal text-muted-foreground cursor-pointer">
                       Lembrar acesso
                     </label>
                   </div>
-                  <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
+                  <button type="button" onClick={() => onNavigate("forgot-password")} className="text-primary font-medium hover:underline text-sm">Esqueci minha senha</button>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit} disabled={isLoginSubmitting}>
+                <Btn variant="primary" type="submit" className="w-full !py-3" disabled={isLoginSubmitting}>
                   {isLoginSubmitting ? "Entrando..." : "Entrar na plataforma"}
                 </Btn>
-              </div>
+              </form>
             ) : (
               <div className="space-y-4">
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="Nome completo"
                   placeholder="João da Silva Lima"
                   value={registerName}
@@ -995,6 +1075,7 @@ function AuthScreen({
                   required
                 />
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="E-mail"
                   type="email"
                   placeholder="nome@gmail.com"
@@ -1007,6 +1088,7 @@ function AuthScreen({
                 />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field
+                    {...AUTH_FIELD_PROPS}
                     label="Senha"
                     type="password"
                     placeholder="Mínimo 8 caracteres"
@@ -1018,6 +1100,7 @@ function AuthScreen({
                     required
                   />
                   <Field
+                    {...AUTH_FIELD_PROPS}
                     label="Confirmar senha"
                     type="password"
                     placeholder="Repita a senha"
@@ -1034,7 +1117,7 @@ function AuthScreen({
                     required
                   />
                 </div>
-                <div className="bg-accent rounded-xl p-4">
+                <div className="bg-accent rounded-xl px-4 py-3.5">
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
@@ -1045,8 +1128,8 @@ function AuthScreen({
                         setRegisterError("");
                       }}
                     />
-                    <span className="text-xs text-foreground leading-relaxed">
-                      Li e aceito os <button onClick={() => onNavigate("terms")} className="text-primary font-semibold hover:underline">Termos de uso</button> e a <button onClick={() => onNavigate("privacy")} className="text-primary font-semibold hover:underline">Política de privacidade</button>. <span className="text-red-500">*</span>
+                    <span className={`${AUTH_SMALL_TEXT_CLASS} font-normal text-foreground`}>
+                      Li e aceito os <button onClick={() => onNavigate("terms")} className="text-[13px] leading-relaxed text-primary font-medium whitespace-nowrap hover:underline">Termos de uso</button> e a <button onClick={() => onNavigate("privacy")} className="text-[13px] leading-relaxed text-primary font-medium whitespace-nowrap hover:underline">Política de privacidade</button>. <span className="text-red-500">*</span>
                     </span>
                   </label>
                 </div>
@@ -1061,9 +1144,9 @@ function AuthScreen({
               </div>
             )}
 
-            <p className="text-center text-xs text-muted-foreground mt-5">
+            <p className={`text-center ${AUTH_SMALL_TEXT_CLASS} font-normal text-muted-foreground mt-5`}>
               {tab === "login" ? "Não tem uma conta? " : "Já tem uma conta? "}
-              <button onClick={() => selectAuthTab(tab === "login" ? "register" : "login")} className="text-primary font-semibold hover:underline">
+              <button onClick={() => selectAuthTab(tab === "login" ? "register" : "login")} className="text-[13px] leading-relaxed text-primary font-medium hover:underline">
                 {tab === "login" ? "Criar conta" : "Entrar"}
               </button>
             </p>
@@ -1082,13 +1165,32 @@ function DashboardScreen({
   session,
   activeDraftEntry,
   onContinueDraft,
+  onResumeInterview,
 }: {
   onNavigate: (s: Screen) => void;
   session: MockAuthSession;
   activeDraftEntry?: StoredInterviewDraftEntry | null;
   onContinueDraft?: () => void;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
 }) {
   const routerNavigate = useNavigate();
+  const inProgress = useInProgressInterviews();
+  const reloadInProgress = inProgress.reload;
+  // Dashboard reativo entre dispositivos (focus/visible/online + polling de 15 s), só enquanto montado.
+  useDashboardInterviewsSync(inProgress.refresh);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeMessage, setResumeMessage] = useState<string | null>(null);
+  const resumeInterview = async (interviewId: string) => {
+    if (!onResumeInterview || resumingId) return;
+    setResumingId(interviewId);
+    setResumeMessage(null);
+    const result = await onResumeInterview(interviewId);
+    setResumingId(null);
+    if (result.ok) return;
+    setResumeMessage(result.message);
+    // Enviada/encerrada entre a listagem e o clique: atualiza a lista do Dashboard.
+    if (result.reason === "not_in_progress" || result.reason === "not_found") void reloadInProgress();
+  };
   const candidateUser = session.user;
   const candidateIdentity = getCandidateIdentity(session);
   const candidateId = candidateIdentity.id;
@@ -1111,10 +1213,51 @@ function DashboardScreen({
     badge: "success" | "warning" | "default" | "info";
     interviewId?: string;
     draft?: boolean;
+    /** Entrevista IN_PROGRESS vinda do Back (retomada entre dispositivos). */
+    resumeId?: string;
+    progress?: string;
     evaluationMode?: EvaluationMode | null;
   };
-  const activeDraftRecentItem: RecentInterviewItem[] = activeDraftEntry?.draft.context
-    ? [{
+  // Back autoritativo (por interviewId, sem duplicar); o rascunho local só aparece
+  // como fallback enquanto a lista carrega/falha.
+  const inProgressEntries = mergeInProgressEntries({
+    server: inProgress.items,
+    localInterviewId: activeDraftEntry?.draft.interviewId,
+    localActive: Boolean(activeDraftEntry?.draft.context),
+  });
+  // UX preventiva da regra V1 (uma IN_PROGRESS por candidato); o Back segue como barreira.
+  const newInterviewGate = resolveNewInterviewGate(inProgressEntries);
+  // Os dois acessos do Dashboard (card principal e atalho) acompanham a lista real de IN_PROGRESS.
+  const interviewAccess = resolveDashboardInterviewAccess(newInterviewGate);
+  const continueExistingInterview = () => {
+    if (!newInterviewGate.blocked) return;
+    if (newInterviewGate.resume.source === "server") void resumeInterview(newInterviewGate.resume.interviewId);
+    else onContinueDraft?.();
+  };
+  const startNewInterview = () => {
+    // Defesa: com IN_PROGRESS nunca abre outro wizard; continua a existente.
+    if (newInterviewGate.blocked) {
+      continueExistingInterview();
+      return;
+    }
+    onNavigate("interview-setup");
+  };
+  const openInterviewAccess = interviewAccess.action === "continue" ? continueExistingInterview : startNewInterview;
+  const activeDraftRecentItem: RecentInterviewItem[] = inProgressEntries.flatMap((entry): RecentInterviewItem[] => {
+    if (entry.source === "server") {
+      return [{
+        vaga: entry.item.title,
+        empresa: entry.item.company ?? "",
+        data: formatInterviewDateTime(entry.item.latestDraftUpdatedAt ?? entry.item.createdAt),
+        status: "Entrevista em andamento",
+        badge: "info",
+        resumeId: entry.item.id,
+        progress: formatInProgressProgress(entry.item),
+        evaluationMode: entry.item.evaluationMode,
+      }];
+    }
+    if (!activeDraftEntry?.draft.context) return [];
+    return [{
       vaga: activeDraftEntry.draft.context.title,
       empresa: activeDraftEntry.draft.context.company,
       data: formatInterviewDateTime(activeDraftEntry.updatedAt),
@@ -1122,8 +1265,8 @@ function DashboardScreen({
       badge: "info",
       draft: true,
       evaluationMode: activeDraftEntry.draft.evaluationMode,
-    }]
-    : [];
+    }];
+  });
   const recentItems: RecentInterviewItem[] = [
     ...activeDraftRecentItem,
     ...candidateInterviews.slice(0, 3).map((interview) => {
@@ -1139,7 +1282,7 @@ function DashboardScreen({
         evaluationMode: interview.evaluationMode,
       };
     }),
-  ].slice(0, 3);
+  ].slice(0, Math.max(3, activeDraftRecentItem.length));
 
   return (
     <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
@@ -1196,19 +1339,19 @@ function DashboardScreen({
         onAddInterview={() => routerNavigate(`${getPathForScreen("agenda")}?new=1`)}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-        {/* CTA principal */}
-        <div>
-          <div className="rounded-2xl p-5 sm:p-6 text-white h-full flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6 items-start">
+        {/* CTA principal (altura natural: não acompanha a lista de entrevistas ao lado) */}
+        <div className="self-start" data-testid="new-interview-card">
+          <div className="rounded-2xl p-5 sm:p-6 text-white flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
             <div>
               <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center mb-4">
                 <MessageSquare className="w-5 h-5 text-white" />
               </div>
-              <h3 className="text-lg font-bold mb-2">Nova entrevista</h3>
-              <p className="text-blue-200 text-sm leading-relaxed mb-4">Cole a URL da vaga e pratique com perguntas contextualizadas.</p>
+              <h3 className="text-lg font-bold mb-2">{interviewAccess.main.title}</h3>
+              <p className="text-blue-200 text-sm leading-relaxed mb-4">{interviewAccess.main.description}</p>
             </div>
-            <Btn size="md" onClick={() => onNavigate("interview-setup")} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold w-full">
-              Praticar <ArrowRight className="w-4 h-4" />
+            <Btn size="md" onClick={openInterviewAccess} disabled={interviewAccess.action === "continue" && resumingId !== null} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold w-full">
+              {interviewAccess.main.cta} <ArrowRight className="w-4 h-4" />
             </Btn>
           </div>
         </div>
@@ -1223,9 +1366,12 @@ function DashboardScreen({
               </button>
             </div>
             <div className="space-y-3">
+              {resumeMessage && (
+                <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{resumeMessage}</div>
+              )}
               {recentItems.length ? (
                 recentItems.map((item) => (
-                  <div key={item.interviewId ?? `${item.vaga}-${item.data}`} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
+                  <div key={item.resumeId ? `in-progress-${item.resumeId}` : item.interviewId ?? `${item.vaga}-${item.data}`} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
                         <Briefcase className="w-4 h-4 text-muted-foreground" />
@@ -1233,6 +1379,7 @@ function DashboardScreen({
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
+                        {item.progress && <p className="text-xs text-muted-foreground mt-0.5">{item.progress}</p>}
                         <div className="flex flex-wrap items-center gap-2 mt-2">
                           <EvaluationModeBadge mode={item.evaluationMode} />
                           <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
@@ -1244,6 +1391,11 @@ function DashboardScreen({
                           {item.draft && (
                             <Btn size="sm" variant="primary" onClick={onContinueDraft}>
                               Continuar entrevista
+                            </Btn>
+                          )}
+                          {item.resumeId && (
+                            <Btn size="sm" variant="primary" disabled={resumingId !== null} onClick={() => void resumeInterview(item.resumeId as string)}>
+                              {resumingId === item.resumeId ? "Carregando..." : "Continuar entrevista"}
                             </Btn>
                           )}
                         </div>
@@ -1268,10 +1420,10 @@ function DashboardScreen({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { icon: User,      label: "Completar perfil",    desc: "Formação, experiência e habilidades",      screen: "profile" as Screen, color: "text-blue-600 bg-blue-50" },
-          { icon: MessageSquare, label: "Nova entrevista", desc: "Use o link da vaga para contextualizar sua prática", screen: "interview-setup" as Screen, color: "text-green-600 bg-green-50" },
+          { icon: MessageSquare, label: interviewAccess.quick.title, desc: interviewAccess.quick.description, screen: "interview-setup" as Screen, color: "text-green-600 bg-green-50" },
           { icon: BookOpen,  label: "Materiais de apoio",  desc: "Dicas e conteúdos de preparação",          screen: "materials" as Screen, color: "text-purple-600 bg-purple-50" },
         ].map(q => (
-          <button key={q.label} onClick={() => q.screen && onNavigate(q.screen)} className="text-left w-full">
+          <button key={q.label} onClick={() => q.screen === "interview-setup" ? openInterviewAccess() : q.screen && onNavigate(q.screen)} className="text-left w-full">
             <Card className="p-5 hover:shadow-md transition-all cursor-pointer">
               <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${q.color}`}>
                 <q.icon className="w-4 h-4" />
@@ -2471,8 +2623,7 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Btn variant="outline" onClick={() => onNavigate("evaluation-mode")}>Voltar</Btn>
           <Btn variant="primary" size="lg" onClick={() => onNavigate("interview")}>
-            <span className="hidden sm:inline">Iniciar perguntas</span>
-            <span className="sm:hidden">Perguntas</span>
+            Iniciar perguntas
             <ChevronRight className="w-5 h-5" />
           </Btn>
         </div>
@@ -2491,6 +2642,23 @@ function getQuestionIndexFromSearchParam(value: string | null, questionCount: nu
   return questionNumber - 1;
 }
 
+// Entrevista enviada/encerrada em outro dispositivo: aviso claro + volta ao Dashboard (sem redirecionar sozinho).
+function StaleInterviewNotice({ message, status, onBack }: { message: string; status?: string | null; onBack: () => void }) {
+  // Cancelada é terminal/destrutiva: identidade própria em vermelho. Enviada em outro
+  // dispositivo e demais avisos seguem em âmbar.
+  const tone = staleNoticeTone(status);
+  const cancelled = tone === "error";
+  return (
+    <Alert variant={tone} role="alert" data-tone={tone} className="mb-4 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <AlertCircle className={`mt-0.5 h-4 w-4 shrink-0 ${cancelled ? "text-red-600" : "text-amber-600"}`} />
+        <p className={`text-sm font-medium ${cancelled ? "text-red-800" : "text-amber-800"}`}>{message}</p>
+      </div>
+      <Btn variant="outline" size="sm" onClick={onBack}>Voltar ao Dashboard</Btn>
+    </Alert>
+  );
+}
+
 function InterviewScreen({
   onNavigate,
   draft,
@@ -2499,11 +2667,20 @@ function InterviewScreen({
   candidateId,
   restoredQuestionIndex,
   restoredHighestIndex,
+  registerLeaveFlush,
+  registerStopActivity,
+  onStaleExit,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
+  // Cancelamento real: o App raiz manda parar autosave e ditado antes de limpar o estado local.
+  registerStopActivity?: (stop: (() => void) | null) => void;
   onQuestionIndexChange?: (index: number, highestReached: number) => void;
+  // "Sair e continuar depois": o App raiz chama isto para tentar enviar o rascunho pendente ao Back.
+  registerLeaveFlush?: (flush: (() => Promise<void>) | null) => void;
+  // Entrevista já enviada em outro dispositivo: descarta o estado local do wizard e volta ao Dashboard.
+  onStaleExit?: () => void;
   // Namespace local dos rascunhos de resposta (UX); o dono real vem do JWT no Back.
   candidateId: string;
   // Pergunta salva quando a página é recarregada DENTRO desta etapa (undefined ao chegar de outra tela).
@@ -2532,17 +2709,45 @@ function InterviewScreen({
   // Última resposta CONFIRMADA pelo Back, por pergunta (evita PUT desnecessário).
   const persistedAnswersRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
+  // Rascunho do Back por pergunta (NÃO é resposta). `draft.answers` guarda SÓ a
+  // resposta OFICIAL confirmada; o texto em edição vive em `workingText`.
+  const remoteDraftsRef = useRef<Record<string, RemoteDraft>>({});
+  const workingRef = useRef<Record<string, string>>({});
+  const [workingText, setWorkingText] = useState<Record<string, string>>({});
+  const controllerRef = useRef<AnswerDraftAutosave | null>(null);
+  const [autosaveSnap, setAutosaveSnap] = useState<AnswerAutosaveSnapshot | null>(null);
+  const [savedNoticeVisible, setSavedNoticeVisible] = useState(false);
+  const savedNoticeRef = useRef<SavedNotice | null>(null);
   const question = questions[qIdx];
-  const answer = question ? draft.answers[question.id] ?? "" : "";
+  const answer = question ? workingText[question.id] ?? draft.answers[question.id] ?? "" : "";
   const answerLength = answer.length;
   const highestReached = deriveHighestReachedIndex({
     storedHighest,
     currentIndex: qIdx,
     answeredIndexes: questions.flatMap((item, index) => (isValidInterviewAnswer(draft.answers[item.id]) ? [index] : [])),
+    // Rascunho do Back (de qualquer dispositivo) prova que a pergunta já foi aberta; NÃO conta como resposta.
+    draftedIndexes: questions.flatMap((item, index) => (remoteDraftsRef.current[item.id]?.text?.trim() ? [index] : [])),
     questionCount: questions.length,
   });
   const progress = questions.length ? ((qIdx + 1) / questions.length) * 100 : 0;
   const supportsSpeech = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  // Sessão em mais de um dispositivo: revalida o status (focus / aba visível). Se a
+  // entrevista deixou de ser IN_PROGRESS, o autosave é travado e a edição bloqueada;
+  // o texto local NÃO é apagado.
+  const sessionGuard = useInterviewSessionGuard({
+    interviewId: draft.interviewId,
+    enabled: syncState === "ready",
+    // O polling abaixo já sincroniza ao voltar foco/visibilidade: sem revalidação duplicada.
+    revalidateOnFocus: false,
+    onStale: () => {
+      controllerRef.current?.lock();
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setDictating(false);
+    },
+  });
+  const stale = sessionGuard.stale;
 
   useEffect(() => {
     return () => {
@@ -2550,6 +2755,34 @@ function InterviewScreen({
       recognitionRef.current = null;
     };
   }, []);
+
+  // "Sair e continuar depois" precisa conseguir enviar o rascunho que ainda está no debounce.
+  useEffect(() => {
+    if (!registerLeaveFlush) return undefined;
+    registerLeaveFlush(async () => {
+      // "Sair e continuar depois": este dispositivo para de sincronizar antes de enviar o rascunho.
+      syncPausedRef.current = true;
+      try {
+        await controllerRef.current?.flush();
+      } finally {
+        // Se o usuário desistir de sair, o polling volta; ao sair de fato o wizard desmonta e o limpa.
+        syncPausedRef.current = false;
+      }
+    });
+    return () => registerLeaveFlush(null);
+  }, [registerLeaveFlush]);
+
+  useEffect(() => {
+    if (!registerStopActivity) return undefined;
+    registerStopActivity(() => {
+      syncPausedRef.current = true;
+      controllerRef.current?.lock();
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setDictating(false);
+    });
+    return () => registerStopActivity(null);
+  }, [registerStopActivity]);
 
   // `?question=` só move a pergunta quando MUDA depois da montagem; na montagem o
   // índice inicial já foi resolvido acima (inclusive o restaurado após F5).
@@ -2569,23 +2802,40 @@ function InterviewScreen({
     if (!interviewIdForSync) return;
     setSyncState("loading");
     setSyncError("");
-    const loaded = await getRealQuestions(interviewIdForSync);
+    const loaded = await getRealQuestionsState(interviewIdForSync);
     if (!loaded.ok) {
+      if (loaded.reason === "not_in_progress") sessionGuard.markStale(loaded.interviewStatus);
       setSyncError(loaded.message);
       setSyncState("error");
       return;
     }
+    // Entrar numa entrevista que outro dispositivo já enviou: abre bloqueada (somente leitura).
+    if (!isInterviewEditable(loaded.data.interviewStatus)) {
+      sessionGuard.markStale(loaded.data.interviewStatus ?? undefined);
+    }
     const serverAnswers: Record<string, string> = {};
-    loaded.data.forEach((item) => {
+    loaded.data.questions.forEach((item) => {
       persistedAnswersRef.current[item.id] = item.answer ?? "";
+      remoteDraftsRef.current[item.id] = {
+        text: item.draftText,
+        version: item.draftVersion,
+        updatedAt: item.draftUpdatedAt,
+      };
       if (item.answer) serverAnswers[item.id] = item.answer;
     });
+    // Nova leitura do Back: o texto em edição é resolvido de novo (ver restauração).
+    controllerRef.current?.destroy();
+    controllerRef.current = null;
+    workingRef.current = {};
+    setWorkingText({});
+    setDraftCheckedFor(null);
     setDraft((current) => ({
       ...current,
-      questions: loaded.data.map(({ id, type, text }) => ({ id, type, text })),
+      questions: loaded.data.questions.map(({ id, type, text }) => ({ id, type, text })),
       answers: serverAnswers,
     }));
     setSyncState("ready");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interviewIdForSync, setDraft]);
 
   useEffect(() => {
@@ -2598,69 +2848,272 @@ function InterviewScreen({
     questionId,
   });
 
-  // RASCUNHO EM EDIÇÃO (só UX). Ao abrir uma pergunta, se existe texto local ainda
-  // não confirmado que parte da MESMA resposta do Back, ele reaparece no textarea.
-  // Não é enviado ao Back: só a ação normal (Próxima/Anterior/Revisar) grava.
-  // Se o Back mudou desde então (rascunho velho), o rascunho é descartado.
+  // RESTAURAÇÃO ao abrir uma pergunta (rascunho ≠ resposta). Precedência
+  // (ver `resolveRestoredAnswer`): resposta oficial do Back é a base; o rascunho
+  // local só vale se nasceu dessa mesma resposta e não é mais velho que o do Back;
+  // senão vale o rascunho do Back (o que atravessa dispositivos); senão a oficial.
+  // Nada disso marca a pergunta como respondida.
   useEffect(() => {
     if (syncState !== "ready" || !question || !draft.interviewId) return;
     if (draftCheckedFor === question.id) return;
-    const scope = answerDraftScope(question.id);
-    const stored = getAnswerDraft(scope);
-    const resolved = resolveAnswerText(persistedAnswersRef.current[question.id] ?? "", stored);
-    if (resolved.source === "draft") {
-      const restoredText = resolved.text;
-      setDraft((current) => ({ ...current, answers: { ...current.answers, [question.id]: restoredText } }));
-    } else if (stored) {
-      clearAnswerDraft(scope);
-    }
-    setDraftCheckedFor(question.id);
+    const interviewId = draft.interviewId;
+    const questionId = question.id;
+    const scope = answerDraftScope(questionId);
+    const official = persistedAnswersRef.current[questionId] ?? "";
+    const remote = remoteDraftsRef.current[questionId] ?? { text: null, version: 0, updatedAt: null };
+    const resolved = resolveRestoredAnswer({ official, remote, local: getAnswerDraft(scope) });
+    if (resolved.discardLocal) clearAnswerDraft(scope);
+
+    controllerRef.current?.destroy();
+    const controller: AnswerDraftAutosave = new AnswerDraftAutosave({
+      scope,
+      storage: safeLocalStorage(),
+      save: async (text, version) => {
+        const result = await saveRealAnswerDraft(interviewId, questionId, text, version);
+        if (result.ok) {
+          return {
+            ok: true,
+            data: { text: result.data.draftText, version: result.data.draftVersion, updatedAt: result.data.draftUpdatedAt },
+          };
+        }
+        if (result.reason === "conflict" && result.conflict) {
+          return {
+            ok: false,
+            reason: "conflict",
+            message: result.message,
+            conflict: {
+              text: result.conflict.draftText,
+              version: result.conflict.draftVersion,
+              updatedAt: result.conflict.draftUpdatedAt,
+            },
+          };
+        }
+        if (result.reason === "not_in_progress") sessionGuard.markStale(result.interviewStatus);
+        return { ok: false, reason: result.reason, message: result.message };
+      },
+      onChange: (snapshot) => {
+        if (controllerRef.current !== controller) return;
+        // Houve gravação deste dispositivo: uma leitura do polling iniciada antes pode estar velha.
+        if (snapshot.saving || snapshot.remoteVersion !== remoteDraftsRef.current[snapshot.questionId]?.version) {
+          localWriteEpochRef.current += 1;
+        }
+        remoteDraftsRef.current[snapshot.questionId] = controller.getRemote();
+        setAutosaveSnap(snapshot);
+      },
+    });
+    controllerRef.current = controller;
+    workingRef.current = { ...workingRef.current, [questionId]: resolved.text };
+    setWorkingText(workingRef.current);
+    controller.load({ official, text: resolved.text, remote });
+    // Sessão já stale (entrevista enviada em outro dispositivo): nenhuma gravação nasce.
+    if (sessionGuard.stale) controller.lock();
+    setDraftCheckedFor(questionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncState, question?.id, draftCheckedFor]);
 
-  // Enquanto digita ( ou dita), mantém o texto ainda NÃO confirmado como rascunho
-  // local; sem requisição HTTP. Só roda depois da conferência/restauração acima.
   useEffect(() => {
-    if (syncState !== "ready" || !question || !draft.interviewId) return;
-    if (draftCheckedFor !== question.id) return;
-    saveAnswerDraft(
-      answerDraftScope(question.id),
-      normalizeInterviewAnswer(answer),
-      persistedAnswersRef.current[question.id] ?? "",
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answer, question?.id, syncState, draftCheckedFor]);
+    const notice = new SavedNotice(setSavedNoticeVisible);
+    savedNoticeRef.current = notice;
+    return () => {
+      notice.destroy();
+      savedNoticeRef.current = null;
+      controllerRef.current?.destroy();
+      controllerRef.current = null;
+    };
+  }, []);
 
-  // Grava a resposta da pergunta no Back. Só retorna true quando o Back confirmou
-  // (ou já estava igual): em erro NÃO avança e mostra a mensagem.
+  useEffect(() => {
+    savedNoticeRef.current?.update(autosaveSnap?.status === "saved" ? "saved" : "dirty");
+  }, [autosaveSnap]);
+
+  // Texto em edição: estado local + (se a pergunta tem controlador) cópia local
+  // imediata e autosave do rascunho. Nunca grava a resposta oficial.
+  const setWorking = (questionId: string, value: string) => {
+    workingRef.current = { ...workingRef.current, [questionId]: value };
+    setWorkingText(workingRef.current);
+    const controller = controllerRef.current;
+    if (controller && controller.questionId === questionId) controller.edit(value);
+  };
+
+  // O outro dispositivo alterou o rascunho: relê o Back e recomeça a partir dele.
+  const useRemoteVersion = async () => {
+    if (!question || !draft.interviewId) return;
+    const loaded = await getRealQuestions(draft.interviewId);
+    if (!loaded.ok) {
+      toast.error(loaded.message);
+      return;
+    }
+    const item = loaded.data.find((entry) => entry.id === question.id);
+    if (!item) return;
+    persistedAnswersRef.current[item.id] = item.answer ?? "";
+    remoteDraftsRef.current[item.id] = { text: item.draftText, version: item.draftVersion, updatedAt: item.draftUpdatedAt };
+    setDraft((current) => ({ ...current, answers: withOfficialAnswer(current.answers, item.id, item.answer ?? "") }));
+    clearAnswerDraft(answerDraftScope(item.id));
+    const rest = { ...workingRef.current };
+    delete rest[item.id];
+    workingRef.current = rest;
+    setWorkingText(rest);
+    setDraftCheckedFor(null);
+  };
+
+  // SINCRONIZAÇÃO ENTRE DISPOSITIVOS (polling leve, sem UI): relê entrevista/perguntas do Back
+  // e reconcilia com o estado local. Back manda em status, resposta oficial e versão do rascunho;
+  // o local protege texto não sincronizado (ver `AnswerDraftAutosave.receiveRemote`).
+  const syncPausedRef = useRef(false);
+  const localWriteEpochRef = useRef(0);
+  const [, bumpSyncTick] = useState(0);
+  const pollRemoteState = async (): Promise<InterviewSyncResult> => {
+    const interviewId = draft.interviewId;
+    if (!interviewId || syncPausedRef.current || sessionGuard.stale) return "ok";
+    // Operação do usuário em curso (confirmar/avançar): a leitura chegaria velha; o próximo ciclo reavalia.
+    if (advancingRef.current) return "ok";
+    const epochAtStart = localWriteEpochRef.current;
+    const loaded = await getRealQuestionsState(interviewId);
+    if (!loaded.ok) {
+      if (loaded.reason === "not_in_progress") {
+        sessionGuard.markStale(loaded.interviewStatus);
+        return "stop";
+      }
+      // Rede/servidor: silencioso, estado local intacto, tenta no próximo ciclo (com intervalo maior).
+      return "error";
+    }
+    if (syncPausedRef.current || advancingRef.current) return "ok";
+    if (!isInterviewEditable(loaded.data.interviewStatus)) {
+      sessionGuard.markStale(loaded.data.interviewStatus ?? undefined);
+      return "stop";
+    }
+    // Este dispositivo gravou durante a leitura: ela pode estar velha; o próximo ciclo reavalia.
+    if (localWriteEpochRef.current !== epochAtStart) return "ok";
+    const emptyDraft: RemoteDraft = { text: null, version: 0, updatedAt: null };
+    const changes = diffServerState(loaded.data.questions, (id) => ({
+      answer: persistedAnswersRef.current[id] ?? "",
+      draft: remoteDraftsRef.current[id] ?? emptyDraft,
+    }));
+    if (changes.length === 0) return "ok";
+
+    const officialUpdates: Record<string, string> = {};
+    let touched = false;
+    for (const change of changes) {
+      const controller = controllerRef.current;
+      if (controller && controller.questionId === change.id) {
+        // Pergunta aberta: adota em silêncio SÓ sem edição local; com edição, abre o conflito já existente.
+        const outcome = controller.receiveRemote({ answer: change.answer, draft: change.draft });
+        if (outcome === "deferred" || outcome === "unchanged") continue;
+        persistedAnswersRef.current[change.id] = change.answer;
+        remoteDraftsRef.current[change.id] = change.draft;
+        officialUpdates[change.id] = change.answer;
+        if (outcome === "adopted") {
+          workingRef.current = { ...workingRef.current, [change.id]: controller.getText() };
+          setWorkingText(workingRef.current);
+        }
+        touched = true;
+        continue;
+      }
+      // Pergunta fechada com texto local ainda não sincronizado: não troca a base (a restauração
+      // e o optimistic locking decidem ao abrir). Nunca sobrescreve em silêncio.
+      const local = getAnswerDraft(answerDraftScope(change.id));
+      if (local && local.text.trim() !== change.answer.trim()) continue;
+      persistedAnswersRef.current[change.id] = change.answer;
+      remoteDraftsRef.current[change.id] = change.draft;
+      officialUpdates[change.id] = change.answer;
+      touched = true;
+    }
+    if (touched) {
+      setDraft((current) => {
+        let answers = current.answers;
+        for (const [id, value] of Object.entries(officialUpdates)) {
+          if ((answers[id] ?? "") !== value) answers = withOfficialAnswer(answers, id, value);
+        }
+        return answers === current.answers ? current : { ...current, answers };
+      });
+      bumpSyncTick((tick) => tick + 1);
+    }
+    return "ok";
+  };
+  useInterviewSyncPolling({
+    enabled: syncState === "ready" && !sessionGuard.stale && Boolean(draft.interviewId),
+    sync: pollRemoteState,
+  });
+
+  // CONFIRMA a resposta OFICIAL da pergunta no Back (única ação que muda
+  // answer_text). Antes, o autosave do rascunho é quietado para não concorrer
+  // com este PUT. Só retorna true quando o Back confirmou (ou já estava igual):
+  // em erro NÃO avança, mantém rascunho local/Back e mostra a mensagem.
   const persistAnswer = async (target: InterviewQuestion, value: string): Promise<boolean> => {
     const interviewId = draft.interviewId;
     if (!interviewId) {
       setSaveError("Entrevista não encontrada. Volte ao início e tente novamente.");
       return false;
     }
-    const normalized = normalizeInterviewAnswer(value).trim();
-    if (normalized === (persistedAnswersRef.current[target.id] ?? "")) {
-      clearAnswerDraft(answerDraftScope(target.id));
-      setSaveError("");
-      return true;
-    }
-    const result = await saveRealAnswer(interviewId, target.id, normalized);
-    if (!result.ok) {
-      setSaveError(result.message);
-      toast.error(result.message);
+    if (sessionGuard.stale) {
+      setSaveError(describeStaleInterview(sessionGuard.staleStatus));
       return false;
     }
-    persistedAnswersRef.current[target.id] = result.data.answer ?? "";
-    // Back confirmou: ele é a resposta oficial; o rascunho local daquela pergunta sai.
-    clearAnswerDraft(answerDraftScope(target.id));
+    const controller = controllerRef.current?.questionId === target.id ? controllerRef.current : null;
+    if (controller?.getSnapshot().status === "conflict") {
+      const message = "Resolva o conflito desta pergunta (manter seu texto ou usar a versão do outro dispositivo) antes de avançar.";
+      setSaveError(message);
+      toast.error(message);
+      return false;
+    }
+    const outcome = await confirmOfficialAnswer({
+      value,
+      persisted: persistedAnswersRef.current[target.id] ?? "",
+      controller,
+      knownVersion: () => remoteDraftsRef.current[target.id]?.version ?? 0,
+      hasRemoteDraft: () => (remoteDraftsRef.current[target.id]?.text ?? "").trim() !== "",
+      saveAnswer: async (normalized, draftVersion) => {
+        const result = await saveRealAnswer(interviewId, target.id, normalized, draftVersion);
+        if (result.ok) return { ok: true, data: { answer: result.data.answer, draftVersion: result.data.draftVersion } };
+        if (result.reason === "conflict" && result.conflict) {
+          return { ok: false, reason: "conflict", message: result.message, conflict: result.conflict };
+        }
+        if (result.reason === "not_in_progress") {
+          return { ok: false, reason: "not_in_progress", message: result.message, interviewStatus: result.interviewStatus };
+        }
+        return { ok: false, message: result.message };
+      },
+      clearLocalDraft: () => clearAnswerDraft(answerDraftScope(target.id)),
+    });
+    if (!outcome.ok) {
+      if (outcome.reason === "not_in_progress") {
+        // Enviada em outro dispositivo: bloqueia a edição; o texto local fica intacto.
+        sessionGuard.markStale(outcome.interviewStatus as RealInterviewStatus | undefined);
+        return false;
+      }
+      if (outcome.reason === "conflict") {
+        // Conflito real: a resposta vigente no Back vira a oficial conhecida; o texto
+        // local permanece e o usuário decide (nada foi sobrescrito).
+        const { conflict } = outcome;
+        persistedAnswersRef.current[target.id] = conflict.answer ?? "";
+        remoteDraftsRef.current[target.id] = { text: conflict.draftText, version: conflict.draftVersion, updatedAt: conflict.draftUpdatedAt };
+        setDraft((current) => ({ ...current, answers: withOfficialAnswer(current.answers, target.id, conflict.answer ?? "") }));
+        setSaveError("");
+        toast.error("Esta resposta foi alterada em outro dispositivo. Escolha qual versão manter.");
+        return false;
+      }
+      setSaveError(outcome.message);
+      toast.error(outcome.message);
+      return false;
+    }
+    // Back confirmou: ele é a resposta oficial (e já limpou o rascunho dela).
+    localWriteEpochRef.current += 1;
+    persistedAnswersRef.current[target.id] = outcome.answer;
+    if (outcome.draftVersion !== null) {
+      // Rascunho resolvido no Back: a versão devolvida é a nova base (nada reaparece).
+      remoteDraftsRef.current[target.id] = { text: null, version: outcome.draftVersion, updatedAt: null };
+    }
+    setDraft((current) => ({
+      ...current,
+      answers: withOfficialAnswer(current.answers, target.id, outcome.answer),
+    }));
     setSaveError("");
     return true;
   };
 
   // Executa uma ação que sai da pergunta atual só depois de salvá-la.
   const withSavedAnswer = async (action: () => void) => {
-    if (advancingRef.current || !question) return;
+    if (advancingRef.current || !question || sessionGuard.stale) return;
     advancingRef.current = true;
     setSaving(true);
     stopDictation();
@@ -2688,10 +3141,7 @@ function InterviewScreen({
   const updateAnswer = (value: string) => {
     if (!question) return;
     const normalizedValue = normalizeInterviewAnswer(value);
-    setDraft((current) => ({
-      ...current,
-      answers: { ...current.answers, [question.id]: normalizedValue },
-    }));
+    setWorking(question.id, normalizedValue);
     if (isValidInterviewAnswer(normalizedValue)) setValidationMessage("");
     setSaveError("");
   };
@@ -2739,12 +3189,10 @@ function InterviewScreen({
       const { transcript, processed } = getNewTranscript(event.results, processedResults);
       processedResults = processed;
       if (!transcript) return;
-      setDraft((current) => {
-        const base = current.answers[dictationQuestionId] ?? "";
-        const next = normalizeInterviewAnswer(appendDictation(base, transcript, ANSWER_MAX_CHARS));
-        if (next === base) return current;
-        return { ...current, answers: { ...current.answers, [dictationQuestionId]: next } };
-      });
+      const base = workingRef.current[dictationQuestionId] ?? persistedAnswersRef.current[dictationQuestionId] ?? "";
+      const next = normalizeInterviewAnswer(appendDictation(base, transcript, ANSWER_MAX_CHARS));
+      if (next === base) return;
+      setWorking(dictationQuestionId, next);
       setValidationMessage("");
     };
     // Erro e fim sempre devolvem o estado ao normal. Eventos de uma instância
@@ -2786,13 +3234,18 @@ function InterviewScreen({
         setQIdx(qIdx + 1);
         setValidationMessage("");
       } else {
-        const pendingIndex = getFirstPendingQuestionIndex(draft);
+        // A pergunta atual acabou de ser confirmada; as demais valem pela resposta OFICIAL.
+        const confirmedAnswers = withOfficialAnswer(draft.answers, question.id, normalizeInterviewAnswer(answer).trim());
+        const pendingIndex = questions.findIndex((item) => !isValidInterviewAnswer(confirmedAnswers[item.id]));
         if (pendingIndex >= 0) {
           setQIdx(pendingIndex);
           setValidationMessage("Responda todas as perguntas antes de revisar.");
           toast.error("Responda todas as perguntas antes de revisar.");
         } else {
-          onNavigate("review");
+          // Revalida o status antes de ir para a revisão (outro dispositivo pode ter enviado).
+          void sessionGuard.revalidateNow().then((editable) => {
+            if (editable) onNavigate("review");
+          });
         }
       }
     });
@@ -2851,7 +3304,14 @@ function InterviewScreen({
   const openQuestion = (index: number) => {
     void withSavedAnswer(() => setQIdx(index));
   };
+  // Cancelada em outro dispositivo: SÓ visual (a pergunta aberta vira "foto" somente leitura).
+  const cancelled = stale && isCancelledSession(sessionGuard.staleStatus);
+  // Contador/indicadores: SÓ a resposta OFICIAL (draft.answers) conta como respondida.
   const answeredCount = questions.filter((item) => isValidInterviewAnswer(draft.answers[item.id])).length;
+  const syncSnap = autosaveSnap && autosaveSnap.questionId === question.id ? autosaveSnap : null;
+  const syncLabel = syncSnap
+    ? describeAnswerSync({ status: syncSnap.status === "saved" && !savedNoticeVisible ? "clean" : syncSnap.status })
+    : null;
 
   return (
     <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
@@ -2874,21 +3334,56 @@ function InterviewScreen({
               <span className="text-xs text-muted-foreground">Pergunta {qIdx + 1} de {questions.length}</span>
             </div>
             <h3 className="text-lg font-bold text-foreground leading-relaxed mb-5">{question.text}</h3>
+            {stale && (
+              <StaleInterviewNotice message={describeStaleInterview(sessionGuard.staleStatus)} status={sessionGuard.staleStatus} onBack={() => onStaleExit?.()} />
+            )}
             <Textarea
               value={answer}
               onChange={(event) => updateAnswer(event.target.value)}
+              readOnly={stale}
+              aria-readonly={stale || undefined}
+              data-cancelled={cancelled || undefined}
               maxLength={ANSWER_MAX_CHARS}
               placeholder="Digite sua resposta. Se preferir, use o ditado por voz para preencher este campo."
-              className="min-h-44 sm:min-h-56 max-h-72 overflow-y-auto"
+              className={`min-h-44 sm:min-h-56 max-h-72 overflow-y-auto ${cancelled ? CANCELLED_TEXTAREA_CLASS : ""}`}
             />
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
               <div className={`text-xs ${answerLength >= ANSWER_MAX_CHARS ? "text-amber-700 font-semibold" : "text-muted-foreground"}`}>
                 {answerLength} / {ANSWER_MAX_CHARS} caracteres
+                {syncLabel && (
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    data-sync={syncSnap?.status}
+                    className={`ml-3 font-medium ${ANSWER_SYNC_TONE_CLASS[describeAnswerSyncTone(syncSnap?.status ?? "clean")]}`}
+                  >
+                    {syncLabel}
+                  </span>
+                )}
               </div>
-              <Btn variant={dictating ? "secondary" : "outline"} size="sm" onClick={toggleDictation}>
-                <Mic className="w-4 h-4" /> {dictating ? "Parar ditado" : "Ditado por voz"}
-              </Btn>
+              {!cancelled && (
+                <Btn variant={dictating ? "secondary" : "outline"} size="sm" onClick={toggleDictation} disabled={stale}>
+                  <Mic className="w-4 h-4" /> {dictating ? "Parar ditado" : "Ditado por voz"}
+                </Btn>
+              )}
             </div>
+            {syncSnap?.status === "conflict" && !stale && (
+              <Alert variant="warning" role="alert" className="mt-4 rounded-2xl p-4">
+                <p className="text-xs text-amber-700">
+                  {syncSnap.conflictKind === "answer"
+                    ? "A resposta desta pergunta foi alterada em outro dispositivo. Seu texto continua salvo neste dispositivo e nada foi sobrescrito. Escolha qual versão manter e, depois, avance novamente."
+                    : "Este rascunho foi alterado em outro dispositivo. Seu texto continua salvo neste dispositivo e nada foi sobrescrito."}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Btn variant="outline" size="sm" onClick={() => void controllerRef.current?.keepMine()}>
+                    Manter meu texto
+                  </Btn>
+                  <Btn variant="outline" size="sm" onClick={() => void useRemoteVersion()}>
+                    Usar a versão do outro dispositivo
+                  </Btn>
+                </div>
+              </Alert>
+            )}
             {validationMessage && (
               <p className="text-xs text-destructive mt-3 font-medium">{validationMessage}</p>
             )}
@@ -2903,9 +3398,11 @@ function InterviewScreen({
                 <p className="text-xs text-amber-700">{speechError}</p>
               </Alert>
             )}
-            <p className="text-xs text-muted-foreground mt-3">
-              O ditado usa o recurso do navegador para inserir texto no campo. O RH Connect não cria, envia ou armazena arquivo de áudio nesta etapa.
-            </p>
+            {!cancelled && (
+              <p className="text-xs text-muted-foreground mt-3">
+                O ditado usa o recurso do navegador para inserir texto no campo. O RH Connect não cria, envia ou armazena arquivo de áudio nesta etapa.
+              </p>
+            )}
           </Card>
         </div>
 
@@ -2918,22 +3415,25 @@ function InterviewScreen({
               {questions.map((item, index) => {
                 const navState = navStateAt(item, index);
                 const canOpenQuestion = isQuestionNavigable(navState);
-                const stateLabel = { CURRENT: "atual", ANSWERED: "respondida", VISITED_PENDING: "pendente", LOCKED: "bloqueada" }[navState];
+                const visual = resolveProgressVisual(navState, cancelled);
+                const stateLabel = { CURRENT: "atual", READONLY: "somente leitura", ANSWERED: "respondida", VISITED_PENDING: "pendente", LOCKED: "bloqueada" }[visual];
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    disabled={!canOpenQuestion}
-                    aria-current={navState === "CURRENT" ? "step" : undefined}
+                    disabled={!canOpenQuestion || stale}
+                    aria-current={visual === "CURRENT" ? "step" : undefined}
                     aria-label={`Pergunta ${index + 1}: ${stateLabel}`}
                     onClick={() => {
                       if (!canOpenQuestion) return;
                       openQuestion(index);
                     }}
                     className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-bold transition-colors outline-none focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)] ${
-                      navState === "CURRENT"
+                      visual === "CURRENT"
                         ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : navState === "ANSWERED"
+                        : visual === "READONLY"
+                          ? "cursor-default border-border bg-muted text-muted-foreground"
+                          : navState === "ANSWERED"
                           ? "border-green-200 bg-green-50 text-green-700"
                           : navState === "VISITED_PENDING"
                             ? "border-amber-200 bg-amber-50 text-amber-700"
@@ -2955,27 +3455,32 @@ function InterviewScreen({
               {questions.map((item, index) => {
                 const navState = navStateAt(item, index);
                 const canOpenQuestion = isQuestionNavigable(navState);
+                const visual = resolveProgressVisual(navState, cancelled);
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    disabled={!canOpenQuestion}
+                    disabled={!canOpenQuestion || stale}
                     onClick={() => {
                       if (!canOpenQuestion) return;
                       openQuestion(index);
                     }}
                     className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
-                      navState === "CURRENT"
+                      visual === "CURRENT"
                         ? "bg-blue-50 text-blue-700"
-                        : canOpenQuestion
+                        : visual === "READONLY"
+                          ? "cursor-default bg-muted/50 text-muted-foreground"
+                          : canOpenQuestion
                           ? "hover:bg-muted"
                           : "cursor-not-allowed opacity-60"
                     }`}
                   >
                     <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${
-                      navState === "CURRENT"
+                      visual === "CURRENT"
                         ? "bg-blue-100 text-blue-700"
-                        : navState === "ANSWERED"
+                        : visual === "READONLY"
+                          ? "bg-muted text-muted-foreground"
+                          : navState === "ANSWERED"
                           ? "bg-green-100 text-green-700"
                           : navState === "VISITED_PENDING"
                             ? "bg-amber-100 text-amber-700"
@@ -2985,7 +3490,7 @@ function InterviewScreen({
                     </span>
                     <span className={`flex items-center gap-1 text-xs font-medium truncate ${navState === "VISITED_PENDING" ? "text-amber-700" : ""}`}>
                       {navState === "ANSWERED" && <Check className="h-3 w-3 text-green-700" aria-hidden="true" />}
-                      {{ CURRENT: "Em andamento", ANSWERED: "Respondida", VISITED_PENDING: "Pendente", LOCKED: "Bloqueada" }[navState]}
+                      {PROGRESS_LABELS[visual]}
                     </span>
                   </button>
                 );
@@ -2994,10 +3499,10 @@ function InterviewScreen({
           </Card>
 
           <div className="flex gap-3">
-            <Btn variant="outline" onClick={() => { const previous = Math.max(0, qIdx - 1); void withSavedAnswer(() => setQIdx(previous)); }} disabled={qIdx === 0 || saving}>
+            <Btn variant="outline" onClick={() => { const previous = Math.max(0, qIdx - 1); void withSavedAnswer(() => setQIdx(previous)); }} disabled={qIdx === 0 || saving || stale}>
               Anterior
             </Btn>
-            <Btn variant="primary" className="flex-1" onClick={() => void goNext()} disabled={saving}>
+            <Btn variant="primary" className="flex-1" onClick={() => void goNext()} disabled={saving || stale}>
               {saving ? <><Spinner /> Salvando...</> : <>{qIdx < questions.length - 1 ? "Próxima" : "Revisar"} <ArrowRight className="w-4 h-4" /></>}
             </Btn>
           </div>
@@ -3009,10 +3514,12 @@ function InterviewScreen({
 
 // ─── Screen 9: Revisão e Envio ────────────────────────────────────────────────
 
-function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
+function ReviewScreen({ onNavigate, draft, onStaleExit }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; onStaleExit?: () => void }) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  // Outro dispositivo pode ter enviado a entrevista enquanto esta tela estava aberta.
+  const { stale, staleStatus } = useInterviewSessionGuard({ interviewId: draft.interviewId, pollStatus: true });
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
   const editQuestion = (index: number) => {
@@ -3024,6 +3531,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   }
 
   const handleSend = () => {
+    if (stale) return;
     if (!allAnswersReady) {
       toast.error("Responda todas as perguntas antes de revisar.");
       return;
@@ -3035,6 +3543,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   return (
     <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de escolher a modalidade de avaliação">
       <div className="w-full">
+        {stale && <StaleInterviewNotice message={describeStaleInterview(staleStatus)} status={staleStatus} onBack={() => onStaleExit?.()} />}
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
           <Card className="p-3 sm:p-4 text-center">
             <p className="text-lg sm:text-2xl font-bold text-green-600 leading-tight">{answeredCount}</p>
@@ -3081,7 +3590,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
                     <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1">Resposta:</p>
                     <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 whitespace-pre-line break-words">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
                   </div>
-                  <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} className="shrink-0">
+                  <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} disabled={stale} className="shrink-0">
                     <Edit2 className="w-4 h-4" /> Editar
                   </Btn>
                 </div>
@@ -3108,10 +3617,10 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => editQuestion(0)}>
+          <Btn variant="outline" onClick={() => editQuestion(0)} disabled={stale}>
             <Edit2 className="w-4 h-4" /> Editar respostas
           </Btn>
-          <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady} onClick={handleSend}>
+          <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady || stale} onClick={handleSend}>
             {sending ? (
               <><Spinner />Preparando...</>
             ) : (
@@ -3905,17 +4414,17 @@ function InterviewSetupScreen({
   session,
   savedDraftAvailable,
   onContinueSavedDraft,
-  onDiscardSavedDraft,
   onCancelInterview,
   onCancelPreparation,
+  onResumeInterview,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
   session: MockAuthSession;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
   savedDraftAvailable?: boolean;
   onContinueSavedDraft?: () => void;
-  onDiscardSavedDraft?: () => void;
   onCancelInterview?: () => void;
   onCancelPreparation?: () => void;
 }) {
@@ -3928,8 +4437,11 @@ function InterviewSetupScreen({
   // URL preenchida pelo clique em "Copiar link" de uma vaga sugerida (nunca por digitação/colagem).
   const [copiedLinkUrl, setCopiedLinkUrl] = useState<string | null>(null);
   const continuingRef = useRef(false);
+  // 409 INTERVIEW_ALREADY_IN_PROGRESS: id da entrevista existente (só exibe a oferta; não grava nada).
+  const [existingInProgress, setExistingInProgress] = useState<{ id: string | null } | null>(null);
+  const [resumingExisting, setResumingExisting] = useState(false);
+  const [resumeExistingError, setResumeExistingError] = useState<string | null>(null);
   const keepUrlOnContextClearRef = useRef(false);
-  const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
   const contextCardRef = useRef<HTMLDivElement>(null);
@@ -3977,7 +4489,7 @@ function InterviewSetupScreen({
     } catch (err) {
       scrollToContextRef.current = false;
       setStatus("error");
-      setError(err instanceof Error ? err.message : "Não foi possível analisar a URL informada.");
+      setError(friendlyErrorMessage(err, "Não foi possível analisar a vaga. Verifique o link e tente novamente."));
     }
   };
 
@@ -3994,22 +4506,26 @@ function InterviewSetupScreen({
     continuingRef.current = true;
     setGenerating(true);
     try {
-      let interviewId = draft.interviewId;
-      if (!interviewId) {
-        const created = await createRealInterview(draft.context);
-        if (!created.ok) {
-          toast.error(created.message);
-          return;
+      const outcome = await startInterviewForContext({
+        context: draft.context,
+        currentInterviewId: draft.interviewId,
+        create: createRealInterview,
+        generate: generateRealQuestions,
+        onCreated: (createdId) => setDraft((current) => ({ ...current, interviewId: createdId })),
+        onObsolete: (staleId) => clearAnswerDraftsForInterview(getCandidateIdentity(session).id, staleId),
+      });
+      if (!outcome.ok) {
+        if (outcome.kind === "already_in_progress") {
+          // Sem erro genérico, sem wizard novo e sem alterar o rascunho salvo.
+          setExistingInProgress({ id: outcome.existingInterviewId ?? null });
+          setResumeExistingError(null);
+        } else {
+          toast.error(outcome.message);
         }
-        interviewId = created.data.id;
-        const createdId = interviewId;
-        setDraft((current) => ({ ...current, interviewId: createdId }));
-      }
-      const generated = await generateRealQuestions(interviewId);
-      if (!generated.ok) {
-        toast.error(generated.message);
         return;
       }
+      const interviewId = outcome.interviewId;
+      const generated = { data: outcome.questions };
       const readyInterviewId = interviewId;
       const questions: InterviewQuestion[] = generated.data.map(({ id, type, text }) => ({ id, type, text }));
       const answers: Record<string, string> = {};
@@ -4101,7 +4617,7 @@ function InterviewSetupScreen({
         current="interview-setup"
         onNavigate={onNavigate}
         title="Nova entrevista"
-        subtitle="Retome ou descarte o progresso salvo"
+        subtitle="Retome ou cancele a entrevista em andamento"
       >
         <div className="w-full max-w-2xl space-y-5">
           <Card className="p-5 sm:p-6 border-blue-100 bg-blue-50">
@@ -4112,44 +4628,52 @@ function InterviewSetupScreen({
               <div className="min-w-0 flex-1">
                 <h3 className="font-bold text-foreground">Você possui uma entrevista em andamento.</h3>
                 <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  Continue de onde parou em {draft.context.title} ou descarte o progresso salvo para iniciar uma nova entrevista.
+                  Continue de onde parou em {draft.context.title} ou cancele a entrevista para iniciar uma nova.
                 </p>
                 <div className="mt-5 flex flex-col gap-3 sm:flex-row">
                   <Btn variant="primary" onClick={onContinueSavedDraft}>
                     Continuar entrevista
                   </Btn>
-                  <Btn variant="outline" onClick={() => setConfirmDiscardDraft(true)}>
-                    Descartar e iniciar nova
+                  <Btn variant="outline" onClick={() => onCancelInterview?.()}>
+                    Cancelar entrevista
                   </Btn>
                 </div>
               </div>
             </div>
           </Card>
         </div>
-        {confirmDiscardDraft && (
-          <ConfirmModal
-            title="Descartar entrevista em andamento?"
-            message="O progresso salvo desta entrevista será removido."
-            confirmLabel="Descartar e iniciar nova"
-            danger
-            onConfirm={() => {
-              setConfirmDiscardDraft(false);
-              onDiscardSavedDraft?.();
-            }}
-            onCancel={() => setConfirmDiscardDraft(false)}
-          />
-        )}
       </AuthLayout>
     );
   }
 
   // Ações da tela; renderizadas em um único ponto por vez (dentro do bloco de contexto ou ao final).
+  const continueExistingFromSetup = async () => {
+    if (!existingInProgress?.id || !onResumeInterview || resumingExisting) return;
+    setResumingExisting(true);
+    setResumeExistingError(null);
+    const result = await onResumeInterview(existingInProgress.id);
+    setResumingExisting(false);
+    if (!result.ok) setResumeExistingError(result.message);
+  };
   const setupActions = (
+    <div className="flex flex-col gap-3">
+      {existingInProgress && (
+        <Alert variant="warning" role="alert" className="rounded-2xl p-4" data-testid="already-in-progress">
+          <p className="text-sm font-semibold text-amber-800">{NEW_INTERVIEW_BLOCKED_MESSAGE}</p>
+          {resumeExistingError && <p className="text-xs text-amber-700 mt-1">{resumeExistingError}</p>}
+          {existingInProgress.id && onResumeInterview && (
+            <Btn variant="primary" size="sm" className="mt-3" onClick={() => void continueExistingFromSetup()} disabled={resumingExisting}>
+              {resumingExisting ? "Carregando..." : "Continuar entrevista"}
+            </Btn>
+          )}
+        </Alert>
+      )}
     <div className="flex gap-3">
       <Btn variant="outline" className="min-w-28 sm:min-w-32" onClick={() => isInterviewDraftInProgress(draft) ? onCancelInterview?.() : onCancelPreparation?.()}>Cancelar</Btn>
       <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
         {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
       </Btn>
+    </div>
     </div>
   );
 
@@ -4528,15 +5052,20 @@ function InterviewConfirmScreen({
   onNavigate,
   draft,
   onDraftCompleted,
+  onStaleExit,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   session?: MockAuthSession;
   onDraftCompleted?: () => void;
+  onStaleExit?: () => void;
 }) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
+  // Outro dispositivo pode ter enviado/encerrado a entrevista (descoberto no foco ou no envio).
+  const sessionGuard = useInterviewSessionGuard({ interviewId: draft.interviewId, pollStatus: true });
+  const stale = sessionGuard.stale;
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
   const evaluationMode = draft.evaluationMode;
@@ -4546,7 +5075,7 @@ function InterviewConfirmScreen({
   }
 
   const handleSend = async () => {
-    if (sendingRef.current) {
+    if (sendingRef.current || stale) {
       return;
     }
     if (!allAnswersReady) {
@@ -4567,9 +5096,16 @@ function InterviewConfirmScreen({
     sendingRef.current = false;
     setSending(false);
     if (!result.ok) {
+      if (result.reason === "not_in_progress") {
+        // Já enviada em outro dispositivo (com outra modalidade): bloqueia, sem voltar à edição.
+        sessionGuard.markStale(result.interviewStatus);
+        return;
+      }
       toast.error(result.message);
       return;
     }
+    // Envio concluído aqui OU já enviado antes (idempotente, mesma modalidade): o rascunho
+    // local é descartado e nada é recriado.
     onDraftCompleted?.();
     routerNavigate(`/candidate/interviews/${result.data.id}/success`);
   };
@@ -4582,6 +5118,7 @@ function InterviewConfirmScreen({
       subtitle="Revise antes de enviar suas respostas"
     >
       <div className="w-full max-w-2xl space-y-5">
+        {stale && <StaleInterviewNotice message={describeStaleInterview(sessionGuard.staleStatus)} status={sessionGuard.staleStatus} onBack={() => onStaleExit?.()} />}
         {/* Aviso */}
         <Alert variant="warning" className="flex items-start gap-3 rounded-2xl p-4">
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
@@ -4662,11 +5199,11 @@ function InterviewConfirmScreen({
         </Card>
 
         <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("review")}>Revisar novamente</Btn>
+          <Btn variant="outline" onClick={() => onNavigate("review")} disabled={stale}>Revisar novamente</Btn>
           <Btn
             variant="primary"
             onClick={handleSend}
-            disabled={sending || !allAnswersReady || !evaluationMode}
+            disabled={sending || !allAnswersReady || !evaluationMode || stale}
             className="flex-1"
           >
             {sending ? (
@@ -5091,13 +5628,17 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 function ConfirmModal({
-  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, showCancel = true, onConfirm, onCancel, onClose, children,
+  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, showCancel = true, initialFocus, dismissOnBackdrop = false, onConfirm, onCancel, onClose, children,
 }: {
   title: string; message: string; confirmLabel: string;
   cancelLabel?: string;
   showCloseButton?: boolean;
   // Informativa: false oculta a ação secundária e deixa só a ação principal.
   showCancel?: boolean;
+  /** Ação segura que recebe o foco ao abrir (padrão: a secundária). Nunca use uma ação destrutiva. */
+  initialFocus?: ConfirmInitialFocus;
+  /** Clique na área escura fora do modal = mesmo dismiss do X/Esc (nunca confirma nem cancela nada). Opt-in. */
+  dismissOnBackdrop?: boolean;
   /** @deprecated Sem efeito: as ações sempre têm larguras iguais no desktop. */
   equalActionWidths?: boolean;
   danger?: boolean; onConfirm: () => void; onCancel: () => void;
@@ -5108,6 +5649,10 @@ function ConfirmModal({
   const confirmRef = useRef<HTMLButtonElement>(null);
   // Esc (e o X) usam o mesmo caminho de fechamento que já existia: onClose ?? onCancel.
   const dismiss = onClose ?? onCancel;
+  // Toque: o foco programático inicial não deve parecer "seleção"; teclado (Tab) volta a mostrar o ring.
+  const [keyboardUsed, setKeyboardUsed] = useState(false);
+  const coarsePointer = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  const focusRing = shouldHideInitialFocusRing({ coarsePointer, keyboardUsed }) ? CONFIRM_MODAL_HIDDEN_FOCUS_RING : null;
   // Mobile: empilhadas, w-full. Desktop: as ações dividem a largura igualmente (sm:flex-1).
   const actionClass = "min-h-11 w-full whitespace-normal sm:min-h-10 sm:flex-1";
 
@@ -5115,11 +5660,14 @@ function ConfirmModal({
     <AlertDialog open onOpenChange={(open) => { if (!open) dismiss(); }}>
       <AlertDialogContent
         className="max-h-[90dvh] overflow-y-auto overscroll-contain sm:max-w-md"
+        onOverlayClick={dismissOnBackdrop ? dismiss : undefined}
+        onKeyDownCapture={(event) => { if (event.key === "Tab") setKeyboardUsed(true); }}
         onOpenAutoFocus={(event) => {
-          // Foco inicial seguro: ação secundária; na informativa, a única ação.
+          // Foco inicial seguro (nunca a ação destrutiva); na informativa, a única ação.
           event.preventDefault();
+          const target = resolveInitialFocus({ showCancel, initialFocus }) === "confirm" ? confirmRef : cancelRef;
           // preventScroll: sem isso o navegador rola a página para "revelar" o botão focalizado.
-          (showCancel ? cancelRef : confirmRef).current?.focus({ preventScroll: true });
+          target.current?.focus({ preventScroll: true });
         }}
       >
         {showCloseButton && (
@@ -5143,11 +5691,11 @@ function ConfirmModal({
         {children && <div>{children}</div>}
         <AlertDialogFooter className="gap-3">
           {showCancel && (
-            <button ref={cancelRef} type="button" onClick={onCancel} className={cn(buttonVariants({ variant: "outline" }), actionClass)}>
+            <button ref={cancelRef} type="button" onClick={onCancel} className={cn(buttonVariants({ variant: "outline" }), actionClass, CONFIRM_MODAL_FOCUS_RING, focusRing)}>
               {cancelLabel}
             </button>
           )}
-          <button ref={confirmRef} type="button" onClick={onConfirm} className={cn(buttonVariants({ variant: danger ? "destructive" : "primary" }), actionClass)}>
+          <button ref={confirmRef} type="button" onClick={onConfirm} className={cn(buttonVariants({ variant: danger ? "destructive" : "primary" }), actionClass, danger ? CONFIRM_MODAL_DANGER_FOCUS_RING : CONFIRM_MODAL_FOCUS_RING, focusRing)}>
             {confirmLabel}
           </button>
         </AlertDialogFooter>
@@ -6566,6 +7114,27 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const [pendingNavigationScreen, setPendingNavigationScreen] = useState<Screen | null>(null);
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState(false);
   const [confirmCancelInterview, setConfirmCancelInterview] = useState(false);
+  // "Sair e continuar depois": tenta enviar o rascunho pendente ao Back antes de sair.
+  const leaveFlushRef = useRef<(() => Promise<void>) | null>(null);
+  const registerLeaveFlush = useCallback((flush: (() => Promise<void>) | null) => {
+    leaveFlushRef.current = flush;
+  }, []);
+  // Sessão do wizard já terminal (cancelada/enviada em outro dispositivo): sem proteção de saída.
+  const [terminalSession, setTerminalSession] = useState<{ interviewId: string; status: string | null } | null>(null);
+  const reportInterviewTerminal = useCallback((interviewId: string, status: string | null) => {
+    setTerminalSession((current) => (current?.interviewId === interviewId && current.status === status ? current : { interviewId, status }));
+  }, []);
+  // Cancelamento REAL (global): estado do pedido ao servidor. Nada local é limpo antes do sucesso.
+  const [cancelState, setCancelState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const cancelBusyRef = useRef(false);
+  const stopActivityRef = useRef<(() => void) | null>(null);
+  const registerStopActivity = useCallback((stop: (() => void) | null) => {
+    stopActivityRef.current = stop;
+  }, []);
+  const leavingRef = useRef(false);
+  // O usuário desistiu de sair (fechou ou escolheu descartar) enquanto o flush corria.
+  const leaveAbortedRef = useRef(false);
+  const [leavingSaving, setLeavingSaving] = useState(false);
   const browserNavigationAllowedRef = useRef(false);
   const protectedHistoryUrlRef = useRef("");
   const candidateIdentity = getCandidateIdentity(session);
@@ -6594,11 +7163,12 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     candidateDraftActive &&
     !resumePromptDismissed &&
     location.pathname === getPathForScreen("interview-setup");
-  const shouldProtectInterviewExit = Boolean(
-    candidateDraftActive &&
-    currentInterviewDraftScreen &&
-    !shouldShowResumePrompt,
-  );
+  const terminalStatusForDraft =
+    terminalSession && terminalSession.interviewId === interviewDraft.interviewId ? terminalSession.status ?? "TERMINAL" : null;
+  const shouldProtectInterviewExit = isExitProtectionActive({
+    draftProtected: Boolean(candidateDraftActive && currentInterviewDraftScreen && !shouldShowResumePrompt),
+    terminalStatus: terminalStatusForDraft,
+  });
 
   const executeNavigation = (screen: Screen) => {
     // Logout real só deve disparar para uma navegação que É o "Sair"
@@ -6654,26 +7224,119 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     routerNavigate(targetPath);
   };
 
+  // Retomada pelo Dashboard (continuidade entre dispositivos): o Back é a fonte da
+  // verdade. Falhas NUNCA gravam no localStorage nem abrem o wizard.
+  const resumeInterviewFromServer = async (interviewId: string): Promise<ResumeInterviewResult> => {
+    const interviewResult = await getRealInterview(interviewId);
+    if (!interviewResult.ok) {
+      const reason = interviewResult.reason === "not_found" ? "not_found" : interviewResult.reason === "not_in_progress" ? "not_in_progress" : "error";
+      return { ok: false, reason, message: interviewResult.message };
+    }
+    if (interviewResult.data.status !== "IN_PROGRESS") {
+      return { ok: false, reason: "not_in_progress", message: "Esta entrevista não está mais em andamento." };
+    }
+    const questionsResult = await getRealQuestionsStateForResume(interviewId);
+    if (!questionsResult.ok) {
+      const reason = questionsResult.reason === "not_in_progress" ? "not_in_progress" : questionsResult.reason === "not_found" ? "not_found" : "error";
+      return { ok: false, reason, message: questionsResult.message };
+    }
+    const interview = interviewResult.data;
+    const plan = buildResumePlan({
+      interview: { id: interview.id, status: interview.status, evaluationMode: interview.evaluationMode },
+      questions: questionsResult.data.questions,
+      questionsInterviewStatus: questionsResult.data.interviewStatus,
+    });
+    if (!plan.ok) {
+      return { ok: false, reason: "not_in_progress", message: "Esta entrevista não está mais em andamento." };
+    }
+    // Mesma entrevista já aberta neste dispositivo, na etapa de perguntas: preserva a posição local.
+    const sameLocalInterview = interviewDraft.interviewId === interviewId && draftProgress.currentScreen === "interview";
+    const useLocalPosition = sameLocalInterview && plan.target.screen === "interview";
+    const nextProgress: InterviewDraftProgress = useLocalPosition
+      ? {
+        currentScreen: "interview",
+        currentQuestionIndex: Math.min(draftProgress.currentQuestionIndex, plan.questions.length - 1),
+        highestQuestionIndex: Math.max(draftProgress.highestQuestionIndex ?? 0, plan.target.highestQuestionIndex),
+      }
+      : {
+        currentScreen: plan.target.screen,
+        currentQuestionIndex: plan.target.currentQuestionIndex,
+        highestQuestionIndex: plan.target.highestQuestionIndex,
+      };
+    setInterviewDraft({
+      interviewId: plan.interviewId,
+      context: interview.context,
+      questions: plan.questions.map((question) => ({ id: question.id, type: question.type, text: question.text })),
+      answers: plan.answers,
+      evaluationMode: plan.evaluationMode,
+    });
+    setTerminalSession(null);
+    navigateToStoredDraftProgress(nextProgress);
+    return { ok: true };
+  };
+
   const discardSavedDraft = () => {
     clearAnswerDraftsForInterview(candidateIdentity.id, interviewDraft.interviewId);
     clearStoredInterviewDraft(candidateIdentity.id);
     setInterviewDraft(createEmptyInterviewDraft());
     setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
+    setTerminalSession(null);
     setResumeDraftProgress(null);
     setResumePromptDismissed(true);
   };
 
+  // "Cancelar" na preparação: sem entrevista criada no servidor só há análise local a limpar;
+  // com entrevista já criada (IN_PROGRESS) o cancelamento é REAL, pelo mesmo modal.
   const cancelInterviewPreparation = () => {
+    if (interviewDraft.interviewId) {
+      openCancelInterview();
+      return;
+    }
     discardSavedDraft();
     routerNavigate(getPathForScreen("dashboard"));
   };
 
-  const cancelActiveInterviewDraft = () => {
-    discardSavedDraft();
+  const openCancelInterview = () => {
+    setCancelState({ busy: false, error: null });
+    setConfirmCancelInterview(true);
+  };
+
+  // CANCELAMENTO REAL: encerra a entrevista no servidor (todos os dispositivos). Só depois
+  // do sucesso para autosave/ditado, limpa o estado local e volta ao Dashboard (que relê as
+  // IN_PROGRESS). Falha/offline: nada local é apagado e o usuário pode tentar de novo.
+  const cancelActiveInterview = async () => {
+    if (cancelBusyRef.current) return;
+    cancelBusyRef.current = true;
+    setCancelState({ busy: true, error: null });
+    try {
+      const interviewId = interviewDraft.interviewId;
+      if (interviewId) {
+        const result = await cancelRealInterview(interviewId);
+        if (!result.ok) {
+          setCancelState({ busy: false, error: result.message });
+          return;
+        }
+      }
+      stopActivityRef.current?.();
+      discardSavedDraft();
+      setPendingNavigationScreen(null);
+      setPendingBrowserNavigation(false);
+      setConfirmCancelInterview(false);
+      setCancelState({ busy: false, error: null });
+      routerNavigate(getPathForScreen("dashboard"));
+    } finally {
+      cancelBusyRef.current = false;
+    }
+  };
+
+  // Entrevista enviada/encerrada em outro dispositivo: o estado local do wizard não tem mais
+  // o que retomar. Só acontece por clique em "Voltar ao Dashboard" (nunca em silêncio).
+  const leaveStaleInterview = () => {
+    completeCurrentDraft();
     setPendingNavigationScreen(null);
     setPendingBrowserNavigation(false);
     setConfirmCancelInterview(false);
-    routerNavigate(getPathForScreen("interview-history"));
+    routerNavigate(getPathForScreen("dashboard"));
   };
 
   const completeCurrentDraft = () => {
@@ -6682,8 +7345,16 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     setInterviewDraft(createEmptyInterviewDraft());
     setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
     setResumeDraftProgress(null);
+    setTerminalSession(null);
     setResumePromptDismissed(true);
   };
+
+  // Saiu da sessão terminal (CANCELLED/enviada em outro dispositivo) sem usar o botão do aviso:
+  // o interviewId e o contexto da entrevista antiga não podem sobreviver a uma nova prática.
+  useEffect(() => {
+    if (!shouldDiscardTerminalDraft({ terminalStatus: terminalStatusForDraft, screen: currentInterviewDraftScreen })) return;
+    completeCurrentDraft();
+  }, [terminalStatusForDraft, currentInterviewDraftScreen]);
 
   useEffect(() => {
     const storedDraft = getStoredInterviewDraft(candidateIdentity.id);
@@ -6732,13 +7403,8 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
 
   useEffect(() => {
     if (!shouldProtectInterviewExit) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    // Sessão terminal: shouldProtectInterviewExit vira false e o cleanup abaixo remove o listener.
+    return attachExitProtection(window, () => saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress));
   }, [candidateIdentity.id, draftProgress, interviewDraft, shouldProtectInterviewExit]);
 
   useEffect(() => {
@@ -6834,6 +7500,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
 
   return (
     <SessionContext.Provider value={session}>
+    <InterviewSessionTerminalContext.Provider value={reportInterviewTerminal}>
     <div className="flex flex-col min-h-screen">
       <Toaster position="top-center" richColors />
       <div className="flex-1 flex flex-col">
@@ -6849,7 +7516,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
 
           <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard")} />)} />
-          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
+          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onResumeInterview={resumeInterviewFromServer} />)} />
           <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} session={session} />)} />
@@ -6861,13 +7528,13 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/agenda" element={protect("CANDIDATE", <InterviewAgendaScreen onNavigate={navigate} session={session} />)} />
           {/* Todas as etapas da entrevista exigem perfil profissional completo (API). */}
           <Route element={protect("CANDIDATE", <InterviewProfileGuard onNavigate={navigate} />)}>
-          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onDiscardSavedDraft={discardSavedDraft} onCancelInterview={() => setConfirmCancelInterview(true)} onCancelPreparation={cancelInterviewPreparation} />)} />
+          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} onResumeInterview={resumeInterviewFromServer} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onCancelInterview={openCancelInterview} onCancelPreparation={cancelInterviewPreparation} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
           <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} candidateId={candidateIdentity.id} restoredQuestionIndex={draftProgress.currentScreen === "interview" ? draftProgress.currentQuestionIndex : undefined} restoredHighestIndex={draftProgress.highestQuestionIndex} onQuestionIndexChange={(index, highestReached) => setDraftProgress((current) => current.currentQuestionIndex === index && current.highestQuestionIndex === highestReached ? current : { ...current, currentQuestionIndex: index, highestQuestionIndex: highestReached })} />)} />
-          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} />)} />
+          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} candidateId={candidateIdentity.id} restoredQuestionIndex={draftProgress.currentScreen === "interview" ? draftProgress.currentQuestionIndex : undefined} restoredHighestIndex={draftProgress.highestQuestionIndex} registerLeaveFlush={registerLeaveFlush} registerStopActivity={registerStopActivity} onStaleExit={leaveStaleInterview} onQuestionIndexChange={(index, highestReached) => setDraftProgress((current) => current.currentQuestionIndex === index && current.highestQuestionIndex === highestReached ? current : { ...current, currentQuestionIndex: index, highestQuestionIndex: highestReached })} />)} />
+          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} onStaleExit={leaveStaleInterview} />)} />
+          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} onStaleExit={leaveStaleInterview} />)} />
           </Route>
           <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
           <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
@@ -6911,19 +7578,35 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <ConfirmModal
             title={confirmCancelInterview ? "Cancelar entrevista?" : "Deseja sair da entrevista?"}
             message={confirmCancelInterview
-              ? "O progresso salvo desta entrevista será removido. Esta ação não poderá ser desfeita."
-              : "Você pode continuar depois com o progresso salvo ou cancelar esta entrevista e descartar o progresso atual."}
-            confirmLabel={confirmCancelInterview ? "Cancelar entrevista" : "Sair e continuar depois"}
+              ? "Esta entrevista será encerrada e não poderá mais ser continuada em nenhum dispositivo. Você poderá iniciar uma nova entrevista depois."
+              : "Você pode sair e continuar depois, neste ou em outro dispositivo, com o progresso salvo. Se preferir, cancele a entrevista."}
+            confirmLabel={confirmCancelInterview ? (cancelState.busy ? "Cancelando..." : "Cancelar entrevista") : leavingSaving ? "Salvando..." : "Sair e continuar depois"}
             cancelLabel={confirmCancelInterview ? "Voltar" : "Cancelar entrevista"}
             showCloseButton={!confirmCancelInterview}
             danger={confirmCancelInterview}
-            onConfirm={() => {
+            initialFocus={confirmCancelInterview ? "cancel" : "confirm"}
+            dismissOnBackdrop={!confirmCancelInterview}
+            onConfirm={async () => {
               if (confirmCancelInterview) {
-                cancelActiveInterviewDraft();
+                await cancelActiveInterview();
                 return;
               }
+              if (leavingRef.current) return;
+              leavingRef.current = true;
+              leaveAbortedRef.current = false;
+              setLeavingSaving(true);
+              // Proteção local PRIMEIRO (o texto nunca depende da rede) e, se houver conexão,
+              // tenta levar o rascunho pendente ao Back antes de sair. Erro/offline/lentidão
+              // não prendem a saída.
+              saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+              try {
+                await flushBeforeLeaving(leaveFlushRef.current);
+              } finally {
+                leavingRef.current = false;
+                setLeavingSaving(false);
+              }
+              if (leaveAbortedRef.current) return;
               if (pendingBrowserNavigation) {
-                saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
                 setResumeDraftProgress(draftProgress);
                 setResumePromptDismissed(false);
                 setPendingBrowserNavigation(false);
@@ -6937,28 +7620,39 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
               }
               const target = pendingNavigationScreen;
               if (!target) return;
-              saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
               setResumeDraftProgress(draftProgress);
               setResumePromptDismissed(false);
               setPendingNavigationScreen(null);
               executeNavigation(target);
             }}
             onCancel={() => {
+              leaveAbortedRef.current = true;
               if (confirmCancelInterview) {
+                if (cancelBusyRef.current) return;
+                setCancelState({ busy: false, error: null });
                 setConfirmCancelInterview(false);
                 return;
               }
-              setConfirmCancelInterview(true);
+              openCancelInterview();
             }}
             onClose={() => {
+              if (cancelBusyRef.current) return;
+              leaveAbortedRef.current = true;
               setConfirmCancelInterview(false);
               setPendingNavigationScreen(null);
               setPendingBrowserNavigation(false);
             }}
-          />
+          >
+            {confirmCancelInterview && cancelState.error && (
+              <p role="alert" data-testid="cancel-interview-error" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {cancelState.error}
+              </p>
+            )}
+          </ConfirmModal>
         )}
       </div>
     </div>
+    </InterviewSessionTerminalContext.Provider>
     </SessionContext.Provider>
   );
 }

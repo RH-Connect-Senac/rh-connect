@@ -12,6 +12,8 @@
  * foram removidas no Prompt 10 por não terem mais consumidor.
  */
 
+import { sanitizeServerMessage } from "../domain/user-friendly-error";
+
 const API_BASE_URL = (
   (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
     .env?.VITE_API_URL ?? "http://localhost:3000"
@@ -44,18 +46,18 @@ async function readRegisterErrorMessage(
   try {
     const payload = (await response.json()) as { message?: unknown };
 
-    if (typeof payload.message === "string" && payload.message.trim()) {
-      return payload.message;
-    }
-
-    if (Array.isArray(payload.message) && payload.message.length > 0) {
-      return payload.message.map(String).join(" ");
-    }
+    const message =
+      typeof payload.message === "string"
+        ? payload.message
+        : Array.isArray(payload.message) && payload.message.length > 0
+          ? payload.message.map(String).join(" ")
+          : null;
+    return sanitizeServerMessage(message, { status: response.status, fallback, scope: "register" });
   } catch {
     // Mantém a mensagem padrão quando a API não retorna JSON.
   }
 
-  return fallback;
+  return sanitizeServerMessage(null, { status: response.status, fallback, scope: "register" });
 }
 
 export async function registerRealCandidate(

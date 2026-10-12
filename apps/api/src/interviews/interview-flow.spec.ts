@@ -3,8 +3,10 @@ import {
   FLOW_LIMITS,
   normalizeAnswer,
   parseGeneratedQuestions,
+  toCandidateQuestionResponse,
   toQuestionResponse,
   validateAnswer,
+  validateDraft,
 } from './interview-flow';
 
 function pythonPayload(overrides: Array<Record<string, unknown>> = []) {
@@ -145,5 +147,64 @@ describe('toQuestionResponse', () => {
       answer: 'Resposta',
       answeredAt: at,
     });
+  });
+});
+
+describe('validateDraft', () => {
+  it('normaliza CRLF/CR para LF e NÃO faz trim (preserva o que foi digitado)', () => {
+    expect(validateDraft('a\r\nb\rc ')).toBe('a\nb\nc ');
+  });
+
+  it('só espaços/quebras => null (limpa o rascunho)', () => {
+    expect(validateDraft('')).toBeNull();
+    expect(validateDraft('  \r\n \n')).toBeNull();
+  });
+
+  it('1000 caracteres passam; 1001 => 400 (nunca corta)', () => {
+    expect(validateDraft('a'.repeat(FLOW_LIMITS.answer))).toHaveLength(1000);
+    expect(() => validateDraft('a'.repeat(FLOW_LIMITS.answer + 1))).toThrow(
+      BadRequestException,
+    );
+  });
+});
+
+describe('toCandidateQuestionResponse', () => {
+  it('acrescenta draftText/draftUpdatedAt/draftVersion sem remover a resposta oficial', () => {
+    const at = new Date('2026-10-09T12:00:00.000Z');
+    const record = {
+      question_id: 'q-1',
+      position: 1,
+      question_type: 'TECHNICAL',
+      question_text: 'Texto?',
+      answer_text: 'Oficial',
+      answered_at: at,
+      draft_text: 'Rascunho',
+      draft_updated_at: at,
+      draft_version: 2,
+    };
+    expect(toCandidateQuestionResponse(record)).toEqual({
+      id: 'q-1',
+      position: 1,
+      type: 'TECHNICAL',
+      text: 'Texto?',
+      answer: 'Oficial',
+      answeredAt: at,
+      draftText: 'Rascunho',
+      draftUpdatedAt: at,
+      draftVersion: 2,
+    });
+  });
+
+  it('a projeção de Avaliador/Admin (toQuestionResponse) continua sem rascunho', () => {
+    const projected = toQuestionResponse({
+      question_id: 'q-1',
+      position: 1,
+      question_type: 'TECHNICAL',
+      question_text: 'Texto?',
+      answer_text: null,
+      answered_at: null,
+    });
+    expect(projected).not.toHaveProperty('draftText');
+    expect(projected).not.toHaveProperty('draftVersion');
   });
 });

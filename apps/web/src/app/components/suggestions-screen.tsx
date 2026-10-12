@@ -1,3 +1,4 @@
+import { friendlyErrorMessage } from "../domain/user-friendly-error";
 import { useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, CheckCircle } from "lucide-react";
 
@@ -94,7 +95,7 @@ export function SuggestionsScreen() {
       setForm(INITIAL_FEEDBACK_FORM);
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Não foi possível enviar seu relato.");
+      setMessage(friendlyErrorMessage(error, "Não foi possível enviar seu relato."));
     }
   };
 

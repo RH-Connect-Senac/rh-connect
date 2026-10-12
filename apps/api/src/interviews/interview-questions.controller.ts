@@ -15,6 +15,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { SaveAnswerDto } from './dto/save-answer.dto';
+import { SaveDraftDto } from './dto/save-draft.dto';
 import { InterviewQuestionsService } from './interview-questions.service';
 
 function userIdOf(req: Request): number {
@@ -55,6 +56,25 @@ export class InterviewQuestionsController {
       id,
       questionId,
       dto.answer,
+      dto.draftVersion,
+    );
+  }
+
+  // Rascunho (autosave). NÃO é a confirmação: não altera a resposta oficial.
+  @Put(':id/questions/:questionId/answer/draft')
+  @Roles('CANDIDATE')
+  saveDraft(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('questionId', new ParseUUIDPipe()) questionId: string,
+    @Body() dto: SaveDraftDto,
+  ) {
+    return this.questionsService.saveDraft(
+      userIdOf(req),
+      id,
+      questionId,
+      dto.draft,
+      dto.version,
     );
   }
 }

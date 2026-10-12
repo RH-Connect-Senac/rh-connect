@@ -56,12 +56,20 @@ const ROUTES: Array<
     ':id/questions/:questionId/answer',
   ],
   [
+    'saveDraft',
+    proto.saveDraft,
+    RequestMethod.PUT,
+    ':id/questions/:questionId/answer/draft',
+  ],
+  [
     'setEvaluationMode',
     flowProto.setEvaluationMode,
     RequestMethod.PATCH,
     ':id/evaluation-mode',
   ],
   ['submit', flowProto.submit, RequestMethod.POST, ':id/submit'],
+  ['listInProgress', flowProto.listInProgress, RequestMethod.GET, 'in-progress'],
+  ['cancel', flowProto.cancel, RequestMethod.POST, ':id/cancel'],
 ];
 
 describe('rotas da Fase 2', () => {
@@ -94,9 +102,30 @@ describe('rotas da Fase 2', () => {
     expect(guard.canActivate(contextFor(handler, null))).toBe(false);
   });
 
-  it('generate e submit respondem 200 (idempotentes)', () => {
+  it('generate, submit e cancel respondem 200 (idempotentes)', () => {
     expect(Reflect.getMetadata('__httpCode__', proto.generate)).toBe(200);
     expect(Reflect.getMetadata('__httpCode__', flowProto.submit)).toBe(200);
+    expect(Reflect.getMetadata('__httpCode__', flowProto.cancel)).toBe(200);
+  });
+});
+
+describe('GET /interviews/in-progress', () => {
+  it('é declarada ANTES de GET :id (senão "in-progress" seria lido como id)', () => {
+    const order = Object.getOwnPropertyNames(InterviewsController.prototype);
+    expect(order.indexOf('listInProgress')).toBeGreaterThan(-1);
+    expect(order.indexOf('listInProgress')).toBeLessThan(
+      order.indexOf('getById'),
+    );
+    expect(Reflect.getMetadata('path', flowProto.getById)).toBe(':id');
+  });
+
+  it('usa o id do JWT, sem aceitar candidato do cliente', async () => {
+    const service = { listInProgress: jest.fn().mockResolvedValue([]) };
+    const controller = new InterviewsController(
+      service as unknown as InterviewsService,
+    );
+    await controller.listInProgress(req);
+    expect(service.listInProgress).toHaveBeenCalledWith(7);
   });
 });
 
@@ -106,6 +135,7 @@ describe('dono sempre vem do JWT', () => {
       generate: jest.fn().mockResolvedValue('g'),
       list: jest.fn().mockResolvedValue('l'),
       saveAnswer: jest.fn().mockResolvedValue('s'),
+      saveDraft: jest.fn().mockResolvedValue('d'),
     };
     return {
       service,
@@ -120,11 +150,23 @@ describe('dono sempre vem do JWT', () => {
 
     await controller.generate(req, ID);
     await controller.list(req, ID);
-    await controller.saveAnswer(req, ID, QID, { answer: 'texto' });
+    await controller.saveAnswer(req, ID, QID, {
+      answer: 'texto',
+      draftVersion: 3,
+    });
 
     expect(service.generate).toHaveBeenCalledWith(7, ID);
     expect(service.list).toHaveBeenCalledWith(7, ID);
-    expect(service.saveAnswer).toHaveBeenCalledWith(7, ID, QID, 'texto');
+    expect(service.saveAnswer).toHaveBeenCalledWith(7, ID, QID, 'texto', 3);
+  });
+
+  it('saveDraft usa o dono do JWT e NÃO chama saveAnswer', async () => {
+    const { service, controller } = makeQuestions();
+
+    await controller.saveDraft(req, ID, QID, { draft: 'parcial', version: 3 });
+
+    expect(service.saveDraft).toHaveBeenCalledWith(7, ID, QID, 'parcial', 3);
+    expect(service.saveAnswer).not.toHaveBeenCalled();
   });
 
   it('setEvaluationMode / submit', async () => {
@@ -143,5 +185,21 @@ describe('dono sempre vem do JWT', () => {
     expect(service.setEvaluationMode).toHaveBeenCalledWith(7, ID, 'AI');
     expect(service.submit).toHaveBeenNthCalledWith(1, 7, ID, 'HUMAN');
     expect(service.submit).toHaveBeenNthCalledWith(2, 7, ID, undefined);
+  });
+});
+
+describe('POST /interviews/:id/cancel', () => {
+  it('usa o dono do JWT e o id da rota (nenhum candidato vem do cliente)', async () => {
+    const service = { cancel: jest.fn().mockResolvedValue('c') };
+    const controller = new InterviewsController(
+      service as unknown as InterviewsService,
+    );
+    await controller.cancel(req, ID);
+    expect(service.cancel).toHaveBeenCalledWith(7, ID);
+  });
+
+  it('não colide com as demais rotas POST :id/*', () => {
+    expect(Reflect.getMetadata('path', flowProto.cancel)).toBe(':id/cancel');
+    expect(Reflect.getMetadata('path', flowProto.submit)).toBe(':id/submit');
   });
 });

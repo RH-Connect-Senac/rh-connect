@@ -186,7 +186,7 @@ describe('AdminInterviewsService.getById', () => {
     );
     expect(prisma.interview.findFirst.mock.calls[0][0].where).toEqual({
       interview_id: INTERVIEW_ID,
-      status: { not: 'IN_PROGRESS' },
+      status: { notIn: ['IN_PROGRESS', 'CANCELLED'] },
     });
   });
 

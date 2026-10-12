@@ -13,27 +13,52 @@ function run(metatype: new () => object, body: unknown) {
 }
 
 describe('SaveAnswerDto', () => {
+  // Contrato: { answer, draftVersion }. `draftVersion` é OBRIGATÓRIO (controle
+  // otimista do PUT oficial entre dispositivos).
   it('aceita texto e remove campos extras (dono/status/ids)', async () => {
     const result = await run(SaveAnswerDto, {
       answer: 'minha resposta',
+      draftVersion: 0,
       candidateId: 9,
       questionId: 'outra',
       status: 'COMPLETED',
     });
-    expect(result).toEqual({ answer: 'minha resposta' });
+    expect(result).toEqual({ answer: 'minha resposta', draftVersion: 0 });
   });
 
-  it('aceita string vazia (limpa a resposta)', async () => {
-    await expect(run(SaveAnswerDto, { answer: '' })).resolves.toEqual({
+  it('aceita string vazia (limpa a resposta) com draftVersion válido', async () => {
+    await expect(
+      run(SaveAnswerDto, { answer: '', draftVersion: 0 }),
+    ).resolves.toEqual({
       answer: '',
+      draftVersion: 0,
     });
   });
 
+  it.each([0, 1, 7, 2147483646])(
+    'aceita draftVersion inteiro >= 0 (%s)',
+    async (draftVersion) => {
+      await expect(
+        run(SaveAnswerDto, { answer: 'x', draftVersion }),
+      ).resolves.toEqual({ answer: 'x', draftVersion });
+    },
+  );
+
   it.each([
-    ['sem answer', {}],
-    ['answer numérico', { answer: 10 }],
-    ['answer nulo', { answer: null }],
-    ['corpo absurdo (> 5000)', { answer: 'a'.repeat(5001) }],
+    ['sem answer', { draftVersion: 0 }],
+    ['answer numérico', { answer: 10, draftVersion: 0 }],
+    ['answer nulo', { answer: null, draftVersion: 0 }],
+    [
+      'corpo absurdo (> 5000)',
+      { answer: 'a'.repeat(5001), draftVersion: 0 },
+    ],
+    ['sem draftVersion (obrigatório)', { answer: 'x' }],
+    ['somente answer vazio, sem draftVersion', { answer: '' }],
+    ['draftVersion nulo', { answer: 'x', draftVersion: null }],
+    ['draftVersion negativo', { answer: 'x', draftVersion: -1 }],
+    ['draftVersion decimal', { answer: 'x', draftVersion: 1.5 }],
+    ['draftVersion em texto', { answer: 'x', draftVersion: '1' }],
+    ['draftVersion acima do teto', { answer: 'x', draftVersion: 2147483647 }],
   ])('rejeita %s', async (_name, body) => {
     await expect(run(SaveAnswerDto, body)).rejects.toBeInstanceOf(
       BadRequestException,

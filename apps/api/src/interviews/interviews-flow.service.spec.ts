@@ -33,8 +33,18 @@ function record(overrides: Record<string, unknown> = {}) {
 function makeService() {
   const prisma = {
     interview: { findFirst: jest.fn(), updateMany: jest.fn() },
-    interview_question: { findMany: jest.fn() },
+    interview_question: {
+      findMany: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    // O envio roda numa transação: o callback recebe o cliente transacional.
+    // Por padrão ele é o próprio `prisma` simulado; os testes de transação
+    // trocam por um `tx` separado para provar por onde as escritas passam.
+    $transaction: jest.fn(),
   };
+  prisma.$transaction.mockImplementation(
+    (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+  );
   const service = new InterviewsService(prisma as unknown as PrismaService);
   return { service, prisma };
 }
@@ -79,11 +89,18 @@ describe('InterviewsService.setEvaluationMode', () => {
     prisma.interview.updateMany.mockResolvedValue({ count: 0 });
     prisma.interview.findFirst.mockResolvedValue({
       interview_id: INTERVIEW_ID,
+      status: 'PENDING_ASSIGNMENT',
     });
 
-    await expect(
-      service.setEvaluationMode(42, INTERVIEW_ID, 'AI'),
-    ).rejects.toBeInstanceOf(ConflictException);
+    const error = await service
+      .setEvaluationMode(42, INTERVIEW_ID, 'AI')
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'INTERVIEW_NOT_IN_PROGRESS',
+      interviewStatus: 'PENDING_ASSIGNMENT',
+    });
   });
 });
 
@@ -118,6 +135,132 @@ describe('InterviewsService.submit', () => {
     expect(args.data).not.toHaveProperty('assigned_by_user_id');
     expect(result.status).toBe('PENDING_AI_EVALUATION');
     expect(result.submittedAt).toBe(at);
+  });
+
+  it('o envio só considera answer_text: rascunho nunca entra na regra', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findFirst
+      .mockResolvedValueOnce(record())
+      .mockResolvedValueOnce(record({ status: 'PENDING_AI_EVALUATION' }));
+    prisma.interview_question.findMany.mockResolvedValue(answered);
+    prisma.interview.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.submit(42, INTERVIEW_ID, 'AI');
+
+    expect(
+      prisma.interview_question.findMany.mock.calls[0][0].select,
+    ).toEqual({ answer_text: true });
+    const where = prisma.interview.updateMany.mock.calls[0][0].where;
+    expect(where.questions).toEqual({ some: {}, none: { answer_text: null } });
+    expect(JSON.stringify(where)).not.toContain('draft');
+  });
+
+  it('só rascunho (sem answer_text) continua bloqueando o envio com 400', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findFirst.mockResolvedValueOnce(record());
+    // o banco pode ter draft_text, mas a leitura do envio só vê answer_text
+    prisma.interview_question.findMany.mockResolvedValue([
+      { answer_text: 'a' },
+      { answer_text: null },
+    ]);
+
+    await expect(service.submit(42, INTERVIEW_ID, 'AI')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(prisma.interview.updateMany).not.toHaveBeenCalled();
+    expect(prisma.interview_question.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('envio bem-sucedido limpa TODOS os rascunhos da entrevista e avança a versão (não zera)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findFirst
+      .mockResolvedValueOnce(record())
+      .mockResolvedValueOnce(record({ status: 'PENDING_ASSIGNMENT' }));
+    prisma.interview_question.findMany.mockResolvedValue(answered);
+    prisma.interview.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.submit(42, INTERVIEW_ID, 'HUMAN');
+
+    expect(prisma.interview_question.updateMany).toHaveBeenCalledWith({
+      where: { interview_id: INTERVIEW_ID },
+      data: {
+        draft_text: null,
+        draft_updated_at: null,
+        draft_version: { increment: 1 },
+      },
+    });
+  });
+
+  it('envio e limpeza dos rascunhos rodam na MESMA transação (cliente tx, não o prisma direto)', async () => {
+    const { service, prisma } = makeService();
+    const order: string[] = [];
+    const tx = {
+      interview: {
+        updateMany: jest.fn().mockImplementation(() => {
+          order.push('envio');
+          return Promise.resolve({ count: 1 });
+        }),
+      },
+      interview_question: {
+        updateMany: jest.fn().mockImplementation(() => {
+          order.push('limpeza');
+          return Promise.resolve({ count: 5 });
+        }),
+      },
+    };
+    prisma.$transaction.mockImplementation(
+      (fn: (client: unknown) => Promise<unknown>) => fn(tx),
+    );
+    prisma.interview.findFirst
+      .mockResolvedValueOnce(record())
+      .mockResolvedValueOnce(record({ status: 'PENDING_AI_EVALUATION' }));
+    prisma.interview_question.findMany.mockResolvedValue(answered);
+
+    await service.submit(42, INTERVIEW_ID, 'AI');
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['envio', 'limpeza']);
+    expect(prisma.interview.updateMany).not.toHaveBeenCalled();
+    expect(prisma.interview_question.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('falha na limpeza propaga o erro (a transação desfaz o envio): nada de entrevista enviada com rascunho', async () => {
+    const { service, prisma } = makeService();
+    let committed = false;
+    const tx = {
+      interview: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      interview_question: {
+        updateMany: jest.fn().mockRejectedValue(new Error('db caiu')),
+      },
+    };
+    // transação simulada: só "confirma" se o callback terminar sem erro
+    prisma.$transaction.mockImplementation(
+      async (fn: (client: unknown) => Promise<unknown>) => {
+        const result = await fn(tx);
+        committed = true;
+        return result;
+      },
+    );
+    prisma.interview.findFirst.mockResolvedValueOnce(record());
+    prisma.interview_question.findMany.mockResolvedValue(answered);
+
+    await expect(service.submit(42, INTERVIEW_ID, 'HUMAN')).rejects.toThrow();
+
+    expect(committed).toBe(false);
+    // não devolve estado "enviado": a entrevista nem é relida
+    expect(prisma.interview.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('envio concorrente (0 linhas) não limpa rascunho nenhum e responde 409', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findFirst.mockResolvedValueOnce(record());
+    prisma.interview_question.findMany.mockResolvedValue(answered);
+    prisma.interview.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.submit(42, INTERVIEW_ID, 'AI')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.interview_question.updateMany).not.toHaveBeenCalled();
   });
 
   it('HUMAN: IN_PROGRESS -> PENDING_ASSIGNMENT (ainda sem avaliador)', async () => {
@@ -266,9 +409,14 @@ describe('InterviewsService.submit', () => {
       }),
     );
 
-    await expect(
-      service.submit(42, INTERVIEW_ID, 'HUMAN'),
-    ).rejects.toBeInstanceOf(ConflictException);
+    const error = await service
+      .submit(42, INTERVIEW_ID, 'HUMAN')
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'INTERVIEW_NOT_IN_PROGRESS',
+    });
     expect(prisma.interview.updateMany).not.toHaveBeenCalled();
   });
 });

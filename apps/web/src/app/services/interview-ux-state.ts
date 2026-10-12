@@ -25,6 +25,11 @@ function safeStorage(kind: "local" | "session"): StorageLike | null {
   }
 }
 
+/** Armazenamento local seguro (null se indisponível/bloqueado). */
+export function safeLocalStorage(): StorageLike | null {
+  return safeStorage("local");
+}
+
 // ─── 1. Prefill da URL da vaga (sessionStorage) ──────────────────────────────
 
 export const INTERVIEW_URL_PREFILL_KEY = "rhconnect:interview-url-prefill:v1";
@@ -93,6 +98,12 @@ export type AnswerDraft = {
   /** Resposta confirmada pelo Back quando o rascunho foi iniciado ("" se nenhuma). */
   base: string;
   updatedAt: number;
+  /**
+   * Versão do rascunho do Back que ESTE dispositivo conhecia quando editou
+   * (ausente em rascunhos antigos). Permite saber se outro dispositivo mexeu
+   * no rascunho do Back depois disso, sem comparar relógios.
+   */
+  baseVersion?: number;
 };
 
 type AnswerDraftStore = { version: 1; drafts: Record<string, AnswerDraft> };
@@ -119,7 +130,12 @@ function readStore(storage: StorageLike, now: number): AnswerDraftStore {
         typeof item.updatedAt === "number" &&
         now - item.updatedAt <= ANSWER_DRAFT_TTL_MS // evita crescimento indefinido
       ) {
-        drafts[key] = { text: item.text, base: item.base, updatedAt: item.updatedAt };
+        drafts[key] = {
+          text: item.text,
+          base: item.base,
+          updatedAt: item.updatedAt,
+          ...(typeof item.baseVersion === "number" ? { baseVersion: item.baseVersion } : {}),
+        };
       }
     }
     return { version: 1, drafts };
@@ -153,6 +169,7 @@ export function saveAnswerDraft(
   persistedAnswer: string,
   storage: StorageLike | null = safeStorage("local"),
   now: number = Date.now(),
+  baseVersion?: number,
 ): void {
   if (!storage) return;
   if (text.trim() === persistedAnswer.trim()) {
@@ -163,7 +180,12 @@ export function saveAnswerDraft(
   const key = draftKey(scope);
   // Mantém a base original do rascunho: ela marca em que resposta do Back a edição começou.
   const base = store.drafts[key]?.base ?? persistedAnswer.trim();
-  store.drafts[key] = { text, base, updatedAt: now };
+  store.drafts[key] = {
+    text,
+    base,
+    updatedAt: now,
+    ...(typeof baseVersion === "number" ? { baseVersion } : {}),
+  };
   writeStore(storage, store);
 }
 
@@ -215,6 +237,47 @@ export function resolveAnswerText(
     return { text: draft.text, source: "draft" };
   }
   return { text: serverAnswer ?? "", source: "server" };
+}
+
+/**
+ * PRECEDÊNCIA ao abrir uma pergunta (rascunho ≠ resposta):
+ *
+ *  1. A resposta OFICIAL do Back é o último estado confirmado e é a base.
+ *  2. Rascunho LOCAL só vale se (a) difere da oficial, (b) nasceu da MESMA
+ *     resposta oficial atual (`base`) e (c) não é mais velho que o rascunho do
+ *     Back: `baseVersion` precisa ser igual à versão atual do rascunho remoto
+ *     (rascunhos antigos, sem `baseVersion`, só valem se não há rascunho remoto).
+ *     Assim uma edição offline mais nova que o que o Back tem é preservada, e
+ *     uma edição velha nunca sobrescreve o que outro dispositivo salvou depois.
+ *  3. Senão, rascunho do BACK (se difere da oficial) — é o que atravessa dispositivos.
+ *  4. Senão, a resposta oficial.
+ *
+ * Nada aqui marca a pergunta como respondida: isso depende SÓ da oficial.
+ */
+export type RestoredAnswerSource = "official" | "remote-draft" | "local-draft";
+
+export function resolveRestoredAnswer(input: {
+  official: string | null;
+  remote: { text: string | null; version: number };
+  local: AnswerDraft | null;
+}): { text: string; source: RestoredAnswerSource; discardLocal: boolean } {
+  const officialText = input.official ?? "";
+  const officialTrim = officialText.trim();
+  const remoteText = input.remote.text ?? "";
+  const remoteUsable = remoteText.trim() !== "" && remoteText.trim() !== officialTrim;
+  const local = input.local;
+
+  const localUsable =
+    !!local &&
+    local.text.trim() !== officialTrim &&
+    local.base === officialTrim &&
+    (typeof local.baseVersion === "number"
+      ? local.baseVersion === input.remote.version
+      : !remoteUsable);
+
+  if (localUsable && local) return { text: local.text, source: "local-draft", discardLocal: false };
+  if (remoteUsable) return { text: remoteText, source: "remote-draft", discardLocal: !!local };
+  return { text: officialText, source: "official", discardLocal: !!local };
 }
 
 /**
@@ -296,6 +359,8 @@ export function deriveHighestReachedIndex(input: {
   storedHighest?: number;
   currentIndex: number;
   answeredIndexes: number[];
+  /** Perguntas com rascunho (do Back ou local): já foram abertas em algum dispositivo. */
+  draftedIndexes?: number[];
   questionCount: number;
 }): number {
   const last = Math.max(0, input.questionCount - 1);
@@ -304,7 +369,15 @@ export function deriveHighestReachedIndex(input: {
       ? input.storedHighest
       : 0;
   const highestAnswered = input.answeredIndexes.reduce((max, index) => Math.max(max, index), 0);
-  return Math.min(last, Math.max(stored, input.currentIndex, highestAnswered, 0));
+  const highestDrafted = (input.draftedIndexes ?? []).reduce((max, index) => Math.max(max, index), 0);
+  // A primeira pergunta SEM resposta oficial é sempre acessível: é o ponto onde o fluxo
+  // normal pararia (P1 e P2 oficiais => P3 liberada), mesmo que este dispositivo nunca a
+  // tenha aberto (resposta dada em outro dispositivo / estado local antigo).
+  const answered = new Set(input.answeredIndexes);
+  let firstPending = 0;
+  while (firstPending < input.questionCount && answered.has(firstPending)) firstPending += 1;
+  // O estado local (`stored`) só SOMA: nunca reduz o que o Back já permite acessar.
+  return Math.min(last, Math.max(stored, input.currentIndex, highestAnswered, highestDrafted, firstPending, 0));
 }
 
 export function getQuestionNavState(input: {

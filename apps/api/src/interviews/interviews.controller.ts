@@ -37,6 +37,14 @@ export class InterviewsController {
     return this.interviewsService.create(userIdOf(req), dto);
   }
 
+  // DECLARADA ANTES de `:id`: senão "in-progress" seria lida como id (e rejeitada
+  // pelo ParseUUIDPipe). Lista as entrevistas IN_PROGRESS do próprio candidato.
+  @Get('in-progress')
+  @Roles('CANDIDATE')
+  listInProgress(@Req() req: Request) {
+    return this.interviewsService.listInProgress(userIdOf(req));
+  }
+
   @Get(':id')
   @Roles('CANDIDATE')
   getById(@Req() req: Request, @Param('id', new ParseUUIDPipe()) id: string) {
@@ -55,6 +63,15 @@ export class InterviewsController {
       id,
       dto.evaluationMode,
     );
+  }
+
+  // Ação explícita e GLOBAL: encerra a entrevista IN_PROGRESS do próprio candidato
+  // (todos os dispositivos). Idempotente para CANCELLED.
+  @Post(':id/cancel')
+  @HttpCode(200)
+  @Roles('CANDIDATE')
+  cancel(@Req() req: Request, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.interviewsService.cancel(userIdOf(req), id);
   }
 
   @Post(':id/submit')

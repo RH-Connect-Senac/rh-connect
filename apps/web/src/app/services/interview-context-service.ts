@@ -1,5 +1,6 @@
 import { findSuggestedJobByUrl, getSuggestedJobSnapshot } from "../domain/suggested-jobs";
 import type { ProfessionalAreaId, ProfessionalSubareaId, SeniorityLevelId } from "../domain/professional-catalog";
+import { sanitizeServerMessage } from "../domain/user-friendly-error";
 
 export type JobInterviewContext = {
   sourceUrl: string;
@@ -140,17 +141,14 @@ function asScores(value: unknown): Record<string, number> {
 async function readApiError(response: Response, fallback: string): Promise<string> {
   try {
     const payload = (await response.json()) as { message?: unknown; error?: unknown };
-    if (typeof payload.message === "string" && payload.message.trim()) {
-      return payload.message;
-    }
-    if (typeof payload.error === "string" && payload.error.trim()) {
-      return payload.error;
-    }
+    // `error` do Nest é só o nome do status HTTP: nunca vira texto de tela.
+    const message = typeof payload.message === "string" ? payload.message : null;
+    return sanitizeServerMessage(message, { status: response.status, fallback, scope: "interview-context" });
   } catch {
-    // Keep the user-facing fallback when the API does not return JSON.
+    // Sem JSON: usa a mensagem padrão (e a regra por status, se for falha de servidor).
   }
 
-  return fallback;
+  return sanitizeServerMessage(null, { status: response.status, fallback, scope: "interview-context" });
 }
 
 async function postJson<TResponse>(
@@ -285,11 +283,11 @@ export async function generateInterviewQuestions(
         sourceUrl: context.sourceUrl,
       },
     },
-    "Não foi possível gerar as perguntas da entrevista. Tente novamente.",
+    "Não foi possível gerar as perguntas agora. Tente novamente em instantes.",
   );
 
   if (!Array.isArray(response.questions) || response.questions.length !== 5) {
-    throw new Error("Não foi possível gerar as 5 perguntas da entrevista. Tente novamente.");
+    throw new Error("Não foi possível gerar as perguntas agora. Tente novamente em instantes.");
   }
 
   return response.questions.map((question, index) => {
@@ -298,7 +296,8 @@ export async function generateInterviewQuestions(
     const text = asString(item.text);
 
     if (!type || !text) {
-      throw new Error("A API retornou uma pergunta em formato inválido.");
+      console.error("[rh-connect] pergunta em formato inválido na resposta da API");
+      throw new Error("Não foi possível gerar as perguntas agora. Tente novamente em instantes.");
     }
 
     return {
@@ -340,7 +339,8 @@ export async function evaluateInterviewWithAi(
   });
 
   if (!hasExpectedScores || overallScore == null) {
-    throw new Error("A API retornou a avaliação da entrevista em formato inválido.");
+    console.error("[rh-connect] avaliação em formato inválido na resposta da API");
+    throw new Error("Não foi possível concluir a avaliação agora. Tente novamente em instantes.");
   }
 
   const questionsEvaluation = Array.isArray(response.questionsEvaluation)

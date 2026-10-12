@@ -154,11 +154,14 @@ export class AdminInterviewsService {
     return { total, interviews: records.map(toQueueItem) };
   }
 
-  // Detalhe para o Admin: só entrevistas já enviadas (rascunhos IN_PROGRESS
-  // do candidato não são visíveis).
+  // Detalhe para o Admin: só entrevistas já enviadas (rascunhos IN_PROGRESS e
+  // entrevistas CANCELLED pelo candidato não são visíveis).
   async getById(interviewId: string) {
     const record = await this.prisma.interview.findFirst({
-      where: { interview_id: interviewId, status: { not: 'IN_PROGRESS' } },
+      where: {
+        interview_id: interviewId,
+        status: { notIn: ['IN_PROGRESS', 'CANCELLED'] },
+      },
       select: DETAIL_SELECT,
     });
 
