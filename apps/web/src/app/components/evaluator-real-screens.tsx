@@ -13,8 +13,10 @@ import { SessionContext } from "../session-context";
 import {
   completeEvaluation,
   getAssignedInterview,
+  getCompletedEvaluation,
   getEvaluationDraft,
   listAssignedInterviews,
+  listCompletedEvaluations,
   saveEvaluationDraft,
 } from "../services/evaluator-interviews-service";
 import {
@@ -39,6 +41,13 @@ import {
   type EvaluatorDetailState,
   type EvaluatorQueueState,
 } from "./evaluator-real-content";
+import {
+  EvaluatorHistoryContent,
+  EvaluatorHistoryDetailContent,
+  historySubtitle,
+  type EvaluatorHistoryDetailState,
+  type EvaluatorHistoryState,
+} from "./evaluator-history-content";
 import {
   EvaluatorEvaluationContent,
   type EvaluationScreenState,
@@ -534,6 +543,96 @@ export function EvalCompletionSuccessScreen({ onNavigate }: { onNavigate: NavFn 
   return (
     <EvalLayout current="eval-queue" onNavigate={onNavigate} title="Avaliação concluída" subtitle="Resultado da avaliação">
       <EvaluatorSuccessContent info={info} onBackToQueue={() => onNavigate("eval-queue")} />
+    </EvalLayout>
+  );
+}
+
+// ─── Histórico real de avaliações concluídas (Fase 6A.1) ─────────────────────
+// Somente leitura: só GET. Nenhum autosave, fluxo de conclusão, localStorage ou
+// `location.state`: o detalhe recarrega do Back (funciona com F5).
+const HISTORY_ROUTE = "/evaluator/history";
+
+export function EvalHistoryScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
+  const [state, setState] = useState<EvaluatorHistoryState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+    listCompletedEvaluations().then((result) => {
+      if (cancelled) return;
+      setState(
+        result.ok
+          ? { status: "ready", items: result.data }
+          : { status: "error", message: result.message },
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  return (
+    <EvalLayout
+      current="eval-history"
+      onNavigate={onNavigate}
+      title="Histórico de Avaliações"
+      subtitle={historySubtitle(state)}
+    >
+      <EvaluatorHistoryContent
+        state={state}
+        search={search}
+        onSearchChange={setSearch}
+        onView={(id) => routerNavigate(`${HISTORY_ROUTE}/${id}`)}
+        onRetry={() => setAttempt((current) => current + 1)}
+      />
+    </EvalLayout>
+  );
+}
+
+export function EvalHistoryDetailScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const { id } = useParams();
+  const [state, setState] = useState<EvaluatorHistoryDetailState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!id) {
+      setState({ status: "not_found", message: "Avaliação não encontrada ou indisponível." });
+      return;
+    }
+    setState({ status: "loading" });
+    getCompletedEvaluation(id).then((result) => {
+      if (cancelled) return;
+      if (result.ok) {
+        setState({ status: "ready", detail: result.data });
+      } else if (result.reason === "not_found") {
+        setState({ status: "not_found", message: result.message });
+      } else {
+        setState({ status: "error", message: result.message });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, attempt]);
+
+  return (
+    <EvalLayout
+      current="eval-history"
+      onNavigate={onNavigate}
+      title="Avaliação concluída"
+      subtitle="Consulta somente leitura"
+    >
+      <EvaluatorHistoryDetailContent
+        state={state}
+        ui={{
+          onBack: () => onNavigate("eval-history"),
+          onRetry: () => setAttempt((current) => current + 1),
+        }}
+      />
     </EvalLayout>
   );
 }

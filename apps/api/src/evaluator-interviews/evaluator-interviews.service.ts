@@ -32,7 +32,7 @@ function visibleTo(evaluatorProfileId: number) {
 
 // `select` explícito (nunca `include`): e-mail do candidato, password_hash,
 // sessões, tokens, ids internos de avaliador e quem atribuiu não saem daqui.
-const CANDIDATE_SELECT = {
+export const CANDIDATE_SELECT = {
   name: true,
   candidate_profile: {
     select: { professional_title: true, city: true, state: true },
@@ -53,7 +53,7 @@ const DETAIL_SELECT = {
   questions: { orderBy: { position: 'asc' }, select: QUESTION_SELECT },
 } as const;
 
-interface CandidateRecord {
+export interface CandidateRecord {
   name: string;
   candidate_profile: {
     professional_title: string | null;
@@ -74,7 +74,7 @@ interface DetailRecord extends InterviewRecord {
   questions: QuestionRecord[];
 }
 
-function toCandidate(record: CandidateRecord) {
+export function toCandidate(record: CandidateRecord) {
   return {
     name: record.name,
     professionalTitle: record.candidate_profile?.professional_title ?? null,

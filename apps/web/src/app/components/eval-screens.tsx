@@ -14,7 +14,6 @@ import {
   formatScore,
   getAssignedInterviews,
   getAverageScore,
-  getCompletedEvaluations,
   getEvaluationForEvaluator,
   getInterviewById,
   saveEvaluationDraft,
@@ -30,8 +29,8 @@ import {
   Home, Clock, History, BookOpen, Settings,
   ChevronLeft, ChevronRight, Bell, CheckCircle,
   Star, Award, Target, TrendingUp,
-  Filter, Eye, FileText,
-  Edit2, Send, Download, BarChart2, Layers, RefreshCw,
+  Filter, FileText,
+  Edit2, Send, BarChart2, Layers, RefreshCw,
   MessageSquare, Info, Users, ArrowRight, Zap, Lock, AlertCircle,
 } from "lucide-react";
 import {
@@ -42,7 +41,6 @@ import { SessionContext } from "../session-context";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
 import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
 import { Input } from "./ui/input";
-import { SearchInput } from "./ui/search-input";
 import { PasswordInput } from "./ui/password-input";
 import { Textarea } from "./ui/textarea";
 import { Button as UIButton } from "./ui/button";
@@ -773,86 +771,6 @@ export function EvalReviewScreen({ onNavigate, evaluatorId }: { onNavigate: NavF
           <p className="text-xs text-muted-foreground">
             {!isScoringComplete ? "Avalie todos os critérios para concluir." : "Preencha o comentário do avaliador para concluir."}
           </p>
-        )}
-      </div>
-    </EvalLayout>
-  );
-}
-
-// ─── Screen: Histórico de Avaliações ─────────────────────────────────────────
-
-export function EvalHistoryScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
-  const routerNavigate = useNavigate();
-  const [search, setSearch] = useState("");
-  const historyItems = getCompletedEvaluations(evaluatorId).map(({ interview, evaluation }) => ({
-    id: interview.id,
-    candidate: interview.candidateName,
-    job: interview.context.title,
-    date: evaluation.completedAt ? formatDateTime(evaluation.completedAt) : "—",
-    score: getAverageScore(evaluation.scores) ?? 0,
-    status: "completed" as const,
-    realId: interview.id,
-  }));
-  const filtered = historyItems.filter(i =>
-    i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <EvalLayout current="eval-history" onNavigate={onNavigate}
-      title="Histórico de Avaliações"
-      subtitle={`${historyItems.length} avaliações concluídas`}
-      actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
-      <div className="w-full space-y-4">
-        <div className="flex gap-3">
-          <SearchInput
-            containerClassName="flex-1 max-w-sm"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar..."
-            className="bg-white"
-          />
-        </div>
-
-        {filtered.length === 0 ? (
-          <EmptyState
-            icon={History}
-            title={historyItems.length === 0 ? "Nenhuma avaliação concluída" : "Nenhuma avaliação encontrada"}
-            description={historyItems.length === 0 ? "As avaliações que você concluir aparecerão aqui." : "Ajuste a busca para ver outras avaliações."}
-            className="p-12"
-          />
-        ) : (
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">ID</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Candidato</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Vaga</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Concluída em</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
-                  <th className="py-3 px-5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filtered.map(item => (
-                  <tr key={item.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{item.id}</td>
-                    <td className="py-3.5 px-4 font-semibold text-foreground">{item.candidate}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{item.job}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground">{item.date}</td>
-                    <td className="py-3.5 px-4">
-                      <Badge variant={item.score >= 8 ? "success" : item.score >= 7 ? "info" : "warning"}>{formatScore(item.score)}</Badge>
-                    </td>
-                    <td className="py-3.5 px-5">
-                      <button onClick={() => routerNavigate(`/evaluator/evaluations/${item.realId}/success`)} className="text-muted-foreground hover:text-primary transition-colors"><Eye className="w-4 h-4" /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
         )}
       </div>
     </EvalLayout>

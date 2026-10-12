@@ -34,6 +34,7 @@ import {
   formatAverage,
   reviewAverage,
   reviewRows,
+  type ReviewRow,
   type CompletionNavState,
 } from "../domain/evaluator-review";
 import type { CompletionSnapshot } from "../domain/evaluator-completion-flow";
@@ -139,7 +140,11 @@ function barColor(score: number | null): string {
   return score < 5 ? "bg-amber-500" : "bg-blue-500";
 }
 
-function CompactQuestions({ interview }: { interview: EvaluatorInterviewDetail }) {
+export function CompactQuestions({
+  interview,
+}: {
+  interview: Pick<EvaluatorInterviewDetail, "questions">;
+}) {
   if (interview.questions.length === 0) return null;
   return (
     <section className={`${CARD_CLASS} p-5 sm:p-6`} aria-label="Perguntas e respostas">
@@ -189,6 +194,94 @@ function CompactQuestions({ interview }: { interview: EvaluatorInterviewDetail }
         })}
       </ol>
     </section>
+  );
+}
+
+// Bloco de resultado (média, critérios e comentário) compartilhado entre a
+// revisão (editável, antes de concluir) e o histórico (somente leitura). Só
+// apresentação: não conhece conclusão, autosave nem diálogo de confirmação.
+export function ReviewSummarySections({
+  rows,
+  average,
+  summary,
+  averageLabel,
+  note,
+}: {
+  rows: ReviewRow[];
+  average: number | null;
+  summary: string | null;
+  averageLabel: string;
+  note: string | null;
+}) {
+  return (
+    <>
+      <section className={`${CARD_CLASS} p-5 sm:p-6`} aria-label="Resumo da avaliação">
+        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className="font-bold text-foreground">Resumo da avaliação</h3>
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 px-5 py-3 text-center sm:text-right">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {averageLabel}
+            </p>
+            <p className="text-primary">
+              <span className="text-4xl font-bold" data-testid="review-average">
+                {formatAverage(average)}
+              </span>
+              {average !== null && <span className="ml-1 text-base font-semibold"> / 10</span>}
+            </p>
+          </div>
+        </div>
+        <ul className="space-y-4">
+          {rows.map((row) => (
+            <li key={row.key} data-criterion={row.key}>
+              <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+                <span className="min-w-0 font-medium text-foreground">{row.label}</span>
+                <span
+                  className="shrink-0 whitespace-nowrap font-bold text-foreground"
+                  data-testid={`review-score-${row.key}`}
+                >
+                  {formatScore(row.score)}
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label={`${row.label}: ${row.score === null ? "sem nota" : `${formatScore(row.score)}`}`}
+                aria-valuemin={0}
+                aria-valuemax={10}
+                aria-valuenow={row.score ?? undefined}
+                aria-valuetext={row.score === null ? "sem nota" : formatScore(row.score)}
+                className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
+              >
+                <div
+                  data-testid={`review-bar-${row.key}`}
+                  data-percent={barPercent(row.score)}
+                  className={`h-full rounded-full ${barColor(row.score)}`}
+                  style={{ width: `${barPercent(row.score)}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+        {note && (
+          <p className="mt-5 border-t border-border pt-3 text-xs text-muted-foreground">{note}</p>
+        )}
+      </section>
+
+      <section className={`${CARD_CLASS} p-5 sm:p-6`} aria-label="Comentário do avaliador">
+        <h3 className="mb-3 font-bold text-foreground">Comentário do avaliador</h3>
+        {/* Leitura (não é campo): faixa lateral azul + fundo suave, como os destaques das páginas legais. */}
+        <div
+          className="rounded-xl border border-l-4 border-blue-100 border-l-primary bg-blue-50/60 p-4 sm:p-5"
+          data-testid="review-comment-block"
+        >
+          <p
+            className="whitespace-pre-wrap break-words text-base leading-relaxed text-foreground"
+            data-testid="review-summary"
+          >
+            {summary && summary.trim() !== "" ? summary : "Sem comentário."}
+          </p>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -253,72 +346,13 @@ export function EvaluatorReviewContent({
         )}
       </header>
 
-      <section className={`${CARD_CLASS} p-5 sm:p-6`} aria-label="Resumo da avaliação">
-        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="font-bold text-foreground">Resumo da avaliação</h3>
-          <div className="rounded-2xl border border-primary/20 bg-primary/5 px-5 py-3 text-center sm:text-right">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Média prevista
-            </p>
-            <p className="text-primary">
-              <span className="text-4xl font-bold" data-testid="review-average">
-                {formatAverage(average)}
-              </span>
-              {average !== null && <span className="ml-1 text-base font-semibold"> / 10</span>}
-            </p>
-          </div>
-        </div>
-        <ul className="space-y-4">
-          {rows.map((row) => (
-            <li key={row.key} data-criterion={row.key}>
-              <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-                <span className="min-w-0 font-medium text-foreground">{row.label}</span>
-                <span
-                  className="shrink-0 whitespace-nowrap font-bold text-foreground"
-                  data-testid={`review-score-${row.key}`}
-                >
-                  {formatScore(row.score)}
-                </span>
-              </div>
-              <div
-                role="progressbar"
-                aria-label={`${row.label}: ${row.score === null ? "sem nota" : `${formatScore(row.score)}`}`}
-                aria-valuemin={0}
-                aria-valuemax={10}
-                aria-valuenow={row.score ?? undefined}
-                aria-valuetext={row.score === null ? "sem nota" : formatScore(row.score)}
-                className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
-              >
-                <div
-                  data-testid={`review-bar-${row.key}`}
-                  data-percent={barPercent(row.score)}
-                  className={`h-full rounded-full ${barColor(row.score)}`}
-                  style={{ width: `${barPercent(row.score)}%` }}
-                />
-              </div>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-5 border-t border-border pt-3 text-xs text-muted-foreground">
-          A média exibida é apenas para conferência. A nota final é calculada pelo servidor ao concluir.
-        </p>
-      </section>
-
-      <section className={`${CARD_CLASS} p-5 sm:p-6`} aria-label="Comentário do avaliador">
-        <h3 className="mb-3 font-bold text-foreground">Comentário do avaliador</h3>
-        {/* Leitura (não é campo): faixa lateral azul + fundo suave, como os destaques das páginas legais. */}
-        <div
-          className="rounded-xl border border-l-4 border-blue-100 border-l-primary bg-blue-50/60 p-4 sm:p-5"
-          data-testid="review-comment-block"
-        >
-          <p
-            className="whitespace-pre-wrap break-words text-base leading-relaxed text-foreground"
-            data-testid="review-summary"
-          >
-            {draft.summary && draft.summary.trim() !== "" ? draft.summary : "Sem comentário."}
-          </p>
-        </div>
-      </section>
+      <ReviewSummarySections
+        rows={rows}
+        average={average}
+        summary={draft.summary}
+        averageLabel="Média prevista"
+        note="A média exibida é apenas para conferência. A nota final é calculada pelo servidor ao concluir."
+      />
 
       <CompactQuestions interview={interview} />
 

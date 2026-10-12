@@ -72,6 +72,33 @@ export type EvaluatorInterviewDetail = {
   questions: EvaluatorInterviewQuestion[];
 };
 
+// ─── Histórico de avaliações concluídas (Fase 6A.1) ──────────────────────────
+// Somente leitura. Fonte: `GET /evaluator/history` e `GET /evaluator/history/:id`.
+export type CompletedEvaluationItem = {
+  // interviewId (UUID) real: único identificador usado na navegação.
+  id: string;
+  candidate: EvaluatorCandidate;
+  jobTitle: string;
+  company: string | null;
+  overallScore: number | null;
+  completedAt: string | null;
+  questionCount: number;
+};
+
+export type CompletedEvaluationDetail = {
+  id: string;
+  submittedAt: string | null;
+  candidate: EvaluatorCandidate;
+  context: EvaluatorInterviewDetail["context"];
+  questions: EvaluatorInterviewQuestion[];
+  evaluation: {
+    criteriaScores: Partial<Record<CriterionKey, number>>;
+    summary: string | null;
+    overallScore: number | null;
+    completedAt: string | null;
+  };
+};
+
 export type EvaluatorInterviewsFailure =
   | "not_found"
   | "forbidden"
@@ -163,6 +190,22 @@ function toQuestion(payload: unknown): EvaluatorInterviewQuestion | null {
   };
 }
 
+function toContext(
+  context: Record<string, unknown> & { title: string },
+): EvaluatorInterviewDetail["context"] {
+  return {
+    sourceUrl: nullableString(context.sourceUrl),
+    title: context.title,
+    company: nullableString(context.company),
+    summary: nullableString(context.summary),
+    activities: stringList(context.activities),
+    requirements: stringList(context.requirements),
+    location: nullableString(context.location),
+    contractType: nullableString(context.contractType),
+    workMode: nullableString(context.workMode),
+  };
+}
+
 function toDetail(payload: unknown): EvaluatorInterviewDetail | null {
   const item = asRecord(payload);
   if (!item) return null;
@@ -188,17 +231,7 @@ function toDetail(payload: unknown): EvaluatorInterviewDetail | null {
     assignedAt: nullableString(item.assignedAt),
     submittedAt: nullableString(item.submittedAt),
     candidate,
-    context: {
-      sourceUrl: nullableString(context.sourceUrl),
-      title: context.title,
-      company: nullableString(context.company),
-      summary: nullableString(context.summary),
-      activities: stringList(context.activities),
-      requirements: stringList(context.requirements),
-      location: nullableString(context.location),
-      contractType: nullableString(context.contractType),
-      workMode: nullableString(context.workMode),
-    },
+    context: toContext(context as Record<string, unknown> & { title: string }),
     questions: (questions as EvaluatorInterviewQuestion[]).sort(
       (a, b) => a.position - b.position,
     ),
@@ -350,6 +383,133 @@ export async function getAssignedInterview(
   }
 
   const detail = toDetail(await readJson(response));
+  if (!detail) {
+    return { ok: false, reason: "error", message: INVALID_RESPONSE_MESSAGE };
+  }
+  return { ok: true, data: detail };
+}
+
+// ─── Histórico de avaliações concluídas (Fase 6A.1) ──────────────────────────
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toCompletedItem(payload: unknown): CompletedEvaluationItem | null {
+  const item = asRecord(payload);
+  if (!item) return null;
+  const candidate = toCandidate(item.candidate);
+  if (
+    typeof item.interviewId !== "string" ||
+    typeof item.jobTitle !== "string" ||
+    !candidate
+  ) {
+    return null;
+  }
+  return {
+    id: item.interviewId,
+    candidate,
+    jobTitle: item.jobTitle,
+    company: nullableString(item.company),
+    overallScore: finiteNumberOrNull(item.overallScore),
+    completedAt: nullableString(item.completedAt),
+    questionCount: typeof item.questionCount === "number" ? item.questionCount : 0,
+  };
+}
+
+function toCompletedDetail(payload: unknown): CompletedEvaluationDetail | null {
+  const item = asRecord(payload);
+  if (!item) return null;
+  const candidate = toCandidate(item.candidate);
+  const context = asRecord(item.context);
+  const evaluation = asRecord(item.evaluation);
+  if (
+    typeof item.interviewId !== "string" ||
+    !candidate ||
+    !context ||
+    typeof context.title !== "string" ||
+    !evaluation ||
+    evaluation.status !== "COMPLETED" ||
+    !Array.isArray(item.questions)
+  ) {
+    return null;
+  }
+  const questions = item.questions.map(toQuestion);
+  if (questions.some((question) => question === null)) return null;
+
+  const rawScores = asRecord(evaluation.criteriaScores) ?? {};
+  const criteriaScores: Partial<Record<CriterionKey, number>> = {};
+  for (const key of CRITERION_KEYS) {
+    const value = finiteNumberOrNull(rawScores[key]);
+    if (value !== null) criteriaScores[key as CriterionKey] = value;
+  }
+
+  return {
+    id: item.interviewId,
+    submittedAt: nullableString(item.submittedAt),
+    candidate,
+    context: toContext(context as Record<string, unknown> & { title: string }),
+    questions: (questions as EvaluatorInterviewQuestion[]).sort(
+      (a, b) => a.position - b.position,
+    ),
+    evaluation: {
+      criteriaScores,
+      summary: nullableString(evaluation.summary),
+      overallScore: finiteNumberOrNull(evaluation.overallScore),
+      completedAt: nullableString(evaluation.completedAt),
+    },
+  };
+}
+
+// GET /evaluator/history: lista vazia é sucesso (200), não erro.
+export async function listCompletedEvaluations(): Promise<
+  EvaluatorInterviewsResult<CompletedEvaluationItem[]>
+> {
+  const response = await requestEvaluatorApi("/evaluator/history");
+
+  if (!response) {
+    return { ok: false, reason: "error", message: NETWORK_ERROR_MESSAGE };
+  }
+  if (!response.ok) {
+    return failureFromResponse(
+      response,
+      "Não foi possível carregar o histórico de avaliações. Tente novamente.",
+    );
+  }
+
+  const body = await readJson(response);
+  if (!body || !Array.isArray(body.evaluations)) {
+    return { ok: false, reason: "error", message: INVALID_RESPONSE_MESSAGE };
+  }
+  const items = body.evaluations.map(toCompletedItem);
+  if (items.some((item) => item === null)) {
+    return { ok: false, reason: "error", message: INVALID_RESPONSE_MESSAGE };
+  }
+
+  return { ok: true, data: items as CompletedEvaluationItem[] };
+}
+
+// GET /evaluator/history/:id: leitura direta do Back (funciona com F5, sem
+// depender de estado de navegação). 404 cobre inexistente, de outro avaliador,
+// ainda não concluída ou IA.
+export async function getCompletedEvaluation(
+  interviewId: string,
+): Promise<EvaluatorInterviewsResult<CompletedEvaluationDetail>> {
+  const response = await requestEvaluatorApi(
+    `/evaluator/history/${encodeURIComponent(interviewId)}`,
+  );
+
+  if (!response) {
+    return { ok: false, reason: "error", message: NETWORK_ERROR_MESSAGE };
+  }
+  if (!response.ok) {
+    return failureFromResponse(
+      response,
+      "Não foi possível carregar a avaliação. Tente novamente.",
+    );
+  }
+
+  const detail = toCompletedDetail(await readJson(response));
   if (!detail) {
     return { ok: false, reason: "error", message: INVALID_RESPONSE_MESSAGE };
   }

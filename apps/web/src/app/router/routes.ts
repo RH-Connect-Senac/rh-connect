@@ -8,7 +8,7 @@ export type AppScreen =
   | "interview-history" | "agenda" | "development" | "disc-test"
   | "interview-setup" | "consent" | "evaluation-mode" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
   | "pending" | "report"
-  | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
+  | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-history-detail" | "eval-criteria" | "eval-settings"
   | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
   | "admin-interviews" | "admin-assign"
   | "admin-questions" | "admin-question-form" | "admin-roles" | "admin-criteria"
@@ -16,7 +16,7 @@ export type AppScreen =
 
 type RouteGroup = "public" | "candidate" | "evaluator" | "admin";
 type RoutePriority = "P0" | "P1" | "P2" | "P3";
-type RouteStatus = "visual" | "mockado" | "simulado";
+type RouteStatus = "visual" | "mockado" | "simulado" | "real";
 
 export type AppRoute = {
   screen: AppScreen;
@@ -68,7 +68,8 @@ export const APP_ROUTES = [
   { screen: "eval-screen", path: "/evaluator/evaluations/:id", label: "Tela de avaliacao", group: "evaluator", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "eval-review", path: "/evaluator/evaluations/:id/review", label: "Revisao de avaliacao", group: "evaluator", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "eval-done", path: "/evaluator/evaluations/:id/success", label: "Avaliacao enviada", group: "evaluator", priority: "P0", status: "simulado", backDependency: "sim" },
-  { screen: "eval-history", path: "/evaluator/history", label: "Historico avaliador", group: "evaluator", priority: "P3", status: "mockado", backDependency: "sim" },
+  { screen: "eval-history", path: "/evaluator/history", label: "Historico avaliador", group: "evaluator", priority: "P3", status: "real", backDependency: "sim" },
+  { screen: "eval-history-detail", path: "/evaluator/history/:id", label: "Detalhe do historico avaliador", group: "evaluator", priority: "P3", status: "real", backDependency: "sim" },
   { screen: "eval-criteria", path: "/evaluator/criteria", label: "Criterios avaliador", group: "evaluator", priority: "P2", status: "mockado", backDependency: "sim" },
   { screen: "eval-settings", path: "/evaluator/settings", label: "Configuracoes avaliador", group: "evaluator", priority: "P3", status: "simulado", backDependency: "sim" },
 
@@ -98,6 +99,7 @@ const PARENT_LIST_SCREEN: Partial<Record<AppScreen, AppScreen>> = {
   "eval-screen": "eval-queue",
   "eval-review": "eval-queue",
   "eval-done": "eval-queue",
+  "eval-history-detail": "eval-history",
   "admin-candidate-detail": "admin-candidates",
 };
 
