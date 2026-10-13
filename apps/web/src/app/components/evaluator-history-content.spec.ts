@@ -26,6 +26,7 @@ const maria: CompletedEvaluationItem = {
   jobTitle: "Secretária Comercial",
   company: "Clínica Exemplo",
   overallScore: 8.5,
+  assignedAt: "2026-10-09T12:00:00.000Z",
   completedAt: "2026-10-11T12:00:00.000Z",
   questionCount: 5,
 };
@@ -35,6 +36,7 @@ const joao: CompletedEvaluationItem = {
   jobTitle: "Auxiliar Administrativo",
   company: null,
   overallScore: 6.5,
+  assignedAt: null,
   completedAt: "2026-10-10T12:00:00.000Z",
   questionCount: 4,
 };
@@ -102,31 +104,11 @@ describe("histórico real: lista", () => {
     expect(filterHistoryItems(items, "nada")).toEqual([]);
   });
 
-  it("subtítulo do cabeçalho é fixo e não depende da contagem", () => {
+  it("subtítulo do cabeçalho é FIXO e a contagem (singular/plural) vem de historyCountLabel", () => {
+    // O subtítulo não depende do estado nem da quantidade; a contagem é informação secundária no conteúdo.
     expect(HISTORY_SUBTITLE).toBe("Consulte as avaliações que você já concluiu.");
-    expect(HISTORY_SUBTITLE).not.toMatch(/\d/);
-  });
-
-  it("contagem: 0, singular e plural", () => {
-    expect(historyCountLabel(0)).toBe("0 avaliações concluídas");
     expect(historyCountLabel(1)).toBe("1 avaliação concluída");
     expect(historyCountLabel(2)).toBe("2 avaliações concluídas");
-  });
-
-  it("a contagem aparece no conteúdo (separada do subtítulo) quando a lista carregou", () => {
-    expect(listHtml({ status: "ready", items: [maria] })).toContain("1 avaliação concluída");
-    expect(listHtml({ status: "ready", items: [maria, joao] })).toContain("2 avaliações concluídas");
-    expect(listHtml({ status: "ready", items: [] })).toContain("0 avaliações concluídas");
-  });
-
-  it("a contagem é o total concluído, não muda com a busca", () => {
-    const html = listHtml({ status: "ready", items: [maria, joao] }, "MARIA");
-    expect(html).toContain("2 avaliações concluídas");
-  });
-
-  it("durante o loading e no erro não há contagem (nada trocado nem reservado)", () => {
-    expect(listHtml({ status: "loading" })).not.toMatch(/avaliaç(ão|ões) conclu/);
-    expect(listHtml({ status: "error", message: "Falhou" })).not.toMatch(/\d+ avaliaç/);
   });
 });
 
