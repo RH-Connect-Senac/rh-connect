@@ -926,7 +926,7 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
                     <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data/hora</th>
                     <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
                     <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Avaliador</th>
-                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Pontuação</th>
                     <th className="py-3 px-5" />
                   </tr>
                 </thead>
@@ -1837,7 +1837,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
                   <p className="font-semibold text-foreground">{interview.evaluator === "—" ? "Não atribuído" : interview.evaluator}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground mb-0.5">Score Final</p>
+                  <p className="text-muted-foreground mb-0.5">Pontuação Final</p>
                   {interview.score !== null
                     ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{formatScore(interview.score)}</Badge>
                     : <span className="text-muted-foreground">Aguardando avaliação</span>}
@@ -1847,7 +1847,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
               {/* Score criteria — only if completed */}
               {interview.score !== null && (
                 <div className="mt-5 pt-5 border-t border-border">
-                  <p className="font-semibold text-foreground mb-3 text-sm">Scores por Critério</p>
+                  <p className="font-semibold text-foreground mb-3 text-sm">Pontuações por Critério</p>
                   <div className="space-y-2.5">
                     {criteriaScores.map(s => (
                       <div key={s.name} className="flex items-center gap-3">
