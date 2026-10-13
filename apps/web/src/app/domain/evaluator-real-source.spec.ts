@@ -19,6 +19,8 @@ function code(source: string) {
 const REAL_FILES = [
   "services/evaluator-interviews-service.ts",
   "components/evaluator-real-content.tsx",
+  "components/evaluator-active-content.tsx",
+  "domain/evaluator-queue-partition.ts",
   "components/evaluator-real-screens.tsx",
   "components/evaluator-evaluation-content.tsx",
   "domain/evaluator-evaluation-form.ts",
@@ -289,10 +291,10 @@ describe("área real do avaliador: fonte de dados", () => {
     expect(app).not.toMatch(/<EvalScreenView/);
   });
 
-  it("telas ainda mock recebem só o id da SESSÃO real (nunca um id fictício)", () => {
+  it("nenhuma tela do avaliador recebe id por prop (Em Andamento ficou real na 6A.2): sem evaluatorSessionId nem id fictício", () => {
     const app = code(read("App.tsx"));
-    expect(app).toMatch(/const evaluatorSessionId = session\.authenticated && session\.user\?\.role === "EVALUATOR" \? session\.user\.id : ""/);
-    expect(app).not.toMatch(/evaluatorId=\{(?!evaluatorSessionId)/);
+    expect(app).not.toMatch(/evaluatorSessionId/);
+    expect(app).not.toMatch(/evaluatorId=\{/);
   });
 
   it("eval-screens.tsx: Dashboard/Fila mock removidos e Configurações sem dados fixos", () => {

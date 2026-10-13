@@ -168,6 +168,14 @@ export class EvaluationAutosave {
     };
   }
 
+  // Há algo a sincronizar com o servidor? (PUT em andamento ou diferença entre
+  // o formulário e a última versão confirmada). Síncrono: a saída da tela só
+  // espera quando isto é verdadeiro.
+  hasUnsyncedWork(): boolean {
+    if (this.destroyed || !this.form || !this.serverForm) return false;
+    return this.inFlight || isDirty(this.form, this.serverForm);
+  }
+
   // Aguarda saves em andamento (útil em testes).
   async whenIdle(): Promise<void> {
     while (this.pending) await this.pending;
@@ -324,6 +332,58 @@ export class EvaluationAutosave {
     writeLocalDraft(storage, userId, interviewId, this.form);
     this.emit();
   }
+}
+
+// ─── Saída da tela de avaliação (Fase 6A.2.1) ────────────────────────────────
+// Ao sair com alteração pendente, tenta confirmar o rascunho no servidor ANTES
+// de navegar, para que "Em Andamento" (que sempre busca dado fresco) já
+// enxergue o progresso. Reaproveita `syncNow` (mesmo fluxo do "Salvar
+// rascunho": sem PUT paralelo, sem PUT se já sincronizado). Nunca prende o
+// usuário: passado o prazo, ou se o save falhar/for inválido, navega mesmo
+// assim — a cópia local do rascunho permanece e nada é marcado como "em
+// andamento" no cliente (a regra continua exclusivamente do backend).
+export const LEAVE_FLUSH_TIMEOUT_MS = 3000;
+
+export type LeaveOutcome = "idle" | "confirmed" | "failed" | "timeout";
+
+type LeaveController = Pick<EvaluationAutosave, "hasUnsyncedWork" | "syncNow">;
+
+export async function flushBeforeLeave(
+  controller: LeaveController,
+  options: { timeoutMs?: number; scheduler?: Scheduler } = {},
+): Promise<LeaveOutcome> {
+  if (!controller.hasUnsyncedWork()) return "idle";
+  const scheduler = options.scheduler ?? defaultScheduler;
+  let handle: unknown = null;
+  const timeout = new Promise<"timeout">((resolve) => {
+    handle = scheduler.set(() => resolve("timeout"), options.timeoutMs ?? LEAVE_FLUSH_TIMEOUT_MS);
+  });
+  const sync = controller
+    .syncNow()
+    .then((result): LeaveOutcome => (result.ok ? "confirmed" : "failed"))
+    .catch((): LeaveOutcome => "failed");
+  try {
+    return await Promise.race([sync, timeout]);
+  } finally {
+    scheduler.clear(handle);
+  }
+}
+
+// Sem pendência: navega NA HORA (síncrono, sem await). Com pendência: espera a
+// confirmação (até o prazo) e navega de qualquer forma.
+export function leaveEvaluation(
+  controller: LeaveController | null,
+  navigate: () => void,
+  options: { timeoutMs?: number; scheduler?: Scheduler } = {},
+): Promise<LeaveOutcome> {
+  if (!controller || !controller.hasUnsyncedWork()) {
+    navigate();
+    return Promise.resolve("idle");
+  }
+  return flushBeforeLeave(controller, options).then((outcome) => {
+    navigate();
+    return outcome;
+  });
 }
 
 // Texto discreto do estado de sincronização (sem banner).

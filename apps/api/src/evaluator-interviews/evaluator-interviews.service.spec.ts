@@ -137,6 +137,7 @@ describe('EvaluatorInterviewsService.listAssigned', () => {
       assignedAt: at,
       submittedAt: at,
       questionCount: 2,
+      evaluation: null,
     });
   });
 
@@ -207,6 +208,212 @@ describe('EvaluatorInterviewsService.listAssigned', () => {
     expect(serialized).not.toMatch(
       /email|password|evaluator_profile_id|candidate_user_id|assigned_by/i,
     );
+  });
+
+  describe('bloco evaluation (progresso persistido, 6A.2)', () => {
+    const FULL_SCORES = {
+      clarity: 8,
+      coherence: 7,
+      objectivity: 9,
+      domain_knowledge: 6,
+      organization: 7,
+      requirements_alignment: 8,
+      examples: 5,
+    };
+
+    function draft(overrides: Row = {}): Row {
+      return {
+        status: 'DRAFT',
+        criteria_scores: {},
+        summary: null,
+        created_at: at,
+        updated_at: later,
+        ...overrides,
+      };
+    }
+
+    async function evaluationOf(evaluation: Row | null | undefined) {
+      const { service } = makeService(
+        [interview(ID_A, { evaluation })],
+        PROFILES,
+      );
+      const result = await service.listAssigned(CAMILA_USER_ID);
+      return result.interviews[0].evaluation;
+    }
+
+    it('sem avaliação persistida => evaluation null', async () => {
+      expect(await evaluationOf(null)).toBeNull();
+      expect(await evaluationOf(undefined)).toBeNull();
+    });
+
+    it('rascunho vazio existe mas NÃO é andamento', async () => {
+      expect(await evaluationOf(draft())).toEqual({
+        status: 'DRAFT',
+        startedAt: at,
+        updatedAt: later,
+        filledCriteria: 0,
+        totalCriteria: 7,
+        hasSummary: false,
+        inProgress: false,
+      });
+    });
+
+    it('um critério preenchido => em andamento', async () => {
+      const evaluation = await evaluationOf(
+        draft({ criteria_scores: { clarity: 8 } }),
+      );
+      expect(evaluation).toEqual({
+        status: 'DRAFT',
+        startedAt: at,
+        updatedAt: later,
+        filledCriteria: 1,
+        totalCriteria: 7,
+        hasSummary: false,
+        inProgress: true,
+      });
+    });
+
+    it('nota 0 é nota válida e conta como critério preenchido', async () => {
+      const evaluation = await evaluationOf(
+        draft({ criteria_scores: { clarity: 0 } }),
+      );
+      expect(evaluation?.filledCriteria).toBe(1);
+      expect(evaluation?.inProgress).toBe(true);
+    });
+
+    it('vários critérios => conta todos', async () => {
+      const evaluation = await evaluationOf(
+        draft({ criteria_scores: { clarity: 8, coherence: 7, examples: 5 } }),
+      );
+      expect(evaluation?.filledCriteria).toBe(3);
+      expect(evaluation?.inProgress).toBe(true);
+    });
+
+    it('os 7 critérios => 7 / 7', async () => {
+      const evaluation = await evaluationOf(
+        draft({ criteria_scores: FULL_SCORES }),
+      );
+      expect(evaluation?.filledCriteria).toBe(7);
+      expect(evaluation?.totalCriteria).toBe(7);
+    });
+
+    it('só comentário com conteúdo => em andamento, 0 critérios', async () => {
+      const evaluation = await evaluationOf(
+        draft({ summary: 'Boa comunicação.' }),
+      );
+      expect(evaluation?.filledCriteria).toBe(0);
+      expect(evaluation?.hasSummary).toBe(true);
+      expect(evaluation?.inProgress).toBe(true);
+    });
+
+    it.each([[''], ['   '], ['\r\n  \n'], [null]])(
+      'comentário vazio/só espaços (%j) não é andamento',
+      async (summary) => {
+        const evaluation = await evaluationOf(draft({ summary }));
+        expect(evaluation?.hasSummary).toBe(false);
+        expect(evaluation?.inProgress).toBe(false);
+      },
+    );
+
+    it('chaves inesperadas e valores inválidos em criteria_scores não contam', async () => {
+      const evaluation = await evaluationOf(
+        draft({
+          criteria_scores: {
+            unknown: 9,
+            legacy_key: 3,
+            clarity: '8',
+            coherence: null,
+            objectivity: Number.NaN,
+          },
+        }),
+      );
+      expect(evaluation?.filledCriteria).toBe(0);
+      expect(evaluation?.inProgress).toBe(false);
+    });
+
+    it('criteria_scores corrompido (não objeto) não quebra a fila', async () => {
+      expect(
+        (await evaluationOf(draft({ criteria_scores: 'lixo' })))?.inProgress,
+      ).toBe(false);
+      expect(
+        (await evaluationOf(draft({ criteria_scores: [1, 2, 3] })))
+          ?.inProgress,
+      ).toBe(false);
+    });
+
+    it('avaliação COMPLETED em entrevista ainda ASSIGNED (anomalia) => null, nunca em andamento', async () => {
+      const evaluation = await evaluationOf(
+        draft({ status: 'COMPLETED', criteria_scores: FULL_SCORES }),
+      );
+      expect(evaluation).toBeNull();
+    });
+
+    it('pede ao banco só o necessário para derivar o progresso', async () => {
+      const { service, prisma } = makeService([], PROFILES);
+
+      await service.listAssigned(CAMILA_USER_ID);
+
+      const args = prisma.interview.findMany.mock.calls[0][0];
+      expect(args.select.evaluation).toEqual({
+        select: {
+          status: true,
+          criteria_scores: true,
+          summary: true,
+          created_at: true,
+          updated_at: true,
+        },
+      });
+    });
+
+    it('não vaza notas cruas nem o texto do comentário', async () => {
+      const { service } = makeService(
+        [
+          interview(ID_A, {
+            evaluation: draft({
+              criteria_scores: { clarity: 8, coherence: 7 },
+              summary: 'Comentário sigiloso do avaliador.',
+            }),
+          }),
+        ],
+        PROFILES,
+      );
+
+      const result = await service.listAssigned(CAMILA_USER_ID);
+      const serialized = JSON.stringify(result);
+
+      expect(serialized).not.toContain('criteria_scores');
+      expect(serialized).not.toContain('criteriaScores');
+      expect(serialized).not.toContain('Comentário sigiloso');
+      expect(serialized).not.toContain('"summary"');
+      expect(result.interviews[0].evaluation).toEqual({
+        status: 'DRAFT',
+        startedAt: at,
+        updatedAt: later,
+        filledCriteria: 2,
+        totalCriteria: 7,
+        hasSummary: true,
+        inProgress: true,
+      });
+    });
+
+    it('a avaliação de uma entrevista não contamina a outra', async () => {
+      const { service } = makeService(
+        [
+          interview(ID_A, {
+            evaluation: draft({ criteria_scores: { clarity: 8 } }),
+          }),
+          interview(ID_B, { evaluation: null }),
+        ],
+        PROFILES,
+      );
+
+      const result = await service.listAssigned(CAMILA_USER_ID);
+
+      expect(result.interviews.map((i) => i.evaluation?.inProgress)).toEqual([
+        true,
+        undefined,
+      ]);
+    });
   });
 
   it('usuário EVALUATOR sem evaluator_profile falha fechado (403), sem fallback e sem consultar entrevistas', async () => {

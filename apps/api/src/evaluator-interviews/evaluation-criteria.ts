@@ -116,6 +116,36 @@ export function readCriteriaScores(raw: unknown): CriteriaScores {
   return result;
 }
 
+export const TOTAL_CRITERIA = EVALUATION_CRITERIA.length;
+
+export interface EvaluationProgress {
+  filledCriteria: number;
+  totalCriteria: number;
+  hasSummary: boolean;
+  inProgress: boolean;
+}
+
+// Regra ÚNICA de "Em Andamento" (6A.2), sobre o que está PERSISTIDO: há progresso
+// real quando pelo menos um dos 7 critérios canônicos tem nota válida OU o
+// comentário tem conteúdo depois de normalizado/aparado. Chaves desconhecidas em
+// `criteria_scores` não contam; rascunho vazio não é progresso; timestamps
+// sozinhos também não. O cliente só consome o resultado, não recalcula.
+export function computeEvaluationProgress(
+  rawScores: unknown,
+  rawSummary: string | null | undefined,
+): EvaluationProgress {
+  const filledCriteria = Object.keys(readCriteriaScores(rawScores)).length;
+  const hasSummary =
+    typeof rawSummary === 'string' && normalizeAnswer(rawSummary) !== '';
+
+  return {
+    filledCriteria,
+    totalCriteria: TOTAL_CRITERIA,
+    hasSummary,
+    inProgress: filledCriteria > 0 || hasSummary,
+  };
+}
+
 // Merge controlado: ausência significa "não alterar".
 export function mergeCriteriaScores(
   current: CriteriaScores,

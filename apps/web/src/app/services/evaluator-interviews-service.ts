@@ -27,6 +27,19 @@ export type EvaluatorCandidate = {
   state: string | null;
 };
 
+// Progresso PERSISTIDO da avaliação (Fase 6A.2). O servidor é a única fonte da
+// regra de "em andamento": o Front só consome `inProgress`/`filledCriteria` e
+// nunca recalcula nada a partir de notas ou comentário (que nem chegam aqui).
+export type EvaluatorQueueEvaluation = {
+  status: "DRAFT";
+  startedAt: string | null;
+  updatedAt: string | null;
+  filledCriteria: number;
+  totalCriteria: number;
+  hasSummary: boolean;
+  inProgress: boolean;
+};
+
 export type EvaluatorQueueItem = {
   // interviewId (UUID) real: é o único identificador usado na navegação.
   id: string;
@@ -39,6 +52,8 @@ export type EvaluatorQueueItem = {
   assignedAt: string | null;
   submittedAt: string | null;
   questionCount: number;
+  // Ausente/ inválido => null (sem avaliação persistida): a entrevista fica na Fila.
+  evaluation?: EvaluatorQueueEvaluation | null;
 };
 
 export type EvaluatorInterviewQuestion = {
@@ -143,6 +158,33 @@ function toCandidate(payload: unknown): EvaluatorCandidate | null {
   };
 }
 
+function toQueueEvaluation(payload: unknown): EvaluatorQueueEvaluation | null {
+  const item = asRecord(payload);
+  if (
+    !item ||
+    item.status !== "DRAFT" ||
+    typeof item.filledCriteria !== "number" ||
+    !Number.isInteger(item.filledCriteria) ||
+    item.filledCriteria < 0 ||
+    typeof item.totalCriteria !== "number" ||
+    !Number.isInteger(item.totalCriteria) ||
+    item.totalCriteria <= 0 ||
+    typeof item.hasSummary !== "boolean" ||
+    typeof item.inProgress !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    status: "DRAFT",
+    startedAt: nullableString(item.startedAt),
+    updatedAt: nullableString(item.updatedAt),
+    filledCriteria: item.filledCriteria,
+    totalCriteria: item.totalCriteria,
+    hasSummary: item.hasSummary,
+    inProgress: item.inProgress,
+  };
+}
+
 function toQueueItem(payload: unknown): EvaluatorQueueItem | null {
   const item = asRecord(payload);
   if (!item) return null;
@@ -166,6 +208,7 @@ function toQueueItem(payload: unknown): EvaluatorQueueItem | null {
     assignedAt: nullableString(item.assignedAt),
     submittedAt: nullableString(item.submittedAt),
     questionCount: typeof item.questionCount === "number" ? item.questionCount : 0,
+    evaluation: toQueueEvaluation(item.evaluation),
   };
 }
 

@@ -56,10 +56,22 @@ export function filterHistoryItems(
   );
 }
 
-export function historySubtitle(state: EvaluatorHistoryState): string {
-  if (state.status !== "ready") return "Avaliações que você já concluiu";
-  const total = state.items.length;
+// Subtítulo FIXO do cabeçalho: igual no primeiro render, durante e depois do
+// carregamento e independente da quantidade (sem troca de texto/flicker).
+export const HISTORY_SUBTITLE = "Consulte as avaliações que você já concluiu.";
+
+// Contagem como informação secundária, mostrada na área de conteúdo só quando a
+// lista já carregou (durante o loading não há contagem nem reserva de espaço).
+export function historyCountLabel(total: number): string {
   return `${total} ${total === 1 ? "avaliação concluída" : "avaliações concluídas"}`;
+}
+
+function HistoryCount({ total }: { total: number }) {
+  return (
+    <p className="text-sm text-muted-foreground" data-history-count>
+      {historyCountLabel(total)}
+    </p>
+  );
 }
 
 function scoreBadgeVariant(score: number | null) {
@@ -91,12 +103,15 @@ export function EvaluatorHistoryContent({
   }
   if (state.items.length === 0) {
     return (
-      <EmptyState
-        icon={History}
-        title="Nenhuma avaliação concluída"
-        description="As avaliações que você concluir aparecerão aqui."
-        className="p-12"
-      />
+      <div className="w-full space-y-4">
+        <HistoryCount total={0} />
+        <EmptyState
+          icon={History}
+          title="Nenhuma avaliação concluída"
+          description="As avaliações que você concluir aparecerão aqui."
+          className="p-12"
+        />
+      </div>
     );
   }
 
@@ -104,6 +119,7 @@ export function EvaluatorHistoryContent({
 
   return (
     <div className="w-full space-y-4">
+      <HistoryCount total={state.items.length} />
       <SearchInput
         containerClassName="max-w-sm"
         value={search}

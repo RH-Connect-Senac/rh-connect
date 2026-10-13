@@ -57,11 +57,10 @@ import {
   isSpeechContextSecure,
 } from "./domain/speech-dictation";
 import {
-  EvalActiveScreen,
   EvalCriteriaScreen, EvalSettingsScreen,
   EvalActivateScreen, EvalOnboardingScreen,
 } from "./components/eval-screens";
-import { EvalDashboardScreen, EvalQueueScreen, EvalInterviewDetailScreen, EvalDraftEvaluationScreen, EvalRealReviewScreen, EvalCompletionSuccessScreen, EvalHistoryScreen, EvalHistoryDetailScreen } from "./components/evaluator-real-screens";
+import { EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalInterviewDetailScreen, EvalDraftEvaluationScreen, EvalRealReviewScreen, EvalCompletionSuccessScreen, EvalHistoryScreen, EvalHistoryDetailScreen } from "./components/evaluator-real-screens";
 import {
   AdminDashboardScreen, AdminCandidatesScreen, AdminCandidateDetailScreen,
   AdminEvaluatorsScreen, AdminEvaluatorFormScreen,
@@ -7493,10 +7492,6 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const protect = (role: MockUserRole, children: ReactNode) => (
     <ProtectedRoute session={session} role={role}>{children}</ProtectedRoute>
   );
-  // Id da SESSÃO real, só para as telas do Avaliador que ainda usam o domínio
-  // mock (Em andamento, Histórico, Revisão, Concluída). Nunca é mapeado para
-  // um id fictício: sem correspondência, essas telas simplesmente ficam vazias.
-  const evaluatorSessionId = session.authenticated && session.user?.role === "EVALUATOR" ? session.user.id : "";
 
   return (
     <SessionContext.Provider value={session}>
@@ -7544,7 +7539,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
           <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} />)} />
-          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorSessionId} />)} />
+          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/interviews/:id" element={protect("EVALUATOR", <EvalInterviewDetailScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalDraftEvaluationScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalRealReviewScreen onNavigate={navigate} />)} />

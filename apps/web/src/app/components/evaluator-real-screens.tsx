@@ -26,7 +26,7 @@ import {
   validateForm,
   type CriterionKey,
 } from "../domain/evaluator-evaluation-form";
-import { EvaluationAutosave, type AutosaveSnapshot } from "../domain/evaluator-autosave";
+import { EvaluationAutosave, leaveEvaluation, type AutosaveSnapshot } from "../domain/evaluator-autosave";
 import { EvaluationCompletionFlow, type CompletionSnapshot } from "../domain/evaluator-completion-flow";
 import {
   draftReadiness,
@@ -34,6 +34,7 @@ import {
   reviewReadiness,
 } from "../domain/evaluator-review";
 import { SavedNotice, visibleSyncStatus } from "../domain/evaluator-save-notice";
+import { partitionQueue } from "../domain/evaluator-queue-partition";
 import {
   EvaluatorDetailContent,
   EvaluatorQueueContent,
@@ -41,10 +42,11 @@ import {
   type EvaluatorDetailState,
   type EvaluatorQueueState,
 } from "./evaluator-real-content";
+import { EvaluatorActiveContent } from "./evaluator-active-content";
 import {
   EvaluatorHistoryContent,
   EvaluatorHistoryDetailContent,
-  historySubtitle,
+  HISTORY_SUBTITLE,
   type EvaluatorHistoryDetailState,
   type EvaluatorHistoryState,
 } from "./evaluator-history-content";
@@ -80,8 +82,18 @@ type NavFn = (s: string) => void;
 // futura, mas não faz parte do fluxo principal da fila.
 const EVALUATION_ROUTE = "/evaluator/evaluations";
 
-// Carrega a fila real. `reload` refaz a consulta (tentar novamente).
-function useAssignedQueue(): [EvaluatorQueueState, () => void] {
+// FONTE ÚNICA da fila real (Dashboard, Fila e Em Andamento): UMA consulta a
+// `GET /evaluator/interviews` por tela, particionada UMA vez por
+// `partitionQueue` (regra de "em andamento" vem do servidor). Sem N+1, sem GET
+// de rascunho por item e sem localStorage. `reload` refaz a consulta; um futuro
+// polling (6A.3) só precisa chamar `reload`/atualizar esta mesma fonte.
+type QueueSource = {
+  pending: EvaluatorQueueState;
+  inProgress: EvaluatorQueueState;
+  reload: () => void;
+};
+
+function useAssignedQueue(): QueueSource {
   const [state, setState] = useState<EvaluatorQueueState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -102,7 +114,16 @@ function useAssignedQueue(): [EvaluatorQueueState, () => void] {
   }, [attempt]);
 
   const reload = useCallback(() => setAttempt((current) => current + 1), []);
-  return [state, reload];
+  const partitioned = useMemo(() => {
+    if (state.status !== "ready") return { pending: state, inProgress: state };
+    const { pending, inProgress } = partitionQueue(state.items);
+    return {
+      pending: { status: "ready" as const, items: pending },
+      inProgress: { status: "ready" as const, items: inProgress },
+    };
+  }, [state]);
+
+  return { ...partitioned, reload };
 }
 
 function firstName(name: string | undefined) {
@@ -112,9 +133,10 @@ function firstName(name: string | undefined) {
 export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const session = useContext(SessionContext);
-  const [queue, reload] = useAssignedQueue();
+  const { pending: queue, inProgress, reload } = useAssignedQueue();
   const name = firstName(session.user?.name);
   const pending = queue.status === "ready" ? queue.items.length : null;
+  const active = inProgress.status === "ready" ? inProgress.items.length : null;
 
   const greeting = name ? `Bem-vindo de volta, ${name}.` : "Bem-vindo de volta.";
   const subtitle =
@@ -129,6 +151,10 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div className="rounded-2xl border border-border bg-card p-4">
             <p className="text-2xl font-bold text-foreground">{pending ?? "—"}</p>
             <p className="text-xs text-muted-foreground">Avaliações pendentes</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-card p-4">
+            <p className="text-2xl font-bold text-foreground">{active ?? "—"}</p>
+            <p className="text-xs text-muted-foreground">Em andamento</p>
           </div>
         </div>
 
@@ -162,7 +188,7 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
-  const [queue, reload] = useAssignedQueue();
+  const { pending: queue, reload } = useAssignedQueue();
   const subtitle =
     queue.status === "ready"
       ? `${queue.items.length} ${queue.items.length === 1 ? "entrevista aguardando avaliação" : "entrevistas aguardando avaliação"}`
@@ -174,6 +200,28 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
         <EvaluatorQueueContent
           state={queue}
           onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
+          onRetry={reload}
+        />
+      </div>
+    </EvalLayout>
+  );
+}
+
+export function EvalActiveScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
+  const { inProgress, reload } = useAssignedQueue();
+  const subtitle =
+    inProgress.status === "ready" && inProgress.items.length > 0
+      ? `${inProgress.items.length} ${inProgress.items.length === 1 ? "avaliação iniciada e não concluída" : "avaliações iniciadas e não concluídas"}`
+      : "Avaliações que você iniciou e ainda não concluiu";
+
+  return (
+    <EvalLayout current="eval-active" onNavigate={onNavigate} title="Em Andamento" subtitle={subtitle}>
+      <div className="w-full">
+        <EvaluatorActiveContent
+          state={inProgress}
+          onContinue={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
+          onGoToQueue={() => onNavigate("eval-queue")}
           onRetry={reload}
         />
       </div>
@@ -351,6 +399,24 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
   const onSave = () => {
     void autosaveRef.current?.flush();
   };
+  // Saída da avaliação (Voltar, menu lateral, logo): com alteração pendente
+  // tenta confirmar o rascunho (até ~3s) e navega de qualquer forma; sem
+  // pendência navega na hora. Não bloqueia o navegador (F5/fechar aba).
+  const leavingRef = useRef(false);
+  const guardedNavigate: NavFn = (screen) => {
+    const controller = autosaveRef.current;
+    if (!controller || !controller.hasUnsyncedWork()) {
+      onNavigate(screen);
+      return;
+    }
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    void leaveEvaluation(controller, () => {
+      leavingRef.current = false;
+      // Se a tela já foi desmontada (outra navegação), não navega de novo.
+      if (autosaveRef.current === controller) onNavigate(screen);
+    });
+  };
   const canReview = view ? reviewReadiness(form, view.persisted).ready : false;
   const onReview = async () => {
     const controller = autosaveRef.current;
@@ -395,7 +461,7 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
   return (
     <EvalLayout
       current="eval-screen"
-      onNavigate={onNavigate}
+      onNavigate={guardedNavigate}
       title={title}
       subtitle={subtitle}
       actions={
@@ -425,7 +491,7 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
         }}
         questionIndex={questionIndex}
         onQuestionChange={(index) => setQuestionIndex(clampQuestionIndex(index, totalQuestions))}
-        onBack={() => onNavigate("eval-queue")}
+        onBack={() => guardedNavigate("eval-queue")}
         onRetry={() => setAttempt((current) => current + 1)}
       />
     </EvalLayout>
@@ -579,7 +645,7 @@ export function EvalHistoryScreen({ onNavigate }: { onNavigate: NavFn }) {
       current="eval-history"
       onNavigate={onNavigate}
       title="Histórico de Avaliações"
-      subtitle={historySubtitle(state)}
+      subtitle={HISTORY_SUBTITLE}
     >
       <EvaluatorHistoryContent
         state={state}

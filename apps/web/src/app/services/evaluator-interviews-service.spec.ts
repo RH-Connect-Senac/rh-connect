@@ -108,9 +108,63 @@ describe("evaluator-interviews-service", () => {
           assignedAt: queueItem.assignedAt,
           submittedAt: queueItem.submittedAt,
           questionCount: 5,
+          evaluation: null,
         },
       ]);
     }
+  });
+
+  describe("fila: bloco evaluation (6A.2)", () => {
+    const evaluationBlock = {
+      status: "DRAFT",
+      startedAt: "2026-10-09T12:00:00.000Z",
+      updatedAt: "2026-10-10T12:00:00.000Z",
+      filledCriteria: 3,
+      totalCriteria: 7,
+      hasSummary: true,
+      inProgress: true,
+    };
+
+    async function parsed(evaluation: unknown) {
+      fetchMock.mockResolvedValue(
+        jsonResponse(200, { total: 1, interviews: [{ ...queueItem, evaluation }] }),
+      );
+      const result = await listAssignedInterviews();
+      if (!result.ok) throw new Error("esperava sucesso");
+      return result.data[0].evaluation;
+    }
+
+    it("lê o progresso devolvido pelo servidor, sem recalcular", async () => {
+      expect(await parsed(evaluationBlock)).toEqual(evaluationBlock);
+    });
+
+    it("respeita inProgress=false do servidor mesmo com números altos", async () => {
+      const result = await parsed({ ...evaluationBlock, inProgress: false });
+      expect(result?.inProgress).toBe(false);
+      expect(result?.filledCriteria).toBe(3);
+    });
+
+    it("evaluation null ou ausente => null (fica na Fila)", async () => {
+      expect(await parsed(null)).toBeNull();
+      expect(await parsed(undefined)).toBeNull();
+    });
+
+    it("bloco inválido é tolerado como null, sem derrubar a lista", async () => {
+      expect(await parsed("x")).toBeNull();
+      expect(await parsed({ ...evaluationBlock, status: "COMPLETED" })).toBeNull();
+      expect(await parsed({ ...evaluationBlock, filledCriteria: "3" })).toBeNull();
+      expect(await parsed({ ...evaluationBlock, filledCriteria: -1 })).toBeNull();
+      expect(await parsed({ ...evaluationBlock, totalCriteria: 0 })).toBeNull();
+      expect(await parsed({ ...evaluationBlock, inProgress: "true" })).toBeNull();
+      expect(await parsed({ ...evaluationBlock, hasSummary: undefined })).toBeNull();
+    });
+
+    it("datas ausentes viram null, mas o bloco continua válido", async () => {
+      const result = await parsed({ ...evaluationBlock, startedAt: undefined, updatedAt: 5 });
+      expect(result?.startedAt).toBeNull();
+      expect(result?.updatedAt).toBeNull();
+      expect(result?.inProgress).toBe(true);
+    });
   });
 
   it("fila vazia é sucesso (estado vazio real), nunca lista fictícia", async () => {

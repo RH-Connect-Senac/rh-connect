@@ -12,7 +12,6 @@ import {
   completeEvaluation,
   createEmptyEvaluationScores,
   formatScore,
-  getAssignedInterviews,
   getAverageScore,
   getEvaluationForEvaluator,
   getInterviewById,
@@ -375,79 +374,8 @@ function EvalWeekChartCard({ completedAtList, onDaySelect }: { completedAtList: 
 
 // ─── Screen: Em Andamento ─────────────────────────────────────────────────────
 
-export function EvalActiveScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn; evaluatorId: string }) {
-  const routerNavigate = useNavigate();
-  const active = [
-    ...getAssignedInterviews(evaluatorId)
-      .filter((interview) => interview.status === "IN_EVALUATION")
-      .map((interview) => {
-        const evaluation = getEvaluationForEvaluator(interview.id, evaluatorId);
-        const progress = Object.values(evaluation?.scores ?? {}).filter((score) => score > 0).length;
-        return {
-          id: interview.id,
-          candidate: interview.candidateName,
-          job: interview.context.title,
-          progress,
-          total: Object.keys(evaluation?.scores ?? createEmptyEvaluationScores()).length,
-          started: evaluation?.createdAt ? new Date(evaluation.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—",
-          elapsed: "—",
-          realId: interview.id,
-        };
-      })
-  ];
-  return (
-    <EvalLayout current="eval-active" onNavigate={onNavigate} title="Em Andamento" subtitle="Avaliações que você iniciou e ainda não concluiu">
-      <div className="w-full space-y-4">
-        {active.length === 0 ? (
-          <EmptyState
-            icon={Clock}
-            title="Nenhuma em andamento"
-            description="Inicie uma avaliação da fila para aparecer aqui."
-            className="p-12"
-            action={<Btn variant="primary" onClick={() => onNavigate("eval-queue")}>Ir para a Fila</Btn>}
-          />
-        ) : active.map(item => (
-          <Card key={item.id} className="p-5 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-xs font-mono text-muted-foreground">{item.id}</span>
-                  <StatusBadge tone="info">Em andamento</StatusBadge>
-                </div>
-                <p className="font-bold text-lg text-foreground">{item.candidate}</p>
-                <p className="text-sm text-muted-foreground mb-4">{item.job}</p>
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Progresso das questões</span>
-                    <span className="font-semibold text-foreground">{item.progress}/{item.total}</span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-2">
-                    <div className="bg-primary h-2 rounded-full transition-all" style={{ width: `${(item.progress / item.total) * 100}%` }} />
-                  </div>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-3 shrink-0">
-                <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Iniciado às {item.started}</p>
-                  <p className="text-xs text-muted-foreground">Tempo: <span className="font-semibold text-foreground">{item.elapsed}</span></p>
-                </div>
-                <div className="flex gap-2">
-                  <Btn variant="outline" size="sm"><RefreshCw className="w-3.5 h-3.5" /> Recomeçar</Btn>
-                  <Btn variant="primary" size="sm" onClick={() => routerNavigate(`/evaluator/evaluations/${item.realId}`)}>Continuar <ChevronRight className="w-3.5 h-3.5" /></Btn>
-                </div>
-              </div>
-            </div>
-          </Card>
-        ))}
-
-        <Alert variant="info" className="mt-2 flex items-start gap-3 p-4">
-          <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-blue-700">Avaliações em andamento são salvas automaticamente. Você pode retomá-las a qualquer momento.</p>
-        </Alert>
-      </div>
-    </EvalLayout>
-  );
-}
+// A tela Em Andamento agora é REAL e vive em `evaluator-real-screens.tsx`
+// (Fase 6A.2), alimentada pelo progresso persistido de `GET /evaluator/interviews`.
 
 // ─── Screen: Tela de Avaliação ────────────────────────────────────────────────
 

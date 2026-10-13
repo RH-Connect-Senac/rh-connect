@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AUTOSAVE_DELAY_MS,
   EvaluationAutosave,
+  LEAVE_FLUSH_TIMEOUT_MS,
   MANUAL_INVALID_MESSAGE,
   describeSync,
+  flushBeforeLeave,
+  leaveEvaluation,
   type AutosaveSnapshot,
   type Scheduler,
 } from "./evaluator-autosave";
@@ -764,5 +767,156 @@ describe("autosave: syncNow (antes da revisão)", () => {
     const result = await t.controller.syncNow();
     expect(result.ok).toBe(false);
     expect(t.save).not.toHaveBeenCalled();
+  });
+});
+
+describe("autosave: saída da avaliação (6A.2.1)", () => {
+  it("prazo curto e debounce normal intactos", () => {
+    expect(LEAVE_FLUSH_TIMEOUT_MS).toBe(3000);
+    expect(AUTOSAVE_DELAY_MS).toBe(2000);
+  });
+
+  it("sem alteração pendente: navega na hora (síncrono), sem PUT", async () => {
+    const t = setup();
+    const navigate = vi.fn();
+    const result = leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    expect(navigate).toHaveBeenCalledTimes(1); // antes de qualquer await
+    expect(await result).toBe("idle");
+    expect(t.save).not.toHaveBeenCalled();
+    expect(t.clock.pendingTimers()).toBe(0);
+  });
+
+  it("sem controlador (tela ainda carregando): navega na hora", async () => {
+    const navigate = vi.fn();
+    expect(await leaveEvaluation(null, navigate)).toBe("idle");
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("com autosave pendente: faz o flush e só navega DEPOIS da confirmação", async () => {
+    const gate = deferred<void>();
+    const t = setup({
+      saveImpl: async (payload) => {
+        await gate.promise;
+        return { ok: true as const, data: responseFor(draftOf({ clarity: 8 }, "Do servidor"), payload) };
+      },
+    });
+    t.change({ coherence: "7" });
+    const navigate = vi.fn();
+    const result = leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    await flushAsync();
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(t.payloads[0].criteriaScores?.coherence).toBe(7);
+    expect(navigate).not.toHaveBeenCalled();
+    gate.resolve();
+    expect(await result).toBe("confirmed");
+    expect(navigate).toHaveBeenCalledTimes(1);
+    // confirmado pelo servidor: não resta diferença nem cópia local
+    expect(t.controller.hasUnsyncedWork()).toBe(false);
+    expect(readLocalDraft(t.storage, USER, ID)).toBeNull();
+    expect(t.clock.pendingTimers()).toBe(0); // timeout e debounce limpos
+  });
+
+  it("request já em voo: aguarda sem duplicar o PUT", async () => {
+    const gate = deferred<void>();
+    const t = setup({
+      saveImpl: async (payload) => {
+        await gate.promise;
+        return { ok: true as const, data: responseFor(draftOf({ clarity: 8 }, "Do servidor"), payload) };
+      },
+    });
+    t.change({ coherence: "7" });
+    t.clock.advance(AUTOSAVE_DELAY_MS); // autosave normal dispara o PUT
+    await flushAsync();
+    expect(t.save).toHaveBeenCalledTimes(1);
+
+    const navigate = vi.fn();
+    const result = leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    await flushAsync();
+    expect(navigate).not.toHaveBeenCalled();
+    gate.resolve();
+    expect(await result).toBe("confirmed");
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("flush falha: navega mesmo assim e mantém a cópia local", async () => {
+    const t = setup({ saveImpl: async () => ({ ok: false as const, message: "Falha de rede" }) });
+    t.change({ coherence: "7" });
+    const navigate = vi.fn();
+    const outcome = await leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    expect(outcome).toBe("failed");
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(readLocalDraft(t.storage, USER, ID)?.criteriaScores.coherence).toBe("7");
+  });
+
+  it("save que lança exceção: navega e mantém a cópia local", async () => {
+    const t = setup({ saveImpl: async () => { throw new Error("boom"); } });
+    t.change({ coherence: "7" });
+    const navigate = vi.fn();
+    const outcome = await leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    expect(outcome).toBe("failed");
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(readLocalDraft(t.storage, USER, ID)?.criteriaScores.coherence).toBe("7");
+  });
+
+  it("timeout: navega sem esperar o PUT e preserva a cópia local", async () => {
+    const never = deferred<void>();
+    const t = setup({
+      saveImpl: async () => {
+        await never.promise;
+        return { ok: false as const, message: "nunca" };
+      },
+    });
+    t.change({ coherence: "7" });
+    const navigate = vi.fn();
+    const result = leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    await flushAsync();
+    expect(navigate).not.toHaveBeenCalled();
+    t.clock.advance(LEAVE_FLUSH_TIMEOUT_MS);
+    expect(await result).toBe("timeout");
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(readLocalDraft(t.storage, USER, ID)?.criteriaScores.coherence).toBe("7");
+  });
+
+  it("formulário inválido: navega sem PUT e mantém a cópia local", async () => {
+    const t = setup();
+    t.change({ coherence: "11" });
+    const navigate = vi.fn();
+    const outcome = await leaveEvaluation(t.controller, navigate, { scheduler: t.clock.scheduler });
+    expect(outcome).toBe("failed");
+    expect(t.save).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(readLocalDraft(t.storage, USER, ID)?.criteriaScores.coherence).toBe("11");
+  });
+
+  it("não cria estado otimista: nada de inProgress/progresso no controlador, e o 'servidor' só muda após a confirmação", async () => {
+    const never = deferred<void>();
+    const t = setup({
+      saveImpl: async () => {
+        await never.promise;
+        return { ok: false as const, message: "nunca" };
+      },
+    });
+    t.change({ coherence: "7" });
+    const before = t.controller.getSnapshot().serverForm;
+    const result = flushBeforeLeave(t.controller, { scheduler: t.clock.scheduler });
+    await flushAsync();
+    t.clock.advance(LEAVE_FLUSH_TIMEOUT_MS);
+    expect(await result).toBe("timeout");
+    const snapshot = t.controller.getSnapshot();
+    expect(snapshot.serverForm).toEqual(before);
+    expect(Object.keys(snapshot)).not.toContain("inProgress");
+    expect(JSON.stringify(snapshot)).not.toMatch(/inProgress/);
+  });
+
+  it("autosave normal continua igual: o debounce ainda dispara 1 PUT após 2s", async () => {
+    const t = setup();
+    t.change({ coherence: "7" });
+    expect(t.save).not.toHaveBeenCalled();
+    t.clock.advance(AUTOSAVE_DELAY_MS - 1);
+    expect(t.save).not.toHaveBeenCalled();
+    t.clock.advance(1);
+    await flushAsync();
+    expect(t.save).toHaveBeenCalledTimes(1);
   });
 });

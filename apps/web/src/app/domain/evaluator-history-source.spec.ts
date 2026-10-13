@@ -64,6 +64,12 @@ describe("histórico do avaliador (6A.1): mock substituído", () => {
     expect(HISTORY_CONTENT).not.toMatch(/Exportar|Download/);
   });
 
+  it("o cabeçalho usa o subtítulo FIXO (sem depender do estado nem da contagem)", () => {
+    expect(HISTORY_SCREENS).toContain("subtitle={HISTORY_SUBTITLE}");
+    expect(HISTORY_SCREENS).not.toMatch(/historySubtitle|historyCountLabel/);
+    expect(HISTORY_CONTENT).toContain("Consulte as avaliações que você já concluiu.");
+  });
+
   it("cada item navega para /evaluator/history/:id", () => {
     expect(SCREENS).toContain('const HISTORY_ROUTE = "/evaluator/history"');
     expect(HISTORY_SCREENS).toMatch(/routerNavigate\(`\$\{HISTORY_ROUTE\}\/\$\{id\}`\)/);

@@ -14,6 +14,7 @@ import {
   toInterviewResponse,
   type InterviewRecord,
 } from '../interviews/interviews.service';
+import { computeEvaluationProgress } from './evaluation-criteria';
 
 // Limite de segurança da fila do avaliador (a paginação entra aqui depois).
 const MAX_QUEUE_SIZE = 500;
@@ -43,6 +44,17 @@ const QUEUE_SELECT = {
   ...INTERVIEW_SELECT,
   assigned_at: true,
   candidate: { select: CANDIDATE_SELECT },
+  // Só o necessário para derivar o progresso no servidor: o conteúdo cru das
+  // notas e do comentário NÃO sai daqui (ver `toEvaluationProgress`).
+  evaluation: {
+    select: {
+      status: true,
+      criteria_scores: true,
+      summary: true,
+      created_at: true,
+      updated_at: true,
+    },
+  },
   _count: { select: { questions: true } },
 } as const;
 
@@ -62,9 +74,18 @@ export interface CandidateRecord {
   } | null;
 }
 
+interface QueueEvaluationRecord {
+  status: string;
+  criteria_scores: unknown;
+  summary: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 interface QueueRecord extends InterviewRecord {
   assigned_at: Date | null;
   candidate: CandidateRecord;
+  evaluation?: QueueEvaluationRecord | null;
   _count: { questions: number };
 }
 
@@ -83,6 +104,23 @@ export function toCandidate(record: CandidateRecord) {
   };
 }
 
+// Bloco `evaluation` da fila (6A.2): `null` quando não há avaliação persistida
+// (ou quando ela não é um rascunho: uma avaliação concluída em entrevista ainda
+// ASSIGNED é anomalia e nunca conta como "em andamento"). Nunca devolve as notas
+// nem o comentário, só contagens e datas.
+function toEvaluationProgress(
+  record: QueueEvaluationRecord | null | undefined,
+) {
+  if (!record || record.status !== 'DRAFT') return null;
+
+  return {
+    status: 'DRAFT' as const,
+    startedAt: record.created_at,
+    updatedAt: record.updated_at,
+    ...computeEvaluationProgress(record.criteria_scores, record.summary),
+  };
+}
+
 function toQueueItem(record: QueueRecord) {
   return {
     interviewId: record.interview_id,
@@ -95,6 +133,7 @@ function toQueueItem(record: QueueRecord) {
     assignedAt: record.assigned_at,
     submittedAt: record.submitted_at,
     questionCount: record._count.questions,
+    evaluation: toEvaluationProgress(record.evaluation),
   };
 }
 
