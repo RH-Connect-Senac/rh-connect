@@ -11,7 +11,7 @@ export type AppScreen =
   | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-history-detail" | "eval-criteria" | "eval-settings"
   | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
   | "admin-interviews" | "admin-assign"
-  | "admin-roles" | "admin-criteria"
+  | "admin-roles"
   | "admin-consent" | "admin-audit" | "admin-settings";
 
 type RouteGroup = "public" | "candidate" | "evaluator" | "admin";
@@ -82,7 +82,6 @@ export const APP_ROUTES = [
   { screen: "admin-interviews", path: "/admin/interviews", label: "Entrevistas", group: "admin", priority: "P0", status: "mockado", backDependency: "sim" },
   { screen: "admin-assign", path: "/admin/assignments", label: "Atribuicoes", group: "admin", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "admin-roles", path: "/admin/roles", label: "Cargos e areas", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
-  { screen: "admin-criteria", path: "/admin/criteria", label: "Criterios admin", group: "admin", priority: "P1", status: "mockado", backDependency: "sim" },
   { screen: "admin-consent", path: "/admin/consents", label: "Consentimentos", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "admin-audit", path: "/admin/audit", label: "Auditoria", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "admin-settings", path: "/admin/settings", label: "Configuracoes admin", group: "admin", priority: "P3", status: "simulado", backDependency: "sim" },

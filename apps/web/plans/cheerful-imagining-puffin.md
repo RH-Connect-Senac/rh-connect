@@ -123,10 +123,9 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 
 #### 5a. `AdminOnboardingScreen` (introdução operacional do administrador)
 - Layout sem sidebar (primeiro acesso), curto e direto
-- Stepper com **3 etapas** (não mais que isso):
+- Stepper com **2 etapas** (não mais que isso):
   1. **Gestão de usuários e avaliadores** — candidatos registrados, convidar avaliadores
   2. **Entrevistas e atribuições** — atribuir avaliações, acompanhar status
-  3. **Critérios de avaliação** — critérios de pontuação dos avaliadores
 - Nenhuma gamificação, nenhum elemento visual extra
 - Botão final "Ir para o Dashboard" → `onNavigate("admin-dashboard")`
 
@@ -286,7 +285,6 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 | `admin-interviews` | `AdminInterviewsScreen` | ⚠️ Incompleta (Eye sem ação) |
 | `admin-assign` | `AdminAssignScreen` | ✅ Completa |
 | `admin-roles` | `AdminRolesScreen` | ⚠️ Incompleta (Edit/Delete sem ação) |
-| `admin-criteria` | `AdminCriteriaScreen` | ⚠️ Incompleta (Edit sem ação) |
 | `admin-consent` | `AdminConsentScreen` | ✅ Completa |
 | `admin-audit` | `AdminAuditScreen` | ✅ Completa |
 | `admin-settings` | `AdminSettingsScreen` | ✅ Completa |
@@ -307,7 +305,6 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 | BUG-B04 | `AdminEvaluatorsScreen` botão Edit | Sem `onClick` — sem `admin-evaluator-form` |
 | BUG-B05 | `AdminEvaluatorsScreen` botão Delete | Sem `onClick` — sem modal de confirmação |
 | BUG-B06 | `AdminRolesScreen` Edit/Delete | Sem `onClick` |
-| BUG-B07 | `AdminCriteriaScreen` Edit | Sem `onClick` |
 
 ---
 
@@ -317,8 +314,8 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 |---|---|---|---|---|
 | Candidato | 25 | 14 | 1 (`job-detail`) | 13 |
 | Avaliador | 8 | 6 | 1 (`eval-done`) | 9 |
-| Administrador | 10 | 6 | 2 (`admin-candidate-detail`, `admin-evaluator-form`) | 7 |
-| **Total** | **43** | **26** | **4** | **29** |
+| Administrador | 9 | 5 | 2 (`admin-candidate-detail`, `admin-evaluator-form`) | 6 |
+| **Total** | **42** | **25** | **4** | **28** |
 
 ---
 
@@ -357,7 +354,7 @@ Estes bugs quebram o fluxo principal e devem ser resolvidos primeiro por impacta
 - Links do footer da LandingScreen (`terms`, `privacy`)
 - `EvalScreenView`: corrigir lógica dos dots e desacoplar dados mockados
 - `EvalSettingsScreen` "Cancelar"
-- `AdminRolesScreen`, `AdminCriteriaScreen` Edit/Delete
+- `AdminRolesScreen` Edit/Delete
 
 ---
 

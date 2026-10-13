@@ -71,11 +71,11 @@ import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
 import { SessionContext } from "../session-context";
 import {
   Home, Users, Settings, ChevronRight,
-  Bell, CheckCircle, AlertCircle, Target, FileText, Shield,
+  Bell, CheckCircle, AlertCircle, FileText, Shield,
   Plus, Eye, Edit2, Trash2, X, Check, Filter,
   TrendingUp, Award, Clock, Star, BarChart2, Download,
   MessageSquare, Briefcase, Link2, Lock, Database, ToggleLeft,
-  ToggleRight, History, Info, UserCheck, RefreshCw, Send, ArrowRight, Zap,
+  ToggleRight, History, UserCheck, RefreshCw, Send, ArrowRight,
 } from "lucide-react";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
 import { SwitchVisual } from "./ui/switch";
@@ -172,7 +172,6 @@ const ADMIN_NAV: ProfileShellNavItem[] = [
   { icon: MessageSquare, label: "Entrevistas",      screen: "admin-interviews" },
   { icon: Link2,       label: "Atribuições",      screen: "admin-assign" },
   { icon: Briefcase,   label: "Cargos e Áreas",  screen: "admin-roles" },
-  { icon: Target,      label: "Critérios",        screen: "admin-criteria" },
   { icon: Shield,      label: "Consentimentos",   screen: "admin-consent" },
   { icon: FileText,    label: "Auditoria",        screen: "admin-audit" },
   { icon: Settings,    label: "Configurações",    screen: "admin-settings" },
@@ -1281,66 +1280,6 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
   );
 }
 
-// ─── Screen: Critérios de Avaliação ──────────────────────────────────────────
-
-export function AdminCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const criteria = [
-    { name: "Clareza",      weight: "15%", desc: "Expressão clara e objetiva", active: true },
-    { name: "Coerência",    weight: "15%", desc: "Lógica e consistência interna", active: true },
-    { name: "Objetividade", weight: "10%", desc: "Foco na resposta, sem digressões", active: true },
-    { name: "Domínio",      weight: "20%", desc: "Conhecimento técnico da área", active: true },
-    { name: "Organização",  weight: "15%", desc: "Estrutura da resposta", active: true },
-    { name: "Aderência aos requisitos", weight: "15%", desc: "Relação com os requisitos da vaga", active: true },
-    { name: "Capacidade de exemplificar", weight: "10%", desc: "Uso de exemplos e evidências", active: true },
-  ];
-
-  return (
-    <AdminLayout current="admin-criteria" onNavigate={onNavigate}
-      title="Critérios de Avaliação"
-      subtitle="Configure os critérios e pesos usados nas avaliações">
-      <div className="w-full space-y-4">
-        <Alert variant="info" className="flex items-start gap-3 p-4">
-          <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-blue-700">Os pesos devem somar 100%. Alterações afetam todas as avaliações futuras.</p>
-        </Alert>
-
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">Critério</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Descrição</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Peso</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
-                  <th className="py-3 px-5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {criteria.map(c => (
-                  <tr key={c.name} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-3.5 px-5 font-semibold text-foreground">{c.name}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground">{c.desc}</td>
-                    <td className="py-3.5 px-4"><Badge variant="info">{c.weight}</Badge></td>
-                    <td className="py-3.5 px-4"><Badge variant="success">Ativo</Badge></td>
-                    <td className="py-3.5 px-5">
-                      <button className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="px-5 py-3 border-t border-border flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">Soma total dos pesos: <span className="font-bold text-foreground">100%</span></p>
-            <Btn variant="primary" size="sm">Salvar Alterações</Btn>
-          </div>
-        </Card>
-      </div>
-    </AdminLayout>
-  );
-}
-
 // ─── Screen: Consentimentos e Privacidade ────────────────────────────────────
 
 export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
@@ -2016,29 +1955,6 @@ const ADMIN_ONBOARDING_STEPS = [
                 <p className="font-semibold text-foreground text-xs">{s.label}</p>
                 <p className="text-xs">{s.desc}</p>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    ),
-  },
-  {
-    id: 2,
-    icon: Target,
-    color: "bg-amber-100 text-amber-600",
-    title: "Critérios de avaliação",
-    content: (
-      <div className="space-y-3 text-sm text-muted-foreground">
-        <p>Configure os <strong className="text-foreground">critérios</strong> de pontuação usados pelos avaliadores nas entrevistas.</p>
-        <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
-          <Zap className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-800">Mantenha os critérios alinhados com os objetivos do processo seletivo.</p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          {["Critérios de avaliação", "Cargos e áreas", "Consentimentos"].map(label => (
-            <div key={label} className="flex items-center gap-1.5 p-2 bg-muted/50 rounded-lg">
-              <Check className="w-3 h-3 text-primary shrink-0" />
-              <span className="font-medium text-foreground">{label}</span>
             </div>
           ))}
         </div>
