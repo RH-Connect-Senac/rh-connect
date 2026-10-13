@@ -45,6 +45,24 @@ export class InterviewsController {
     return this.interviewsService.listInProgress(userIdOf(req));
   }
 
+  // Histórico real do candidato (todas as entrevistas dele, mais recente
+  // primeiro). DECLARADA sem parâmetro: não conflita com `:id`.
+  @Get()
+  @Roles('CANDIDATE')
+  list(@Req() req: Request) {
+    return this.interviewsService.listHistory(userIdOf(req));
+  }
+
+  // Resultado persistido (HUMAN concluída). `:id/result` não conflita com `:id`.
+  @Get(':id/result')
+  @Roles('CANDIDATE')
+  getResult(
+    @Req() req: Request,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.interviewsService.getResult(userIdOf(req), id);
+  }
+
   @Get(':id')
   @Roles('CANDIDATE')
   getById(@Req() req: Request, @Param('id', new ParseUUIDPipe()) id: string) {

@@ -11,6 +11,7 @@ export const INTERVIEW_ERROR_CODES = {
   notInProgress: 'INTERVIEW_NOT_IN_PROGRESS',
   draftVersionConflict: 'DRAFT_VERSION_CONFLICT',
   alreadyInProgress: 'INTERVIEW_ALREADY_IN_PROGRESS',
+  resultNotAvailable: 'INTERVIEW_RESULT_NOT_AVAILABLE',
 } as const;
 
 // 409: a entrevista já saiu de IN_PROGRESS (enviada/encerrada) e não aceita mais
@@ -41,6 +42,34 @@ export function interviewAlreadyInProgress(interviewId: string | null) {
     code: INTERVIEW_ERROR_CODES.alreadyInProgress,
     message: 'Você já possui uma entrevista em andamento.',
     ...(interviewId ? { interviewId } : {}),
+  });
+}
+
+// 409 (GET /interviews/:id/result): a entrevista existe e é do candidato, mas
+// ainda não há resultado persistido para mostrar. NUNCA finge resultado. A
+// mensagem descreve o estado real; `interviewStatus`/`evaluationMode` deixam o
+// cliente decidir sem interpretar texto.
+export function interviewResultNotAvailable(
+  interviewStatus: string,
+  evaluationMode: string | null,
+) {
+  const messages: Record<string, string> = {
+    IN_PROGRESS: 'Esta entrevista ainda não foi enviada.',
+    PENDING_ASSIGNMENT: 'Esta entrevista aguarda a atribuição a um avaliador.',
+    ASSIGNED: 'Esta entrevista está em avaliação.',
+    PENDING_AI_EVALUATION: 'Esta entrevista aguarda a avaliação por IA.',
+    CANCELLED: 'Esta entrevista foi cancelada e não possui resultado.',
+  };
+
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: INTERVIEW_ERROR_CODES.resultNotAvailable,
+    message:
+      messages[interviewStatus] ??
+      'O resultado desta entrevista ainda não está disponível.',
+    interviewStatus,
+    evaluationMode,
   });
 }
 

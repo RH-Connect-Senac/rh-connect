@@ -7,75 +7,32 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateInterviewDto } from './dto/create-interview.dto';
-import { interviewAlreadyInProgress, interviewNotInProgress } from './interview-flow';
+import {
+  interviewAlreadyInProgress,
+  interviewNotInProgress,
+  interviewResultNotAvailable,
+} from './interview-flow';
 import type { EvaluationMode } from './interview-flow';
 import { normalizeJobContext } from './job-context';
+import {
+  CANDIDATE_DETAIL_SELECT,
+  HISTORY_LIST_SELECT,
+  MAX_HISTORY_SIZE,
+  RESULT_SELECT,
+  isResultAvailable,
+  toCandidateInterviewResponse,
+  toHistoryItem,
+  toResult,
+} from './interview-history';
+import {
+  INTERVIEW_SELECT,
+  toInterviewResponse,
+  type InterviewRecord,
+} from './interview-projection';
 
-// Campos lidos do banco. Explícito (sem `include`): nunca expõe campos
-// internos como candidate_user_id/evaluator_profile_id ao candidato.
-export const INTERVIEW_SELECT = {
-  interview_id: true,
-  status: true,
-  evaluation_mode: true,
-  job_title: true,
-  job_company: true,
-  job_summary: true,
-  job_activities: true,
-  job_requirements: true,
-  job_location: true,
-  job_contract_type: true,
-  job_work_mode: true,
-  job_source_url: true,
-  submitted_at: true,
-  created_at: true,
-  updated_at: true,
-} as const;
-
-export interface InterviewRecord {
-  interview_id: string;
-  status: string;
-  evaluation_mode: string | null;
-  job_title: string;
-  job_company: string | null;
-  job_summary: string | null;
-  job_activities: unknown;
-  job_requirements: unknown;
-  job_location: string | null;
-  job_contract_type: string | null;
-  job_work_mode: string | null;
-  job_source_url: string;
-  submitted_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
-}
-
-function toStringList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
-}
-
-export function toInterviewResponse(record: InterviewRecord) {
-  return {
-    id: record.interview_id,
-    status: record.status,
-    evaluationMode: record.evaluation_mode,
-    submittedAt: record.submitted_at,
-    createdAt: record.created_at,
-    updatedAt: record.updated_at,
-    context: {
-      sourceUrl: record.job_source_url,
-      title: record.job_title,
-      company: record.job_company,
-      summary: record.job_summary,
-      activities: toStringList(record.job_activities),
-      requirements: toStringList(record.job_requirements),
-      location: record.job_location,
-      contractType: record.job_contract_type,
-      workMode: record.job_work_mode,
-    },
-  };
-}
+// Reexportados para manter os imports existentes (admin, avaliador, perguntas).
+export { INTERVIEW_SELECT, toInterviewResponse };
+export type { InterviewRecord };
 
 @Injectable()
 export class InterviewsService {
@@ -144,14 +101,69 @@ export class InterviewsService {
   async getOwned(candidateUserId: number, interviewId: string) {
     const record = await this.prisma.interview.findFirst({
       where: { interview_id: interviewId, candidate_user_id: candidateUserId },
-      select: INTERVIEW_SELECT,
+      select: CANDIDATE_DETAIL_SELECT,
     });
 
     if (!record) {
       throw new NotFoundException('Entrevista não encontrada.');
     }
 
-    return toInterviewResponse(record);
+    // Contrato anterior + assignedAt/completedAt (aditivos). `status` já
+    // distingue PENDING_ASSIGNMENT / ASSIGNED / COMPLETED / CANCELLED /
+    // PENDING_AI_EVALUATION para a tela de acompanhamento.
+    return toCandidateInterviewResponse(record);
+  }
+
+  // Histórico do candidato (6A.1): TODAS as entrevistas dele, em qualquer status
+  // (IN_PROGRESS e CANCELLED incluídas: nada é escondido, o cliente decide o que
+  // mostrar a partir de `status`/`resultAvailable`). Dono (JWT) no WHERE; mais
+  // recente primeiro; uma consulta de lista + um count (sem N+1); sem
+  // perguntas/respostas. O rascunho da avaliação nunca vaza (só avaliação
+  // COMPLETED gera nota/data).
+  async listHistory(candidateUserId: number) {
+    const where = { candidate_user_id: candidateUserId };
+
+    const [records, total] = await Promise.all([
+      this.prisma.interview.findMany({
+        where,
+        select: HISTORY_LIST_SELECT,
+        orderBy: [{ created_at: 'desc' }, { interview_id: 'desc' }],
+        take: MAX_HISTORY_SIZE,
+      }),
+      this.prisma.interview.count({ where }),
+    ]);
+
+    return { total, interviews: records.map(toHistoryItem) };
+  }
+
+  // Resultado persistido de uma entrevista HUMAN concluída. Só leitura: não chama
+  // Python/Groq, não recalcula nota e não cria registro. Entrevista de outro
+  // candidato ou inexistente => 404 (ownership no WHERE). Existe mas ainda sem
+  // resultado (IN_PROGRESS, PENDING_ASSIGNMENT, ASSIGNED, PENDING_AI_EVALUATION,
+  // CANCELLED, IA ou concluída sem avaliação concluída) => 409 com `code`
+  // INTERVIEW_RESULT_NOT_AVAILABLE, `interviewStatus` e `evaluationMode`.
+  async getResult(candidateUserId: number, interviewId: string) {
+    const record = await this.prisma.interview.findFirst({
+      where: { interview_id: interviewId, candidate_user_id: candidateUserId },
+      select: RESULT_SELECT,
+    });
+
+    if (!record) {
+      throw new NotFoundException('Entrevista não encontrada.');
+    }
+
+    if (
+      !record.evaluation ||
+      !isResultAvailable(
+        record.status,
+        record.evaluation_mode,
+        record.evaluation,
+      )
+    ) {
+      throw interviewResultNotAvailable(record.status, record.evaluation_mode);
+    }
+
+    return toResult({ ...record, evaluation: record.evaluation });
   }
 
   // Entrevistas IN_PROGRESS do candidato (descoberta entre dispositivos). Dono
