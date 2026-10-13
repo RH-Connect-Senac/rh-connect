@@ -151,4 +151,20 @@ describe("admin-interviews-service", () => {
       message: "Avaliador não encontrado.",
     });
   });
+
+  it("avaliadores: expõe especialização e assignedCount reais (sem métricas inventadas)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        evaluators: [
+          { id: 3, name: "Beatriz Lima", email: "b@gmail.com", accountStatus: "ACTIVE", eligible: true, area: "RH", specialization: "R&S", assignedCount: 2 },
+        ],
+      }),
+    );
+    const result = await listAdminEvaluators();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(Object.keys(result.data[0]).sort()).toEqual(["accountStatus", "area", "assignedCount", "eligible", "email", "id", "name", "specialization"]);
+      expect(result.data[0]).toMatchObject({ specialization: "R&S", assignedCount: 2 });
+    }
+  });
 });

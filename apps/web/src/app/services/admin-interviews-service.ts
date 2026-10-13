@@ -39,6 +39,8 @@ export type AdminEvaluator = {
   // Somente contas ACTIVE podem receber entrevistas.
   eligible: boolean;
   area: string | null;
+  specialization: string | null;
+  // Entrevistas atualmente ASSIGNED a este avaliador (não são "concluídas").
   assignedCount: number;
 };
 
@@ -121,6 +123,7 @@ function toEvaluator(payload: unknown): AdminEvaluator | null {
     accountStatus: item.accountStatus,
     eligible: item.eligible,
     area: nullableString(item.area),
+    specialization: nullableString(item.specialization),
     assignedCount: typeof item.assignedCount === "number" ? item.assignedCount : 0,
   };
 }

@@ -89,7 +89,7 @@ describe("SwitchVisual (decorativo)", () => {
   });
 });
 
-describe("source guards: os 7 switches usam o padrão compartilhado", () => {
+describe("source guards: os switches usam o padrão compartilhado", () => {
   const APP = join(__dirname, "..", "..");
   const read = (relative: string) =>
     readFileSync(join(APP, relative), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -113,13 +113,14 @@ describe("source guards: os 7 switches usam o padrão compartilhado", () => {
     expect(app).toContain("<Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))}");
   });
 
-  it("Admin: 4 switches só visuais (SwitchVisual), sem estado, clique, papel nem tab order", () => {
+  it("Admin: switches só visuais (SwitchVisual, 3 usos), sem estado, clique, papel nem tab order", () => {
     expect(admin).toContain('import { SwitchVisual } from "./ui/switch"');
-    expect(admin.match(/<SwitchVisual checked=\{(s|p)\.on\} \/>/g)?.length).toBe(4);
+    expect(admin.match(/<SwitchVisual checked=\{s\.on\} \/>/g)?.length).toBe(3);
+    expect(admin.match(/<SwitchVisual\b/g)?.length).toBe(3);
     expect(admin).not.toMatch(/<Switch[ >]/);
   });
 
-  it("nenhum dos 7 usos mantém o padrão manual antigo (sem left, w-10, translate-x-4/0.5)", () => {
+  it("nenhum dos usos mantém o padrão manual antigo (sem left, w-10, translate-x-4/0.5)", () => {
     for (const source of [evaluator, admin, app]) {
       expect(source).not.toMatch(/w-10 h-6 rounded-full/);
       expect(source).not.toMatch(/absolute top-0\.5 w-5 h-5 bg-white/);

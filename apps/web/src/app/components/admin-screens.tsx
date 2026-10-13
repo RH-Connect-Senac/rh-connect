@@ -5,6 +5,16 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
 import type { MockAccountStatus } from "../services/auth-service";
 import { buildAdminProfileView } from "../domain/admin-profile-view";
+import {
+  ASSIGNED_COUNT_HINT,
+  ASSIGNED_COUNT_LABEL,
+  EVALUATORS_EMPTY,
+  EVALUATOR_ACTIVE_LABEL,
+  evaluatorAreaLine,
+  evaluatorInitials,
+  evaluatorsSubtitle,
+  presentableEvaluators,
+} from "../domain/admin-evaluators-view";
 import { TransientNotice } from "../domain/transient-notice";
 import type { ProfessionalProfile } from "../domain/professional-profile";
 import {
@@ -66,11 +76,6 @@ import {
 import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
 
 type NavFn = (s: string) => void;
-type PendingEvaluatorInvite = {
-  id: string;
-  name: string;
-  email: string;
-};
 
 // ─── Local UI Helpers ─────────────────────────────────────────────────────────
 
@@ -762,158 +767,99 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Gestão de Avaliadores ───────────────────────────────────────────
 
-export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const routerNavigate = useNavigate();
-  const [showAdd, setShowAdd] = useState(false);
-  const [inviteSent, setInviteSent] = useState(false);
-  const [inviteName, setInviteName] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteArea, setInviteArea] = useState("");
-  const [lastInvite, setLastInvite] = useState<PendingEvaluatorInvite | null>(null);
-  const [pendingInvites, setPendingInvites] = useState<PendingEvaluatorInvite[]>([
-    {
-      id: "pending-invite-001",
-      name: "Patricia Gomes",
-      email: "patricia.gomes@gmail.com",
-    },
-  ]);
-  const statusVariant = { "Ativo": "success", "Férias": "warning" } as const;
-  const canSendInvite = inviteName.trim().length > 0 && /^[^\s@]+@gmail\.com$/i.test(inviteEmail.trim());
+// ─── Avaliadores REAIS (Fase 4.1) ────────────────────────────────────────────
+// Lista: GET /admin/evaluators, exibindo só avaliadores ativos e elegíveis. Sem mock, sem
+// localStorage, sem métricas inventadas (a API só informa `assignedCount`). Sem polling (sync = 4.2).
+// O fluxo de convite/ativação foi adiado e NÃO é exposto aqui.
 
-  const handleSendInvite = () => {
-    if (!canSendInvite) return;
+type AdminEvaluatorsState =
+  | { status: "loading" }
+  | { status: "error"; message: string; canRetry: boolean }
+  | { status: "success"; evaluators: AdminEvaluator[] };
 
-    const invite = {
-      id: `pending-invite-${Date.now()}`,
-      name: inviteName.trim(),
-      email: inviteEmail.trim(),
-    };
-    setPendingInvites((current) => [invite, ...current]);
-    setLastInvite(invite);
-    setInviteName("");
-    setInviteEmail("");
-    setInviteArea("");
-    setShowAdd(false);
-    setInviteSent(true);
-    setTimeout(() => setInviteSent(false), 8000);
+function useAdminEvaluatorsList() {
+  const [state, setState] = useState<AdminEvaluatorsState>({ status: "loading" });
+  const requestId = useRef(0);
+
+  const load = () => {
+    const current = ++requestId.current;
+    setState({ status: "loading" });
+    void listAdminEvaluators().then((result) => {
+      if (current !== requestId.current) return; // resposta obsoleta / desmontado
+      setState(
+        result.ok
+          ? { status: "success", evaluators: result.data }
+          : { status: "error", message: result.message, canRetry: result.reason !== "unauthorized" && result.reason !== "forbidden" },
+      );
+    });
   };
+
+  useEffect(() => {
+    load();
+    return () => {
+      requestId.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { state, reload: load };
+}
+
+function EvaluatorCard({ evaluator }: { evaluator: AdminEvaluator }) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between mb-3 gap-2">
+        <div className="w-10 h-10 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
+          {evaluatorInitials(evaluator.name)}
+        </div>
+        <Badge variant="success">{EVALUATOR_ACTIVE_LABEL}</Badge>
+      </div>
+      <p className="font-bold text-foreground text-sm">{evaluator.name}</p>
+      <p className="text-xs text-muted-foreground mb-1">{evaluatorAreaLine(evaluator)}</p>
+      <p className="text-xs text-muted-foreground mb-3 break-all">{evaluator.email}</p>
+      <div className="bg-muted/50 rounded-lg p-2 text-center" title={ASSIGNED_COUNT_HINT}>
+        <p className="text-sm font-bold text-foreground">{evaluator.assignedCount}</p>
+        <p className="text-[10px] text-muted-foreground">{ASSIGNED_COUNT_LABEL}</p>
+      </div>
+    </Card>
+  );
+}
+
+export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const list = useAdminEvaluatorsList();
+  const evaluators = list.state.status === "success" ? list.state.evaluators : null;
+  const visible = evaluators ? presentableEvaluators(evaluators) : [];
 
   return (
     <AdminLayout current="admin-evaluators" onNavigate={onNavigate}
       title="Gestão de Avaliadores"
-      subtitle={`${EVALUATORS.length} avaliadores cadastrados · ${pendingInvites.length} convite(s) pendente(s)`}
-      actions={<Btn variant="primary" size="sm" onClick={() => { setShowAdd(true); setInviteSent(false); }}><Plus className="w-3.5 h-3.5" /> Convidar Avaliador</Btn>}>
+      subtitle={evaluatorsSubtitle(evaluators)}>
       <div className="w-full space-y-4">
-        {inviteSent && (
-          <Alert variant="success" className="flex items-start gap-3 px-5 py-4">
-            <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-green-800">Convite criado!</p>
-              <p className="text-xs text-green-700 mt-0.5">
-                {lastInvite ? `${lastInvite.name} ficou com status Aguardando ativação. ` : ""}
-                O avaliador receberá orientações para ativar a conta.
-              </p>
+        {list.state.status === "loading" && <AdminLoadingCard label="Carregando avaliadores..." />}
+
+        {list.state.status === "error" && (
+          <Alert variant="error" className="flex items-start gap-3 p-4">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm">{list.state.message}</p>
+              {list.state.canRetry && (
+                <Btn variant="outline" size="sm" className="mt-3" onClick={list.reload}>
+                  <RefreshCw className="w-3.5 h-3.5" /> Tentar novamente
+                </Btn>
+              )}
             </div>
-            <button
-              onClick={() => routerNavigate("/evaluator/activate?token=demo-patricia")}
-              className="text-xs text-green-700 underline underline-offset-2 hover:text-green-900 shrink-0 font-medium">
-              Ver simulação da ativação
-            </button>
           </Alert>
         )}
 
-        {showAdd && (
-          <Card className="p-5 sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-foreground">Convidar Avaliador</h3>
-              <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">O avaliador receberá orientações para definir sua própria senha e ativar a conta.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Nome completo *</label>
-                <Input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Ex: João Pereira" className="bg-white" /></div>
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">E-mail *</label>
-                <Input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="nome@gmail.com" type="email" className="bg-white" /></div>
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Área de especialização</label>
-                <NativeSelect value={inviteArea} onChange={e => setInviteArea(e.target.value)} className="bg-white">
-                  <option value="">Selecione...</option>
-                  {PROFESSIONAL_AREA_OPTIONS.map(area => <option key={area}>{area}</option>)}
-                </NativeSelect></div>
-            </div>
-            <div className="flex gap-3">
-              <Btn variant="outline" onClick={() => setShowAdd(false)}>Cancelar</Btn>
-              <Btn variant="primary" onClick={handleSendInvite} disabled={!canSendInvite}><Send className="w-3.5 h-3.5" /> Enviar Convite</Btn>
-            </div>
-          </Card>
+        {evaluators && visible.length === 0 && (
+          <EmptyState icon={UserCheck} title={EVALUATORS_EMPTY.title} description={EVALUATORS_EMPTY.description} />
         )}
 
-        {pendingInvites.length > 0 && (
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-bold text-foreground text-sm">Convites pendentes</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Avaliador sem senha definida até concluir a ativação.</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {pendingInvites.map(ev => (
-                <div key={ev.id} className="border border-border rounded-xl p-4 bg-white">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="w-9 h-9 bg-amber-50 text-amber-700 rounded-xl flex items-center justify-center text-xs font-bold">
-                      {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
-                    </div>
-                    <Badge variant="warning">Aguardando ativação</Badge>
-                  </div>
-                  <p className="font-bold text-foreground text-sm">{ev.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{ev.email}</p>
-                  <div className="grid grid-cols-3 gap-2 text-center mt-3">
-                    {["Pendentes", "Concluídas", "Média"].map(label => (
-                      <div key={label} className="bg-muted/50 rounded-lg p-2">
-                        <p className="text-sm font-bold text-foreground">—</p>
-                        <p className="text-[10px] text-muted-foreground">{label}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-3">Senha ainda não definida</p>
-                </div>
-              ))}
-            </div>
-          </Card>
+        {visible.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {visible.map(ev => <EvaluatorCard key={ev.id} evaluator={ev} />)}
+          </div>
         )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {EVALUATORS.map(ev => (
-            <Card key={ev.id} className="p-5">
-              <div className="flex items-start justify-between mb-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
-                  {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
-                </div>
-                <Badge variant={statusVariant[ev.status]}>{ev.status}</Badge>
-              </div>
-              <p className="font-bold text-foreground text-sm">{ev.name}</p>
-              <p className="text-xs text-muted-foreground mb-1">{ev.area}</p>
-              <p className="text-xs text-muted-foreground mb-3">{ev.email}</p>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.pending}</p>
-                  <p className="text-[10px] text-muted-foreground">Pendentes</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.done}</p>
-                  <p className="text-[10px] text-muted-foreground">Concluídas</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.done > 0 ? ev.avg : "—"}</p>
-                  <p className="text-[10px] text-muted-foreground">Média</p>
-                </div>
-              </div>
-              <div className="flex gap-2 mt-3">
-                <Btn variant="ghost" size="sm" className="flex-1" onClick={() => onNavigate("admin-evaluator-form")}><Edit2 className="w-3 h-3" /></Btn>
-                <Btn variant="ghost" size="sm" className="flex-1 text-red-500 hover:text-red-600"><Trash2 className="w-3 h-3" /></Btn>
-              </div>
-            </Card>
-          ))}
-        </div>
       </div>
     </AdminLayout>
   );
@@ -2123,109 +2069,13 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
 
 // ─── Screen: Formulário de Avaliador ─────────────────────────────────────────
 
-export function AdminEvaluatorFormScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const isEdit = true;
-  const defaultData = isEdit ? EVALUATORS[0] : null;
-
-  const [form, setForm] = useState({
-    name:   defaultData?.name  ?? "",
-    email:  defaultData?.email ?? "",
-    area:   defaultData?.area  ?? "",
-    status: defaultData?.status ?? "Ativo",
-  });
-  const [saved, setSaved] = useState(false);
-
-  const field = (key: keyof typeof form, label: string, type = "text", placeholder = "") => (
-    <div>
-      <label className="block text-sm font-semibold text-foreground mb-1.5">{label} *</label>
-      <Input
-        type={type}
-        value={form[key]}
-        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-        placeholder={placeholder}
-        className="bg-white"
-      />
-    </div>
-  );
-
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onNavigate("admin-evaluators"); }, 1500);
-  };
-
-  return (
-    <AdminLayout current="admin-evaluators" onNavigate={onNavigate}
-      title={isEdit ? "Editar Avaliador" : "Novo Avaliador"}
-      subtitle={isEdit ? `Editando: ${defaultData?.name}` : "Preencha os dados do novo avaliador"}
-      actions={
-        <Btn variant="outline" size="sm" onClick={() => onNavigate("admin-evaluators")}>
-          Voltar
-        </Btn>
-      }>
-      <div className="w-full max-w-2xl space-y-4">
-        {saved && (
-          <Alert variant="success" className="flex items-center gap-3 px-5 py-3.5 text-green-700">
-            <CheckCircle className="w-4 h-4 shrink-0" />
-            <span className="text-sm font-semibold">Avaliador salvo com sucesso! Redirecionando...</span>
-          </Alert>
-        )}
-
-        <Card className="p-6 space-y-4">
-          <h3 className="font-bold text-foreground">Dados Pessoais</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {field("name",  "Nome completo",        "text",  "Ex: João Pereira")}
-            {field("email", "E-mail", "email", "nome@gmail.com")}
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Área de especialização *</label>
-              <NativeSelect
-                value={form.area}
-                onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
-                className="bg-white"
-              >
-                <option value="">Selecione...</option>
-                {PROFESSIONAL_AREA_OPTIONS.map(area => <option key={area}>{area}</option>)}
-              </NativeSelect>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Status</label>
-              <NativeSelect
-                value={form.status}
-                onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-                className="bg-white">
-                <option value="Ativo">Ativo</option>
-                <option value="Férias">Férias</option>
-                <option value="Inativo">Inativo</option>
-              </NativeSelect>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <h3 className="font-bold text-foreground mb-4">Permissões de Avaliação</h3>
-          <div className="space-y-3">
-            {[
-              { label: "Avaliar entrevistas de candidatos",         on: true },
-              { label: "Visualizar histórico completo",             on: true },
-              { label: "Exportar relatórios individuais",           on: false },
-              { label: "Receber atribuições automáticas do sistema", on: true },
-            ].map(p => (
-              <div key={p.label} className="flex items-center justify-between gap-4 py-2">
-                <p className="text-sm text-foreground">{p.label}</p>
-                <SwitchVisual checked={p.on} />
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("admin-evaluators")}>Cancelar</Btn>
-          <Btn variant="primary" className="flex-1" onClick={handleSave} disabled={saved}>
-            <Check className="w-3.5 h-3.5" /> {isEdit ? "Salvar Alterações" : "Cadastrar Avaliador"}
-          </Btn>
-        </div>
-      </div>
-    </AdminLayout>
-  );
+// O cadastro/convite de avaliadores foi adiado. A rota antiga não expõe formulário: volta para a lista.
+export function AdminEvaluatorFormScreen({ onNavigate: _onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
+  useEffect(() => {
+    routerNavigate("/admin/evaluators", { replace: true });
+  }, [routerNavigate]);
+  return null;
 }
 
 // ─── Screen: Onboarding do Administrador ─────────────────────────────────────
@@ -2250,7 +2100,7 @@ const ADMIN_ONBOARDING_STEPS = [
         <div className="space-y-2">
           {[
             { label: "Candidatos",  desc: "Acompanhe candidaturas, status e resultados" },
-            { label: "Avaliadores", desc: "Convide, gerencie e monitore avaliadores" },
+            { label: "Avaliadores", desc: "Acompanhe os avaliadores ativos" },
           ].map(s => (
             <div key={s.label} className="flex items-start gap-2 p-2.5 bg-muted/40 rounded-lg">
               <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
