@@ -25,7 +25,7 @@ describe("Avaliadores do Admin (4.1): fonte da lista", () => {
   });
 
   it("lê a lista de GET /admin/evaluators pelo service", () => {
-    expect(AREA).toContain("listAdminEvaluators()");
+    expect(AREA).toContain("fetch: listAdminEvaluators");
     expect(SERVICE).toContain('"/admin/evaluators"');
   });
 
@@ -60,12 +60,14 @@ describe("Avaliadores do Admin (4.1): fonte da lista", () => {
     expect(AREA).toContain('list.state.status === "loading"');
     expect(AREA).toContain('list.state.status === "error"');
     expect(AREA).toContain("Tentar novamente");
-    expect(AREA).toContain('result.reason !== "unauthorized" && result.reason !== "forbidden"');
+    expect(AREA).toContain('liveState.reason !== "unauthorized" && liveState.reason !== "forbidden"');
     expect(AREA).toContain("EVALUATORS_EMPTY");
     expect(AREA).toContain("visible.length === 0");
   });
 
-  it("sem polling/timers/listeners nesta fase (sync é a 4.2)", () => {
+  it("sync da 4.2 só pelo motor compartilhado (useCandidateLiveResource), sem timers/listeners próprios", () => {
+    expect(AREA).toContain("useCandidateLiveResource<AdminEvaluator[]>");
+    expect(AREA).toContain("sync: EVALUATORS_SYNC");
     expect(AREA).not.toMatch(/setInterval|setTimeout|addEventListener|attachInterviewSyncPolling|visibilitychange/);
   });
 });

@@ -38,7 +38,8 @@ describe("AdminAssignScreen usa a API real", () => {
     expect(screen).toMatch(/evaluator\.eligible/);
   });
 
-  it("recarrega a fila da API depois de atribuir (não adivinha estado local)", () => {
-    expect(screen).toMatch(/setSelected\(null\);\s*reload\(\);/);
+  it("relê a fila da API em silêncio depois de atribuir (não adivinha estado local, sem spinner)", () => {
+    expect(screen).toMatch(/setSelected\(null\);\s*void live\.refresh\(\{ supersede: true \}\);/);
+    expect(screen).not.toMatch(/setSelected\(null\);\s*reload\(\);/);
   });
 });

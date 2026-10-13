@@ -91,10 +91,13 @@ export class LiveResourceLoader<T> {
 
   // Refresh silencioso para o poller. Nunca sobrepõe uma request em voo e não consulta o Back
   // quando o estado já é terminal.
-  async refresh(): Promise<InterviewSyncResult> {
+  // `supersede` (Admin 4.2, ex.: logo após uma atribuição): em vez de ser ignorado por haver uma
+  // request em voo, descarta a resposta dela (geração antiga) e lê o estado já alterado. Continua
+  // silencioso: não volta a "loading" nem troca dado válido por erro.
+  async refresh(options: { supersede?: boolean } = {}): Promise<InterviewSyncResult> {
     if (this.disposed) return "stop";
     if (this.isTerminalNow()) return "stop";
-    if (this.pendingGeneration !== null) return "ok";
+    if (this.pendingGeneration !== null && !options.supersede) return "ok";
     const result = await this.request();
     if (!result) return "ok"; // resposta obsoleta / desmontado
     const next = applyLiveResult(this.state, result.value, { silent: true });

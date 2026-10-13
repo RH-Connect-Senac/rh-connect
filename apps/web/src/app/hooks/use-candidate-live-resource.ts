@@ -21,7 +21,7 @@ export function useCandidateLiveResource<T>(input: {
   fetch: () => Promise<LiveResult<T>>;
   isTerminal?: (value: T) => boolean;
   sync?: { intervalMs: number; maxBackoffMs: number };
-}): { state: LiveState<T>; reload: () => void; refresh: () => Promise<InterviewSyncResult> } {
+}): { state: LiveState<T>; reload: () => void; refresh: (options?: { supersede?: boolean }) => Promise<InterviewSyncResult> } {
   const [state, setState] = useState<LiveState<T>>({ status: "loading" });
   const fetchRef = useRef(input.fetch);
   fetchRef.current = input.fetch;
@@ -65,7 +65,10 @@ export function useCandidateLiveResource<T>(input: {
     void loaderRef.current?.load();
   }, []);
 
-  const refresh = useCallback(async (): Promise<InterviewSyncResult> => (await loaderRef.current?.refresh()) ?? "ok", []);
+  const refresh = useCallback(
+    async (options?: { supersede?: boolean }): Promise<InterviewSyncResult> => (await loaderRef.current?.refresh(options)) ?? "ok",
+    [],
+  );
 
   return { state, reload, refresh };
 }

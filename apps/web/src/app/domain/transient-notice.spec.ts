@@ -113,10 +113,10 @@ describe("TransientNotice (sucesso da atribuição do Admin)", () => {
     expect(screen).toContain("noticeRef.current?.show(`Entrevista atribuída a ${evaluator.name}.`)");
     expect(screen).toContain("setAssignError(result.message)");
     expect(screen).not.toMatch(/setAssignNotice\(`/);
-    // request, recarga da fila e limpeza de seleção continuam como estavam
+    // request, releitura silenciosa da fila (4.2) e limpeza de seleção
     expect(screen).toContain("assignInterviewToEvaluator(selected, evaluator.id)");
     expect(screen).toContain("setSelected(null);");
-    expect(screen).toContain("reload();");
+    expect(screen).toContain("void live.refresh({ supersede: true });");
     const source = readFileSync(new URL("./transient-notice.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/localStorage|sessionStorage|fetch\(/);
   });

@@ -16,6 +16,18 @@ import {
   presentableEvaluators,
 } from "../domain/admin-evaluators-view";
 import { TransientNotice } from "../domain/transient-notice";
+import { useCandidateLiveResource } from "../hooks/use-candidate-live-resource";
+import {
+  ADMIN_CANDIDATES_SYNC_INTERVAL_MS,
+  ADMIN_CANDIDATES_SYNC_MAX_BACKOFF_MS,
+  ADMIN_EVALUATORS_SYNC_INTERVAL_MS,
+  ADMIN_EVALUATORS_SYNC_MAX_BACKOFF_MS,
+  ADMIN_QUEUE_SYNC_INTERVAL_MS,
+  ADMIN_QUEUE_SYNC_MAX_BACKOFF_MS,
+  combineQueueResults,
+  resolveSelection,
+  type AdminQueueData,
+} from "../domain/admin-live-sync";
 import type { ProfessionalProfile } from "../domain/professional-profile";
 import {
   getAdminCandidate,
@@ -268,29 +280,28 @@ type AdminRemoteState<T> =
   | { status: "not_found" }
   | { status: "success"; data: T };
 
-function useAdminCandidatesList() {
-  const [state, setState] = useState<AdminRemoteState<AdminCandidatesList>>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
+// `sync: true` (Fase 4.2) liga o refresh silencioso (30 s, pausa hidden/offline, retoma em
+// focus/visible/online) SÓ na tela de lista. O Dashboard usa o hook sem `sync`: carrega uma vez.
+const CANDIDATES_SYNC = {
+  intervalMs: ADMIN_CANDIDATES_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_CANDIDATES_SYNC_MAX_BACKOFF_MS,
+};
 
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
+function useAdminCandidatesList(options: { sync?: boolean } = {}) {
+  const live = useCandidateLiveResource<AdminCandidatesList>({
+    resourceKey: "admin-candidates",
+    fetch: listAdminCandidates,
+    sync: options.sync ? CANDIDATES_SYNC : undefined,
+  });
+  const liveState = live.state;
+  const state: AdminRemoteState<AdminCandidatesList> =
+    liveState.status === "ready"
+      ? { status: "success", data: liveState.value }
+      : liveState.status === "error"
+        ? { status: "error", message: liveState.message }
+        : { status: "loading" };
 
-    listAdminCandidates().then((result) => {
-      if (cancelled) return;
-      setState(
-        result.ok
-          ? { status: "success", data: result.data }
-          : { status: "error", message: result.message },
-      );
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [attempt]);
-
-  return { state, reload: () => setAttempt((value) => value + 1) };
+  return { state, reload: live.reload };
 }
 
 function useAdminCandidateDetail(candidateId: string | undefined) {
@@ -647,7 +658,7 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const { state: candidatesState, reload: reloadCandidates } = useAdminCandidatesList();
+  const { state: candidatesState, reload: reloadCandidates } = useAdminCandidatesList({ sync: true });
   const candidateRows = candidatesState.status === "success" ? candidatesState.data.candidates.map(toAdminCandidateRow) : [];
   const filtered = candidateRows.filter(c =>
     (status === "all" || c.accountStatus === status) &&
@@ -769,7 +780,7 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Avaliadores REAIS (Fase 4.1) ────────────────────────────────────────────
 // Lista: GET /admin/evaluators, exibindo só avaliadores ativos e elegíveis. Sem mock, sem
-// localStorage, sem métricas inventadas (a API só informa `assignedCount`). Sem polling (sync = 4.2).
+// localStorage, sem métricas inventadas (a API só informa `assignedCount`). Sync leve na 4.2.
 // O fluxo de convite/ativação foi adiado e NÃO é exposto aqui.
 
 type AdminEvaluatorsState =
@@ -777,32 +788,28 @@ type AdminEvaluatorsState =
   | { status: "error"; message: string; canRetry: boolean }
   | { status: "success"; evaluators: AdminEvaluator[] };
 
+const EVALUATORS_SYNC = {
+  intervalMs: ADMIN_EVALUATORS_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_EVALUATORS_SYNC_MAX_BACKOFF_MS,
+};
+
+// 4.2: carga inicial com loading + refresh silencioso (30 s). Falha temporária mantém a lista; 401/403
+// (já após a renovação de sessão do service) encerra o polling e preserva o que está na tela.
 function useAdminEvaluatorsList() {
-  const [state, setState] = useState<AdminEvaluatorsState>({ status: "loading" });
-  const requestId = useRef(0);
+  const live = useCandidateLiveResource<AdminEvaluator[]>({
+    resourceKey: "admin-evaluators",
+    fetch: listAdminEvaluators,
+    sync: EVALUATORS_SYNC,
+  });
+  const liveState = live.state;
+  const state: AdminEvaluatorsState =
+    liveState.status === "ready"
+      ? { status: "success", evaluators: liveState.value }
+      : liveState.status === "error"
+        ? { status: "error", message: liveState.message, canRetry: liveState.reason !== "unauthorized" && liveState.reason !== "forbidden" }
+        : { status: "loading" };
 
-  const load = () => {
-    const current = ++requestId.current;
-    setState({ status: "loading" });
-    void listAdminEvaluators().then((result) => {
-      if (current !== requestId.current) return; // resposta obsoleta / desmontado
-      setState(
-        result.ok
-          ? { status: "success", evaluators: result.data }
-          : { status: "error", message: result.message, canRetry: result.reason !== "unauthorized" && result.reason !== "forbidden" },
-      );
-    });
-  };
-
-  useEffect(() => {
-    load();
-    return () => {
-      requestId.current += 1;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return { state, reload: load };
+  return { state, reload: live.reload };
 }
 
 function EvaluatorCard({ evaluator }: { evaluator: AdminEvaluator }) {
@@ -965,15 +972,32 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Atribuição de Avaliações ────────────────────────────────────────
 
+const ASSIGN_SYNC = {
+  intervalMs: ADMIN_QUEUE_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_QUEUE_SYNC_MAX_BACKOFF_MS,
+};
+
 export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
   // Fila e avaliadores vêm exclusivamente da API (entrevistas HUMAN em
   // PENDING_ASSIGNMENT e avaliadores reais em `evaluator_profile`). Nada vem do
   // armazenamento local nem de mock. Sem fallback: carregando, erro ou dado real.
-  const [selected, setSelected] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const [remote, setRemote] = useState<
-    AdminRemoteState<{ interviews: AdminQueueInterview[]; evaluators: AdminEvaluator[] }>
-  >({ status: "loading" });
+  const [selectedRaw, setSelected] = useState<string | null>(null);
+  // Fase 4.2: fila + avaliadores são UM recurso com refresh silencioso (15 s). Depois de atribuir
+  // (ou de um conflito) a tela lê de novo em silêncio, sem spinner e sem esvaziar a fila.
+  const live = useCandidateLiveResource<AdminQueueData>({
+    resourceKey: "admin-assign-queue",
+    fetch: async () => {
+      const [queueResult, evaluatorsResult] = await Promise.all([listPendingAssignmentInterviews(), listAdminEvaluators()]);
+      return combineQueueResults(queueResult, evaluatorsResult);
+    },
+    sync: ASSIGN_SYNC,
+  });
+  const remote: AdminRemoteState<AdminQueueData> =
+    live.state.status === "ready"
+      ? { status: "success", data: live.state.value }
+      : live.state.status === "error"
+        ? { status: "error", message: live.state.message }
+        : { status: "loading" };
   const [assigningEvaluatorId, setAssigningEvaluatorId] = useState<number | null>(null);
   const [assignError, setAssignError] = useState("");
   const [assignNotice, setAssignNotice] = useState("");
@@ -990,32 +1014,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
   }, []);
   const assigningRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setRemote({ status: "loading" });
-
-    Promise.all([listPendingAssignmentInterviews(), listAdminEvaluators()]).then(
-      ([queueResult, evaluatorsResult]) => {
-        if (cancelled) return;
-        if (!queueResult.ok) {
-          setRemote({ status: "error", message: queueResult.message });
-        } else if (!evaluatorsResult.ok) {
-          setRemote({ status: "error", message: evaluatorsResult.message });
-        } else {
-          setRemote({
-            status: "success",
-            data: { interviews: queueResult.data, evaluators: evaluatorsResult.data },
-          });
-        }
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [attempt]);
-
-  const reload = () => setAttempt((value) => value + 1);
+  const reload = live.reload;
 
   const pending =
     remote.status === "success"
@@ -1032,6 +1031,9 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
     remote.status === "success"
       ? remote.data.evaluators.filter((evaluator) => evaluator.eligible)
       : [];
+
+  // Se outro Admin atribuiu a entrevista selecionada, ela some da fila e a seleção é descartada.
+  const selected = resolveSelection(selectedRaw, remote.status === "success" ? remote.data.interviews : []);
 
   const handleAssign = async (evaluator: AdminEvaluator) => {
     if (!selected || assigningRef.current) return;
@@ -1051,10 +1053,10 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
       setAssignError(result.message);
     }
 
-    // Em sucesso ou conflito (ex.: outro Admin atribuiu antes) a fila é
-    // recarregada da API; a tela nunca "adivinha" o novo estado localmente.
+    // Em sucesso ou conflito (ex.: outro Admin atribuiu antes) a fila é relida da API em
+    // silêncio (sem spinner); a tela nunca "adivinha" o novo estado localmente.
     setSelected(null);
-    reload();
+    void live.refresh({ supersede: true });
   };
 
   return (
