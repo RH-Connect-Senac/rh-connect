@@ -241,6 +241,14 @@ export function describeTrackingFailure(reason: string, message: string): Tracki
   return { title: "Não foi possível carregar o acompanhamento", description: message, canRetry: true };
 }
 
+/**
+ * Estado terminal do acompanhamento (6A.6): confirmado COMPLETED ou CANCELLED, não há mais
+ * transição a detectar e o sync da PendingScreen para. IN_PROGRESS, PENDING_* e ASSIGNED seguem.
+ */
+export function isTrackingTerminal(status: TrackingInterview["status"]): boolean {
+  return status === "COMPLETED" || status === "CANCELLED";
+}
+
 export type SubmitDestination = "status" | "success";
 
 /**

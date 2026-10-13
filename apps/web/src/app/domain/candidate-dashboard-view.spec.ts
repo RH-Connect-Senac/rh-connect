@@ -52,7 +52,7 @@ describe("Dashboard do candidato (6A.5): métricas", () => {
     expect(buildDashboardSummary(list)).toEqual({
       total: 6,
       inProgress: 1,
-      waiting: 3,
+      waiting: 2,
       completed: 2,
       resultsAvailable: 2,
       bestScore: 8.2,
@@ -182,5 +182,49 @@ describe("Dashboard do candidato (6A.5): falhas", () => {
     const failure = describeDashboardInterviewsFailure("error", "Não foi possível carregar o histórico de entrevistas. Tente novamente.");
     expect(failure.canRetry).toBe(true);
     expect(`${failure.title} ${failure.description}`).not.toMatch(/failed to fetch|prisma|groq|stack/i);
+  });
+});
+
+describe("Dashboard real (6A.6): 'Aguardando avaliação' = ASSIGNED + PENDING_AI_EVALUATION", () => {
+  const waiting = (items: RealHistoryItem[]) => buildDashboardSummary(items).waiting;
+
+  it("PENDING_ASSIGNMENT não conta; ASSIGNED conta; COMPLETED volta a 0 e libera o resultado", () => {
+    const base = item("PENDING_ASSIGNMENT");
+    expect(waiting([base])).toBe(0);
+    const assigned = { ...base, status: "ASSIGNED" as const, assignedAt: "2026-10-13T04:00:00.000Z" };
+    expect(waiting([assigned])).toBe(1);
+    expect(buildDashboardSummary([assigned]).resultsAvailable).toBe(0);
+    const done = { ...assigned, status: "COMPLETED" as const, completedAt: "2026-10-13T05:00:00.000Z", overallScore: 7.5, resultAvailable: true };
+    const summary = buildDashboardSummary([done]);
+    expect(summary.waiting).toBe(0);
+    expect(summary.resultsAvailable).toBe(1);
+    expect(summary.bestScore).toBe(7.5);
+  });
+
+  it("PENDING_AI_EVALUATION conta; IN_PROGRESS, COMPLETED e CANCELLED não contam", () => {
+    expect(waiting([item("PENDING_AI_EVALUATION", { evaluationMode: "AI" })])).toBe(1);
+    expect(waiting([item("IN_PROGRESS")])).toBe(0);
+    expect(waiting([item("COMPLETED")])).toBe(0);
+    expect(waiting([item("CANCELLED")])).toBe(0);
+  });
+
+  it("combinação: 2 PENDING_ASSIGNMENT + 3 ASSIGNED + 1 PENDING_AI_EVALUATION + 4 COMPLETED = 4", () => {
+    const mix = [
+      ...[1, 2].map(() => item("PENDING_ASSIGNMENT")),
+      ...[1, 2, 3].map(() => item("ASSIGNED")),
+      item("PENDING_AI_EVALUATION", { evaluationMode: "AI" }),
+      ...[1, 2, 3, 4].map(() => item("COMPLETED")),
+    ];
+    const summary = buildDashboardSummary(mix);
+    expect(summary.waiting).toBe(4);
+    expect(summary.total).toBe(10);
+    expect(summary.completed).toBe(4);
+    expect(summary.resultsAvailable).toBe(4);
+  });
+
+  it("PENDING_ASSIGNMENT segue na lista de recentes como 'Aguardando atribuição'", () => {
+    const recent = buildDashboardRecent([item("PENDING_ASSIGNMENT")]);
+    expect(recent).toHaveLength(1);
+    expect(recent[0].statusLabel).toBe("Aguardando atribuição");
   });
 });

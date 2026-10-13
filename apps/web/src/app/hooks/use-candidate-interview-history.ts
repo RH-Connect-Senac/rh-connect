@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo } from "react";
 import {
   listRealInterviewHistory,
   type RealInterviewHistory,
 } from "../services/candidate-interviews-service";
+import {
+  CANDIDATE_HISTORY_SYNC_INTERVAL_MS,
+  CANDIDATE_HISTORY_SYNC_MAX_BACKOFF_MS,
+} from "../domain/candidate-live-sync";
+import { useCandidateLiveResource } from "./use-candidate-live-resource";
 
 export type CandidateInterviewHistoryState =
   | { status: "loading" }
@@ -10,32 +15,26 @@ export type CandidateInterviewHistoryState =
   | { status: "error"; reason: string; message: string };
 
 /**
- * Entrevistas reais do candidato (GET /interviews) para o Dashboard (6A.5).
- * Uma única chamada ao montar e em `reload()` manual. Sem polling, sem listeners e sem
- * armazenamento do navegador: não deriva nada de mock nem de rascunho local.
+ * Entrevistas reais do candidato (GET /interviews), uma única fonte para Histórico e Dashboard.
+ *
+ * - `autoSync: true` (Histórico): sincroniza sozinho (30 s + focus/visible/online, pausa em
+ *   hidden/offline), só enquanto a tela está montada.
+ * - `autoSync: false` (Dashboard): NÃO cria polling próprio; o Dashboard chama `refresh()` no
+ *   seu ciclo único, junto com o de in-progress.
+ * Sem armazenamento do navegador, sem mock.
  */
-export function useCandidateInterviewHistory() {
-  const [state, setState] = useState<CandidateInterviewHistoryState>({ status: "loading" });
-  const requestId = useRef(0);
-
-  const reload = useCallback(async () => {
-    const current = ++requestId.current;
-    setState({ status: "loading" });
-    const result = await listRealInterviewHistory();
-    if (current !== requestId.current) return; // resposta obsoleta / desmontado
-    setState(
-      result.ok
-        ? { status: "ready", history: result.data }
-        : { status: "error", reason: result.reason, message: result.message },
-    );
-  }, []);
-
-  useEffect(() => {
-    void reload();
-    return () => {
-      requestId.current += 1;
-    };
-  }, [reload]);
-
-  return { state, reload };
+export function useCandidateInterviewHistory(options: { autoSync: boolean }) {
+  const live = useCandidateLiveResource<RealInterviewHistory>({
+    resourceKey: "candidate-interview-history",
+    fetch: () => listRealInterviewHistory(),
+    sync: options.autoSync
+      ? { intervalMs: CANDIDATE_HISTORY_SYNC_INTERVAL_MS, maxBackoffMs: CANDIDATE_HISTORY_SYNC_MAX_BACKOFF_MS }
+      : undefined,
+  });
+  const liveState = live.state;
+  const state = useMemo<CandidateInterviewHistoryState>(
+    () => (liveState.status === "ready" ? { status: "ready", history: liveState.value } : liveState),
+    [liveState],
+  );
+  return { state, reload: live.reload, refresh: live.refresh };
 }

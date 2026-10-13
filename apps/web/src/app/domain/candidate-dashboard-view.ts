@@ -24,7 +24,7 @@ export type DashboardSummary = {
   total: number;
   /** IN_PROGRESS. */
   inProgress: number;
-  /** PENDING_ASSIGNMENT + ASSIGNED + PENDING_AI_EVALUATION. */
+  /** ASSIGNED + PENDING_AI_EVALUATION (já há avaliador/IA responsável). PENDING_ASSIGNMENT NÃO conta: ainda aguarda o Admin atribuir. */
   waiting: number;
   /** COMPLETED. */
   completed: number;
@@ -34,7 +34,7 @@ export type DashboardSummary = {
   bestScore: number | null;
 };
 
-const WAITING: RealInterviewStatus[] = ["PENDING_ASSIGNMENT", "ASSIGNED", "PENDING_AI_EVALUATION"];
+const WAITING: RealInterviewStatus[] = ["ASSIGNED", "PENDING_AI_EVALUATION"];
 
 /** Entrevista COMPLETED com resultado disponível e nota numérica informada pelo Back. */
 function scoredResult(item: RealHistoryItem): number | null {

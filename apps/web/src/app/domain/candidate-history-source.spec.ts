@@ -25,8 +25,9 @@ describe("Histórico real (6A.4): fonte de dados", () => {
   });
 
   it("lê o histórico pelo serviço real (GET /interviews), uma única chamada", () => {
-    expect(HISTORY).toContain("listRealInterviewHistory()");
-    expect(HISTORY.match(/listRealInterviewHistory\(/g)).toHaveLength(1);
+    expect(HISTORY).toContain("useCandidateInterviewHistory({ autoSync: true })");
+    expect(APP_TSX.match(/useCandidateInterviewHistory\(\{ autoSync: true \}\)/g)).toHaveLength(1);
+    expect(code(read("hooks/use-candidate-interview-history.ts")).match(/listRealInterviewHistory\(/g)).toHaveLength(1);
     expect(SERVICE).toMatch(/request\("\/interviews", \{ method: "GET" \}\)/);
   });
 
@@ -73,14 +74,14 @@ describe("Histórico real (6A.4): CANCELLED oculta só na UI", () => {
     expect(VIEW).toContain("visibleHistoryItems");
     expect(VIEW).not.toMatch(/label: "Canceladas"/);
     expect(SERVICE).toContain('"CANCELLED"');
-    expect(HISTORY.match(/listRealInterviewHistory\(/g)).toHaveLength(1);
+    expect(HISTORY).not.toMatch(/listRealInterviewHistory\(/);
     expect(HISTORY).not.toMatch(/\?status=|cancelled=|CANCELLED/);
   });
 });
 
 describe("Histórico real (6A.4): estados e navegação", () => {
   it("tem loading, erro com retry e estado vazio próprios", () => {
-    expect(HISTORY).toContain('status: "loading"');
+    expect(HISTORY).toContain('loadState.status === "loading"');
     expect(HISTORY).toContain("Carregando o seu histórico de entrevistas...");
     expect(HISTORY).toContain("Tentar novamente");
     expect(HISTORY).toContain("HISTORY_EMPTY_VIEW");

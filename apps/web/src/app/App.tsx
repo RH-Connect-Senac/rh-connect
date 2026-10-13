@@ -189,7 +189,7 @@ import {
   type HistoryActionKind,
   type HistoryFilter,
 } from "./domain/candidate-history-view";
-import { buildTrackingView, describeTrackingFailure, resolveSubmitDestination } from "./domain/interview-tracking-view";
+import { buildTrackingView, describeTrackingFailure, isTrackingTerminal, resolveSubmitDestination } from "./domain/interview-tracking-view";
 import { diffServerState } from "./domain/interview-sync-reconcile";
 import { CANCELLED_TEXTAREA_CLASS, PROGRESS_LABELS, isCancelledSession, resolveProgressVisual } from "./domain/interview-terminal-view";
 import type { InterviewSyncResult } from "./domain/interview-sync-poller";
@@ -198,6 +198,8 @@ import { InterviewSessionTerminalContext } from "./hooks/interview-session-termi
 import { useInterviewSessionGuard } from "./hooks/use-interview-session-guard";
 import { useInProgressInterviews } from "./hooks/use-in-progress-interviews";
 import { useCandidateInterviewHistory } from "./hooks/use-candidate-interview-history";
+import { useCandidateLiveResource } from "./hooks/use-candidate-live-resource";
+import { CANDIDATE_TRACKING_SYNC_INTERVAL_MS, CANDIDATE_TRACKING_SYNC_MAX_BACKOFF_MS } from "./domain/candidate-live-sync";
 import {
   DASHBOARD_RECENT_EMPTY,
   buildDashboardRecent,
@@ -1185,6 +1187,64 @@ function AuthScreen({
 
 // ─── Screen 3: Dashboard ──────────────────────────────────────────────────────
 
+/**
+ * Casca ÚNICA de um card de "Entrevistas recentes". O item real e o skeleton usam esta mesma estrutura
+ * (mesmas classes, mesmos tamanhos de texto), então a altura do loading acompanha a do conteúdo.
+ */
+function RecentInterviewShell({ title, subtitle, badges, action }: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  badges: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
+          <Briefcase className="w-4 h-4 text-muted-foreground" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground truncate">{title}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            {badges}
+            {action}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Blocos neutros (texto invisível sobre fundo) que ocupam o mesmo espaço do texto real. */
+const skeletonBlock = "rounded bg-muted text-transparent select-none";
+
+/** Loading inicial de "Entrevistas recentes": até 3 cards com a mesma casca dos reais (reserva a altura, sem layout shift). */
+function RecentInterviewsSkeleton() {
+  return (
+    <div role="status" aria-busy="true" data-testid="recent-interviews-skeleton">
+      <span className="sr-only">Carregando suas entrevistas...</span>
+      <div className="space-y-3" aria-hidden="true">
+        {[0, 1, 2].map((index) => (
+          <div key={index} className={index > 0 ? "hidden lg:block" : ""}>
+            <RecentInterviewShell
+              title={<span className={`${skeletonBlock} inline-block max-w-full`}>Título da vaga carregando</span>}
+              subtitle={<span className={`${skeletonBlock} inline-block max-w-full`}>Empresa · 00/00/0000 00:00</span>}
+              badges={
+                <>
+                  <span className={`${skeletonBlock} rounded-full px-2 py-0.5 text-[11px] border border-transparent`}>Avaliação humana</span>
+                  <span className={`${skeletonBlock} rounded-full px-2.5 py-0.5 text-xs leading-[1.5] border border-transparent`}>Aguardando avaliação</span>
+                </>
+              }
+              action={<span className={`${skeletonBlock} rounded-lg px-3 py-1.5 text-xs font-semibold`}>Acompanhar</span>}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DashboardScreen({
   onNavigate,
   session,
@@ -1202,10 +1262,15 @@ function DashboardScreen({
   const inProgress = useInProgressInterviews();
   const reloadInProgress = inProgress.reload;
   // Entrevistas reais (GET /interviews): métricas e "Entrevistas recentes". CANCELLED fica fora (6A.4/6A.5).
-  const interviewsHistory = useCandidateInterviewHistory();
-  const reloadInterviewsHistory = interviewsHistory.reload;
+  const interviewsHistory = useCandidateInterviewHistory({ autoSync: false });
+  const refreshInterviewsHistory = interviewsHistory.refresh;
   // Dashboard reativo entre dispositivos (focus/visible/online + polling de 15 s), só enquanto montado.
-  useDashboardInterviewsSync(inProgress.refresh);
+  // UM único ciclo atualiza as duas fontes reais (in-progress e GET /interviews), em silêncio.
+  useDashboardInterviewsSync(async () => {
+    const [progress, history] = await Promise.all([inProgress.refresh(), refreshInterviewsHistory()]);
+    if (history === "stop") return "stop"; // 401/403: não insistir
+    return progress === "error" || history === "error" ? "error" : "ok";
+  });
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [resumeMessage, setResumeMessage] = useState<string | null>(null);
   const resumeInterview = async (interviewId: string) => {
@@ -1219,7 +1284,7 @@ function DashboardScreen({
     // Enviada/encerrada entre a listagem e o clique: atualiza a lista do Dashboard.
     if (result.reason === "not_in_progress" || result.reason === "not_found") {
       void reloadInProgress();
-      void reloadInterviewsHistory();
+      void refreshInterviewsHistory();
     }
   };
   const candidateUser = session.user;
@@ -1344,10 +1409,7 @@ function DashboardScreen({
                 <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{resumeMessage}</div>
               )}
               {interviewsHistory.state.status === "loading" ? (
-                <div className="py-8 text-center">
-                  <Spinner size="md" />
-                  <p className="text-xs text-muted-foreground mt-2">Carregando suas entrevistas...</p>
-                </div>
+                <RecentInterviewsSkeleton />
               ) : interviewsHistory.state.status === "error" ? (
                 (() => {
                   const failure = describeDashboardInterviewsFailure(interviewsHistory.state.reason, interviewsHistory.state.message);
@@ -1357,45 +1419,41 @@ function DashboardScreen({
                       title={failure.title}
                       description={failure.description}
                       className="border-none bg-muted/40 p-6"
-                      action={failure.canRetry ? <Btn size="sm" variant="outline" onClick={() => void reloadInterviewsHistory()}>Tentar novamente</Btn> : undefined}
+                      action={failure.canRetry ? <Btn size="sm" variant="outline" onClick={() => interviewsHistory.reload()}>Tentar novamente</Btn> : undefined}
                     />
                   );
                 })()
               ) : recentItems.length ? (
                 recentItems.map((item) => (
-                  <div key={item.id} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
-                        <Briefcase className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{item.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{[item.company, item.dateText].filter(Boolean).join(" · ")}</p>
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <EvaluationModeBadge mode={item.evaluationMode} />
-                          <StatusBadge tone={item.tone}><span className="truncate max-w-[140px] sm:max-w-none">{item.statusLabel}</span></StatusBadge>
-                          {item.action && (
-                            <Btn
-                              size="sm"
-                              variant={item.action.kind === "track" ? "outline" : "primary"}
-                              disabled={item.action.kind === "resume" && resumingId !== null}
-                              onClick={() => {
-                                if (!item.action) return;
-                                if (item.action.kind === "resume") {
-                                  void resumeInterview(item.id);
-                                  return;
-                                }
-                                const path = dashboardActionPath(item.action, item.id);
-                                if (path) routerNavigate(path);
-                              }}
-                            >
-                              {item.action.kind === "resume" && resumingId === item.id ? "Carregando..." : item.action.label}
-                            </Btn>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <RecentInterviewShell
+                    key={item.id}
+                    title={item.title}
+                    subtitle={[item.company, item.dateText].filter(Boolean).join(" · ")}
+                    badges={
+                      <>
+                        <EvaluationModeBadge mode={item.evaluationMode} />
+                        <StatusBadge tone={item.tone}><span className="truncate max-w-[140px] sm:max-w-none">{item.statusLabel}</span></StatusBadge>
+                      </>
+                    }
+                    action={item.action && (
+                      <Btn
+                        size="sm"
+                        variant={item.action.kind === "track" ? "outline" : "primary"}
+                        disabled={item.action.kind === "resume" && resumingId !== null}
+                        onClick={() => {
+                          if (!item.action) return;
+                          if (item.action.kind === "resume") {
+                            void resumeInterview(item.id);
+                            return;
+                          }
+                          const path = dashboardActionPath(item.action, item.id);
+                          if (path) routerNavigate(path);
+                        }}
+                      >
+                        {item.action.kind === "resume" && resumingId === item.id ? "Carregando..." : item.action.label}
+                      </Btn>
+                    )}
+                  />
                 ))
               ) : (
                 <EmptyState
@@ -3665,30 +3723,24 @@ function PendingScreen({
 }) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
-  const [loadState, setLoadState] = useState<TrackingLoadState>({ status: "loading" });
-  const [reloadKey, setReloadKey] = useState(0);
+  const validId = Boolean(id && isUuid(id));
+  // GET /interviews/:id com sincronização leve (15 s + focus/visible/online) SÓ enquanto o estado
+  // não é terminal (COMPLETED/CANCELLED). Refresh silencioso: sem spinner e sem redirecionar.
+  const live = useCandidateLiveResource<RealInterview>({
+    resourceKey: `tracking:${id ?? ""}`,
+    fetch: () =>
+      id && isUuid(id)
+        ? getRealInterview(id)
+        : Promise.resolve({ ok: false as const, reason: "not_found", message: "" }),
+    isTerminal: (interview) => isTrackingTerminal(interview.status),
+    sync: validId
+      ? { intervalMs: CANDIDATE_TRACKING_SYNC_INTERVAL_MS, maxBackoffMs: CANDIDATE_TRACKING_SYNC_MAX_BACKOFF_MS }
+      : undefined,
+  });
+  const loadState: TrackingLoadState =
+    live.state.status === "ready" ? { status: "ready", interview: live.state.value } : live.state;
   const [resuming, setResuming] = useState(false);
   const [resumeMessage, setResumeMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!id || !isUuid(id)) {
-      setLoadState({ status: "error", reason: "not_found", message: "" });
-      return;
-    }
-    setLoadState({ status: "loading" });
-    void getRealInterview(id).then((result) => {
-      if (cancelled) return;
-      setLoadState(
-        result.ok
-          ? { status: "ready", interview: result.data }
-          : { status: "error", reason: result.reason, message: result.message },
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, reloadKey]);
 
   if (loadState.status === "loading") {
     return (
@@ -3713,7 +3765,7 @@ function PendingScreen({
           action={
             <div className="flex flex-wrap items-center justify-center gap-2">
               {failure.canRetry && (
-                <Btn variant="primary" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</Btn>
+                <Btn variant="primary" onClick={() => live.reload()}>Tentar novamente</Btn>
               )}
               <Btn variant={failure.canRetry ? "outline" : "primary"} onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
             </div>
@@ -4169,11 +4221,6 @@ function ReportContent({ result, onNavigate }: { result: RealInterviewResult; on
 
 // ─── Fase A: CAN-007 Histórico de Entrevistas ─────────────────────────────────
 
-type HistoryLoadState =
-  | { status: "loading" }
-  | { status: "ready"; history: RealInterviewHistory }
-  | { status: "error"; reason: string; message: string };
-
 function InterviewHistoryScreen({
   onNavigate,
   onResumeInterview,
@@ -4182,27 +4229,12 @@ function InterviewHistoryScreen({
   onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
 }) {
   const routerNavigate = useNavigate();
-  const [loadState, setLoadState] = useState<HistoryLoadState>({ status: "loading" });
-  const [reloadKey, setReloadKey] = useState(0);
+  // GET /interviews com sincronização leve (30 s + focus/visible/online). Refresh silencioso: sem
+  // spinner, sem piscar, filtro e scroll preservados (o estado do filtro vive só nesta tela).
+  const { state: loadState, reload } = useCandidateInterviewHistory({ autoSync: true });
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [resumeMessage, setResumeMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoadState({ status: "loading" });
-    void listRealInterviewHistory().then((result) => {
-      if (cancelled) return;
-      setLoadState(
-        result.ok
-          ? { status: "ready", history: result.data }
-          : { status: "error", reason: result.reason, message: result.message },
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey]);
 
   const handleAction = async (kind: HistoryActionKind, id: string) => {
     if (kind === "resume") {
@@ -4234,7 +4266,7 @@ function InterviewHistoryScreen({
         title={failure.title}
         description={failure.description}
         className="p-10"
-        action={failure.canRetry ? <Btn variant="primary" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</Btn> : undefined}
+        action={failure.canRetry ? <Btn variant="primary" onClick={() => reload()}>Tentar novamente</Btn> : undefined}
       />
     );
   } else if (visibleHistoryItems(loadState.history.interviews).length === 0) {

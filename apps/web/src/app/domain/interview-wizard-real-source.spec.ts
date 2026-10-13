@@ -610,7 +610,9 @@ describe("Dashboard reativo entre dispositivos (código-fonte)", () => {
 
   it("o Dashboard liga o sync com a fonte real de in-progress, só enquanto está montado", () => {
     const dash = block("const inProgress = useInProgressInterviews();", "const [resumingId");
-    expect(dash).toContain("useDashboardInterviewsSync(inProgress.refresh)");
+    // 6A.6: o MESMO ciclo (um único uso) atualiza in-progress e GET /interviews
+    expect(dash).toContain("useDashboardInterviewsSync(async () => {");
+    expect(dash).toContain("inProgress.refresh()");
     // um único uso: nada de polling no site inteiro, wizard, admin, avaliador, histórico ou agenda
     expect(app.match(/useDashboardInterviewsSync\(/g)?.length).toBe(1);
     expect(app.match(/useInProgressInterviews\(\)/g)?.length).toBe(1);

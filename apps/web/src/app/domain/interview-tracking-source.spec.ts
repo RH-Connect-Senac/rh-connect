@@ -49,7 +49,7 @@ describe("PendingScreen real (6A.2): fonte de dados", () => {
     expect(PENDING).toContain("Carregando o acompanhamento");
     expect(PENDING).toContain("describeTrackingFailure(");
     expect(PENDING).toContain("buildTrackingView(");
-    expect(PENDING).toContain("setReloadKey");
+    expect(PENDING).toContain("live.reload()");
   });
 
   it("IN_PROGRESS retoma pelo caminho já existente (resumeInterviewFromServer)", () => {
