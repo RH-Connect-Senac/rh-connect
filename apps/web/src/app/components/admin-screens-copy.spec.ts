@@ -16,6 +16,5 @@ describe("admin-screens: nomenclatura 'Pontuação'", () => {
   it("mantém as copies padronizadas", () => {
     expect(SOURCE).toContain(">Pontuação</th>");
     expect(SOURCE).toContain("Pontuação Final");
-    expect(SOURCE).toContain("Pontuações por Critério");
   });
 });

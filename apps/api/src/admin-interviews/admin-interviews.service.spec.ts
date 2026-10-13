@@ -493,3 +493,262 @@ describe('AdminInterviewsService.assign', () => {
     });
   });
 });
+
+describe('AdminInterviewsService.list (7A.1)', () => {
+  const evaluatorRow = {
+    evaluator_profile_id: 3,
+    user_id: 9,
+    app_user: { name: 'Carlos Avaliador' },
+  };
+
+  function listRow(overrides: Record<string, unknown> = {}) {
+    return {
+      interview_id: INTERVIEW_ID,
+      status: 'PENDING_ASSIGNMENT',
+      evaluation_mode: 'HUMAN',
+      job_title: 'Desenvolvedor Front-end',
+      job_company: 'ACME',
+      created_at: at,
+      submitted_at: later,
+      assigned_at: null,
+      candidate: { user_id: 5, name: 'Maria Candidata', email: 'maria@gmail.com' },
+      evaluator_profile: null,
+      evaluation: null,
+      ...overrides,
+    };
+  }
+
+  it('exclui IN_PROGRESS e CANCELLED, ordena por envio desc e limita a 500', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([]);
+    prisma.interview.count.mockResolvedValue(0);
+
+    await service.list();
+
+    const args = prisma.interview.findMany.mock.calls[0][0];
+    expect(args.where).toEqual({
+      status: { notIn: ['IN_PROGRESS', 'CANCELLED'] },
+    });
+    expect(args.orderBy).toEqual([
+      { submitted_at: 'desc' },
+      { interview_id: 'desc' },
+    ]);
+    expect(args.take).toBe(500);
+    expect(prisma.interview.count.mock.calls[0][0].where).toEqual(args.where);
+  });
+
+  it('candidateId entra no WHERE da lista e do count', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([]);
+    prisma.interview.count.mockResolvedValue(0);
+
+    await service.list(5);
+
+    const args = prisma.interview.findMany.mock.calls[0][0];
+    expect(args.where).toEqual({
+      status: { notIn: ['IN_PROGRESS', 'CANCELLED'] },
+      candidate_user_id: 5,
+    });
+    expect(prisma.interview.count.mock.calls[0][0].where).toEqual(args.where);
+  });
+
+  it('zero resultados => total 0 e lista vazia', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([]);
+    prisma.interview.count.mockResolvedValue(0);
+
+    await expect(service.list(999)).resolves.toEqual({
+      total: 0,
+      interviews: [],
+    });
+  });
+
+  it('uma consulta + um count, sem N+1 (select aninhado)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([listRow(), listRow()]);
+    prisma.interview.count.mockResolvedValue(2);
+
+    await service.list();
+
+    expect(prisma.interview.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.interview.count).toHaveBeenCalledTimes(1);
+    expect(prisma.evaluator_profile.findMany).not.toHaveBeenCalled();
+    const select = prisma.interview.findMany.mock.calls[0][0].select;
+    expect(select.candidate).toBeDefined();
+    expect(select.evaluator_profile).toBeDefined();
+    expect(select.evaluation).toBeDefined();
+  });
+
+  it('select é mínimo: sem perguntas, respostas, critérios, resumo nem dados sensíveis', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([]);
+    prisma.interview.count.mockResolvedValue(0);
+
+    await service.list();
+
+    const select = prisma.interview.findMany.mock.calls[0][0].select;
+    const json = JSON.stringify(select);
+    expect(select.questions).toBeUndefined();
+    expect(select.job_summary).toBeUndefined();
+    expect(json).not.toMatch(
+      /password|token|session|summary|criteria|strengths|improvements|recommendations|answer|candidate_profile/i,
+    );
+    expect(select.evaluation).toEqual({
+      select: { status: true, overall_score: true, completed_at: true },
+    });
+    expect(select.evaluator_profile.select.app_user).toEqual({
+      select: { name: true },
+    });
+  });
+
+  it('item pendente: evaluator e evaluation nulos, datas em ISO, candidato seguro', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([listRow()]);
+    prisma.interview.count.mockResolvedValue(1);
+
+    const { total, interviews } = await service.list();
+
+    expect(total).toBe(1);
+    expect(interviews[0]).toEqual({
+      id: INTERVIEW_ID,
+      status: 'PENDING_ASSIGNMENT',
+      evaluationMode: 'HUMAN',
+      jobTitle: 'Desenvolvedor Front-end',
+      jobCompany: 'ACME',
+      createdAt: at.toISOString(),
+      submittedAt: later.toISOString(),
+      assignedAt: null,
+      candidate: { id: 5, name: 'Maria Candidata', email: 'maria@gmail.com' },
+      evaluator: null,
+      evaluation: null,
+    });
+  });
+
+  it('atribuída: evaluator preenchido, sem e-mail do avaliador, e rascunho sem nota', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([
+      listRow({
+        status: 'ASSIGNED',
+        assigned_at: later,
+        evaluator_profile: evaluatorRow,
+        evaluation: { status: 'DRAFT', overall_score: '7.5', completed_at: null },
+      }),
+    ]);
+    prisma.interview.count.mockResolvedValue(1);
+
+    const [item] = (await service.list()).interviews;
+
+    expect(item.assignedAt).toBe(later.toISOString());
+    expect(item.evaluator).toEqual({ id: 3, userId: 9, name: 'Carlos Avaliador' });
+    expect(item.evaluation).toEqual({
+      status: 'DRAFT',
+      overallScore: null,
+      completedAt: null,
+    });
+    expect(JSON.stringify(item)).not.toContain('email":"carlos');
+  });
+
+  it('nota somente para HUMAN com avaliação COMPLETED (sem recalcular)', async () => {
+    const { service, prisma } = makeService();
+    const completedAt = new Date('2026-10-11T12:00:00.000Z');
+    prisma.interview.findMany.mockResolvedValue([
+      listRow({
+        status: 'COMPLETED',
+        evaluator_profile: evaluatorRow,
+        evaluation: {
+          status: 'COMPLETED',
+          overall_score: { toString: () => '8.5' },
+          completed_at: completedAt,
+        },
+      }),
+    ]);
+    prisma.interview.count.mockResolvedValue(1);
+
+    const [item] = (await service.list()).interviews;
+
+    expect(item.evaluation).toEqual({
+      status: 'COMPLETED',
+      overallScore: 8.5,
+      completedAt: completedAt.toISOString(),
+    });
+  });
+
+  it('AI nunca expõe nota, mesmo com avaliação concluída', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([
+      listRow({
+        status: 'COMPLETED',
+        evaluation_mode: 'AI',
+        evaluation: {
+          status: 'COMPLETED',
+          overall_score: '9.0',
+          completed_at: later,
+        },
+      }),
+    ]);
+    prisma.interview.count.mockResolvedValue(1);
+
+    const [item] = (await service.list()).interviews;
+
+    expect(item.evaluationMode).toBe('AI');
+    expect(item.evaluation?.overallScore).toBeNull();
+  });
+
+  it('HUMAN COMPLETED sem overall_score gravado => null (não recalcula)', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([
+      listRow({
+        status: 'COMPLETED',
+        evaluation: { status: 'COMPLETED', overall_score: null, completed_at: later },
+      }),
+    ]);
+    prisma.interview.count.mockResolvedValue(1);
+
+    const [item] = (await service.list()).interviews;
+    expect(item.evaluation?.overallScore).toBeNull();
+  });
+
+  it('não expõe campos internos nem sensíveis', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([
+      listRow({
+        status: 'ASSIGNED',
+        evaluator_profile: evaluatorRow,
+        evaluation: { status: 'DRAFT', overall_score: null, completed_at: null },
+      }),
+    ]);
+    prisma.interview.count.mockResolvedValue(1);
+
+    const json = JSON.stringify((await service.list()).interviews[0]);
+    for (const forbidden of [
+      'password',
+      'token',
+      'session',
+      'candidate_user_id',
+      'evaluator_profile_id',
+      'summary',
+      'criteria',
+      'answer',
+    ]) {
+      expect(json).not.toContain(forbidden);
+    }
+  });
+
+  it('listPendingAssignment continua com o mesmo filtro e ordenação', async () => {
+    const { service, prisma } = makeService();
+    prisma.interview.findMany.mockResolvedValue([]);
+    prisma.interview.count.mockResolvedValue(0);
+
+    await service.listPendingAssignment();
+
+    const args = prisma.interview.findMany.mock.calls[0][0];
+    expect(args.where).toEqual({
+      evaluation_mode: 'HUMAN',
+      status: 'PENDING_ASSIGNMENT',
+    });
+    expect(args.orderBy).toEqual([
+      { submitted_at: 'asc' },
+      { created_at: 'asc' },
+    ]);
+  });
+});

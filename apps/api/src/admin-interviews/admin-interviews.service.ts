@@ -34,6 +34,35 @@ const CANDIDATE_SELECT = {
   },
 } as const;
 
+// Listagem geral (7A.1). `select` mínimo e explícito: sem resumo da vaga, sem
+// perguntas/respostas, sem critérios nem resumo do avaliador, sem e-mail do
+// avaliador e sem perfil do candidato.
+const LIST_SELECT = {
+  interview_id: true,
+  status: true,
+  evaluation_mode: true,
+  job_title: true,
+  job_company: true,
+  created_at: true,
+  submitted_at: true,
+  assigned_at: true,
+  candidate: { select: { user_id: true, name: true, email: true } },
+  evaluator_profile: {
+    select: {
+      evaluator_profile_id: true,
+      user_id: true,
+      app_user: { select: { name: true } },
+    },
+  },
+  evaluation: {
+    select: { status: true, overall_score: true, completed_at: true },
+  },
+} as const;
+
+// Rascunhos (IN_PROGRESS) e canceladas pelo candidato não são entrevistas
+// enviadas. Mesma regra do detalhe (`getById`).
+const NOT_VISIBLE_STATUSES = ['IN_PROGRESS', 'CANCELLED'] as const;
+
 const QUEUE_SELECT = {
   ...INTERVIEW_SELECT,
   candidate: { select: CANDIDATE_SELECT },
@@ -79,6 +108,75 @@ interface DetailRecord extends InterviewRecord {
     app_user: { name: string; email: string };
   } | null;
   assigned_by: { user_id: number; name: string } | null;
+}
+
+interface ListRecord {
+  interview_id: string;
+  status: string;
+  evaluation_mode: string | null;
+  job_title: string;
+  job_company: string | null;
+  created_at: Date;
+  submitted_at: Date | null;
+  assigned_at: Date | null;
+  candidate: { user_id: number; name: string; email: string };
+  evaluator_profile: {
+    evaluator_profile_id: number;
+    user_id: number;
+    app_user: { name: string };
+  } | null;
+  evaluation: {
+    status: string;
+    overall_score: { toString(): string } | number | null;
+    completed_at: Date | null;
+  } | null;
+}
+
+// A nota só é exposta para avaliação HUMAN concluída (mesma regra do Dashboard).
+// Nunca é recalculada: é o `overall_score` gravado na conclusão.
+function toListScore(record: ListRecord): number | null {
+  const evaluation = record.evaluation;
+  if (
+    record.evaluation_mode !== 'HUMAN' ||
+    !evaluation ||
+    evaluation.status !== 'COMPLETED' ||
+    evaluation.overall_score === null
+  ) {
+    return null;
+  }
+  return Number(evaluation.overall_score);
+}
+
+function toListItem(record: ListRecord) {
+  return {
+    id: record.interview_id,
+    status: record.status,
+    evaluationMode: record.evaluation_mode,
+    jobTitle: record.job_title,
+    jobCompany: record.job_company,
+    createdAt: record.created_at.toISOString(),
+    submittedAt: record.submitted_at?.toISOString() ?? null,
+    assignedAt: record.assigned_at?.toISOString() ?? null,
+    candidate: {
+      id: record.candidate.user_id,
+      name: record.candidate.name,
+      email: record.candidate.email,
+    },
+    evaluator: record.evaluator_profile
+      ? {
+          id: record.evaluator_profile.evaluator_profile_id,
+          userId: record.evaluator_profile.user_id,
+          name: record.evaluator_profile.app_user.name,
+        }
+      : null,
+    evaluation: record.evaluation
+      ? {
+          status: record.evaluation.status,
+          overallScore: toListScore(record),
+          completedAt: record.evaluation.completed_at?.toISOString() ?? null,
+        }
+      : null,
+  };
 }
 
 function toCandidate(record: CandidateRecord) {
@@ -138,6 +236,28 @@ function notAssignableMessage(status: string): string {
 export class AdminInterviewsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Listagem geral das entrevistas ENVIADAS (HUMAN e AI), mais recentes primeiro.
+  // `candidateId` (opcional, já validado no controller) restringe a um candidato.
+  // Uma consulta + um count, sem N+1. Sem paginação: teto de segurança de 500.
+  async list(candidateId?: number) {
+    const where = {
+      status: { notIn: [...NOT_VISIBLE_STATUSES] },
+      ...(candidateId !== undefined ? { candidate_user_id: candidateId } : {}),
+    };
+
+    const [records, total] = await Promise.all([
+      this.prisma.interview.findMany({
+        where,
+        select: LIST_SELECT,
+        orderBy: [{ submitted_at: 'desc' }, { interview_id: 'desc' }],
+        take: MAX_QUEUE_SIZE,
+      }),
+      this.prisma.interview.count({ where }),
+    ]);
+
+    return { total, interviews: records.map(toListItem) };
+  }
+
   // Somente HUMAN + PENDING_ASSIGNMENT, mais antigas primeiro.
   async listPendingAssignment() {
     const where = PENDING_ASSIGNMENT_WHERE;
@@ -161,7 +281,7 @@ export class AdminInterviewsService {
     const record = await this.prisma.interview.findFirst({
       where: {
         interview_id: interviewId,
-        status: { notIn: ['IN_PROGRESS', 'CANCELLED'] },
+        status: { notIn: [...NOT_VISIBLE_STATUSES] },
       },
       select: DETAIL_SELECT,
     });

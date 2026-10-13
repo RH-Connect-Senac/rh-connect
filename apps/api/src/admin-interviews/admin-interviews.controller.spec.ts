@@ -1,5 +1,9 @@
 import 'reflect-metadata';
-import { ExecutionContext, RequestMethod } from '@nestjs/common';
+import {
+  BadRequestException,
+  ExecutionContext,
+  RequestMethod,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
 // Ver comentário em interviews.controller.spec.ts: o JwtAuthGuard real usa o
@@ -82,6 +86,7 @@ describe('AdminInterviewsController (rotas e acesso)', () => {
 describe('AdminInterviewsController (delegação)', () => {
   function make() {
     const service = {
+      list: jest.fn().mockResolvedValue('list'),
       listPendingAssignment: jest.fn().mockResolvedValue('queue'),
       getById: jest.fn().mockResolvedValue('detail'),
       assign: jest.fn().mockResolvedValue('assigned'),
@@ -116,5 +121,57 @@ describe('AdminInterviewsController (delegação)', () => {
     await controller.assign(req, ID, body);
 
     expect(service.assign).toHaveBeenCalledWith(42, ID, 3);
+  });
+});
+
+describe('AdminInterviewsController.list (candidateId)', () => {
+  function make() {
+    const service = { list: jest.fn().mockResolvedValue('list') };
+    return {
+      service,
+      controller: new AdminInterviewsController(
+        service as unknown as AdminInterviewsService,
+      ),
+    };
+  }
+
+  it('sem filtro delega com undefined', async () => {
+    const { service, controller } = make();
+    await expect(controller.list(undefined)).resolves.toBe('list');
+    expect(service.list).toHaveBeenCalledWith(undefined);
+  });
+
+  it('candidateId válido vira número', async () => {
+    const { service, controller } = make();
+    await controller.list('7');
+    expect(service.list).toHaveBeenCalledWith(7);
+    await controller.list('2147483647');
+    expect(service.list).toHaveBeenLastCalledWith(2147483647);
+  });
+
+  it.each([
+    '',
+    '0',
+    '-1',
+    '1.5',
+    'abc',
+    '1e3',
+    '+5',
+    '007',
+    ' 5',
+    '2147483648',
+    '99999999999',
+  ])('candidateId inválido (%j) => 400 e não consulta', async (raw) => {
+    const { service, controller } = make();
+    expect(() => controller.list(raw)).toThrow(BadRequestException);
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it('candidateId repetido na query (array) => 400', () => {
+    const { service, controller } = make();
+    expect(() => controller.list(['1', '2'] as unknown as string)).toThrow(
+      BadRequestException,
+    );
+    expect(service.list).not.toHaveBeenCalled();
   });
 });

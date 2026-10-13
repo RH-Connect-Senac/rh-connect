@@ -21,3 +21,15 @@ export const ACTIVE_EVALUATOR_WHERE = {
 export function isEligibleEvaluatorStatus(accountStatus: string): boolean {
   return accountStatus === ELIGIBLE_EVALUATOR_ACCOUNT_STATUS;
 }
+
+// Filtro `candidateId` da listagem geral do Admin: inteiro positivo, compatível
+// com o `Int` do Postgres. Qualquer outra coisa (vazio, "abc", "1.5", "-1",
+// "1e3", repetido na query, maior que o limite) é inválida => 400.
+export const MAX_CANDIDATE_ID = 2147483647;
+
+export function parseCandidateIdFilter(raw: unknown): number | undefined | null {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string' || !/^[1-9]\d{0,9}$/.test(raw)) return null;
+  const value = Number(raw);
+  return value <= MAX_CANDIDATE_ID ? value : null;
+}

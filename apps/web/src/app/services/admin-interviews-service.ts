@@ -2,7 +2,8 @@
  * Fila de atribuição e avaliadores REAIS para o Admin (Fase 4).
  *
  * Lê/grava nos endpoints `GET /admin/interviews/pending-assignment`,
- * `GET /admin/evaluators` e `POST /admin/interviews/:id/assign`, protegidos por
+ * `GET /admin/evaluators`, `POST /admin/interviews/:id/assign` e (7A.1)
+ * `GET /admin/interviews`, protegidos por
  * `@Roles('ADMIN')` no Back. Não existe fallback: se a API falhar, o resultado
  * é um erro explícito — nunca uma lista fictícia. Nada é lido ou gravado em
  * localStorage, e nenhuma identidade (Admin, status) é enviada no corpo.
@@ -279,6 +280,202 @@ export async function listAdminEvaluators(): Promise<
   }
 
   return { ok: true, data: evaluators as AdminEvaluator[] };
+}
+
+// ─── Listagem geral de entrevistas (7A.1) ────────────────────────────────────
+// `GET /admin/interviews[?candidateId=]`: entrevistas ENVIADAS (HUMAN e AI) vindas
+// do banco. Substitui por completo o mock em localStorage. Sem fallback: erro é
+// erro. A nota (`overallScore`) vem pronta do Back, só para HUMAN concluída.
+
+export const ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE =
+  "Não foi possível carregar as entrevistas. Tente novamente.";
+
+export const ADMIN_INTERVIEW_STATUSES = [
+  "PENDING_ASSIGNMENT",
+  "ASSIGNED",
+  "COMPLETED",
+  "PENDING_AI_EVALUATION",
+] as const;
+export type AdminInterviewStatus = (typeof ADMIN_INTERVIEW_STATUSES)[number];
+
+export const ADMIN_INTERVIEW_EVALUATION_MODES = ["HUMAN", "AI"] as const;
+export type AdminInterviewEvaluationMode = (typeof ADMIN_INTERVIEW_EVALUATION_MODES)[number];
+
+export const ADMIN_INTERVIEW_EVALUATION_STATUSES = ["DRAFT", "COMPLETED"] as const;
+export type AdminInterviewEvaluationStatus = (typeof ADMIN_INTERVIEW_EVALUATION_STATUSES)[number];
+
+export type AdminInterviewListItem = {
+  id: string;
+  status: AdminInterviewStatus;
+  /** O banco permite `null`; na prática toda entrevista enviada tem modalidade. */
+  evaluationMode: AdminInterviewEvaluationMode | null;
+  jobTitle: string;
+  jobCompany: string | null;
+  createdAt: string;
+  submittedAt: string | null;
+  assignedAt: string | null;
+  candidate: { id: number; name: string; email: string };
+  evaluator: { id: number; userId: number; name: string } | null;
+  evaluation: {
+    status: AdminInterviewEvaluationStatus;
+    overallScore: number | null;
+    completedAt: string | null;
+  } | null;
+};
+
+export type AdminInterviewList = {
+  total: number;
+  interviews: AdminInterviewListItem[];
+};
+
+export type AdminInterviewsFilters = { candidateId?: string | number };
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// O Back serializa com `Date#toISOString()`: sempre `YYYY-MM-DDTHH:mm:ss.sssZ`.
+const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const CANDIDATE_ID_PATTERN = /^[1-9]\d{0,9}$/;
+const MAX_POSTGRES_INT = 2147483647;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function oneOf<T extends string>(list: readonly T[], value: unknown): T | null {
+  return typeof value === "string" && (list as readonly string[]).includes(value) ? (value as T) : null;
+}
+
+function isoInstant(value: unknown): string | null {
+  if (typeof value !== "string" || !ISO_INSTANT_PATTERN.test(value)) return null;
+  const time = new Date(value).getTime();
+  return !Number.isNaN(time) && new Date(time).toISOString() === value ? value : null;
+}
+
+function positiveInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= MAX_POSTGRES_INT
+    ? value
+    : null;
+}
+
+/** `candidateId` válido (inteiro positivo, limite do Int do banco) ou `null`. */
+export function normalizeAdminCandidateId(value: string | number | undefined): string | null {
+  if (value === undefined) return null;
+  const text = String(value);
+  if (!CANDIDATE_ID_PATTERN.test(text) || Number(text) > MAX_POSTGRES_INT) return null;
+  return text;
+}
+
+export function buildAdminInterviewsPath(filters: AdminInterviewsFilters = {}): string {
+  const candidateId = normalizeAdminCandidateId(filters.candidateId);
+  return candidateId ? `/admin/interviews?candidateId=${candidateId}` : "/admin/interviews";
+}
+
+function toAdminInterviewListItem(payload: unknown): AdminInterviewListItem | null {
+  if (!isRecord(payload)) return null;
+
+  const id = typeof payload.id === "string" && UUID_PATTERN.test(payload.id) ? payload.id : null;
+  const status = oneOf(ADMIN_INTERVIEW_STATUSES, payload.status);
+  const evaluationMode =
+    payload.evaluationMode === null ? null : oneOf(ADMIN_INTERVIEW_EVALUATION_MODES, payload.evaluationMode);
+  const createdAt = isoInstant(payload.createdAt);
+  const submittedAt = payload.submittedAt === null ? null : isoInstant(payload.submittedAt);
+  const assignedAt = payload.assignedAt === null ? null : isoInstant(payload.assignedAt);
+  const jobTitle = typeof payload.jobTitle === "string" && payload.jobTitle.trim() ? payload.jobTitle : null;
+  const jobCompany = payload.jobCompany === null ? null : typeof payload.jobCompany === "string" ? payload.jobCompany : undefined;
+
+  if (!id || !status || !createdAt || !jobTitle || jobCompany === undefined) return null;
+  if ((payload.evaluationMode !== null && evaluationMode === null) || (payload.submittedAt !== null && !submittedAt)) return null;
+  if (payload.assignedAt !== null && !assignedAt) return null;
+
+  const rawCandidate = payload.candidate;
+  if (!isRecord(rawCandidate)) return null;
+  const candidateId = positiveInt(rawCandidate.id);
+  if (
+    candidateId === null ||
+    typeof rawCandidate.name !== "string" ||
+    typeof rawCandidate.email !== "string"
+  ) {
+    return null;
+  }
+
+  let evaluator: AdminInterviewListItem["evaluator"] = null;
+  if (payload.evaluator !== null) {
+    const raw = payload.evaluator;
+    if (!isRecord(raw)) return null;
+    const evaluatorId = positiveInt(raw.id);
+    const evaluatorUserId = positiveInt(raw.userId);
+    if (evaluatorId === null || evaluatorUserId === null || typeof raw.name !== "string") return null;
+    evaluator = { id: evaluatorId, userId: evaluatorUserId, name: raw.name };
+  }
+
+  let evaluation: AdminInterviewListItem["evaluation"] = null;
+  if (payload.evaluation !== null) {
+    const raw = payload.evaluation;
+    if (!isRecord(raw)) return null;
+    const evaluationStatus = oneOf(ADMIN_INTERVIEW_EVALUATION_STATUSES, raw.status);
+    const completedAt = raw.completedAt === null ? null : isoInstant(raw.completedAt);
+    const score =
+      raw.overallScore === null
+        ? null
+        : typeof raw.overallScore === "number" && Number.isFinite(raw.overallScore) && raw.overallScore >= 0 && raw.overallScore <= 10
+          ? raw.overallScore
+          : undefined;
+    if (!evaluationStatus || score === undefined || (raw.completedAt !== null && !completedAt)) return null;
+    // Coerência: nota só existe para avaliação HUMAN concluída (regra do Back).
+    if (score !== null && (evaluationMode !== "HUMAN" || evaluationStatus !== "COMPLETED")) return null;
+    evaluation = { status: evaluationStatus, overallScore: score, completedAt };
+  }
+
+  return {
+    id,
+    status,
+    evaluationMode,
+    jobTitle,
+    jobCompany,
+    createdAt,
+    submittedAt,
+    assignedAt,
+    candidate: { id: candidateId, name: rawCandidate.name, email: rawCandidate.email },
+    evaluator,
+    evaluation,
+  };
+}
+
+export function parseAdminInterviewList(payload: unknown): AdminInterviewList | null {
+  if (!isRecord(payload) || !Array.isArray(payload.interviews)) return null;
+  const total = payload.total;
+  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) return null;
+
+  const interviews: AdminInterviewListItem[] = [];
+  for (const raw of payload.interviews) {
+    const item = toAdminInterviewListItem(raw);
+    if (!item) return null;
+    interviews.push(item);
+  }
+  return { total, interviews };
+}
+
+export async function listAdminInterviews(
+  filters: AdminInterviewsFilters = {},
+): Promise<AdminInterviewsResult<AdminInterviewList>> {
+  // `candidateId` informado porém inválido: nem chega a consultar o Back.
+  if (filters.candidateId !== undefined && normalizeAdminCandidateId(filters.candidateId) === null) {
+    return { ok: false, reason: "error", message: ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE };
+  }
+
+  const response = await requestAdminApi(buildAdminInterviewsPath(filters), { method: "GET" });
+
+  if (!response) {
+    return { ok: false, reason: "error", message: NETWORK_ERROR_MESSAGE };
+  }
+  if (!response.ok) {
+    return failureFromResponse(response, ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE);
+  }
+
+  const data = parseAdminInterviewList(await readJson(response));
+  if (!data) {
+    return { ok: false, reason: "error", message: INVALID_RESPONSE_MESSAGE };
+  }
+  return { ok: true, data };
 }
 
 // Envia SOMENTE o avaliador escolhido: o Admin vem do cookie/JWT e o status é

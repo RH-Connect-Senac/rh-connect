@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useContext, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import type { InterviewStatus } from "../domain/interviews";
 import type { MockAccountStatus } from "../services/auth-service";
 import { buildAdminProfileView } from "../domain/admin-profile-view";
 import {
@@ -49,21 +48,32 @@ import {
   type AdminCandidatesList,
 } from "../services/admin-candidates-service";
 import {
+  ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE,
   assignInterviewToEvaluator,
   listAdminEvaluators,
+  listAdminInterviews,
   listPendingAssignmentInterviews,
   type AdminEvaluator,
+  type AdminInterviewList,
   type AdminQueueInterview,
 } from "../services/admin-interviews-service";
 import {
-  getAdminVisibleInterviews,
-  getAssignmentByInterviewId,
-  getAverageScore,
-  getEvaluationByInterviewId,
-  formatScore,
-  getInterviewById,
-  statusLabelFromInterview,
-} from "../services/interviews-service";
+  ADMIN_INTERVIEWS_AWAITING_SCORE,
+  ADMIN_INTERVIEWS_EMPTY_MESSAGE,
+  ADMIN_INTERVIEWS_EMPTY_SEARCH_MESSAGE,
+  adminInterviewEvaluatorName,
+  adminInterviewReferenceDate,
+  adminInterviewScoreTone,
+  buildCandidateTimeline,
+  filterAdminInterviews,
+  formatAdminInterviewScore,
+  formatAdminInterviewShortId,
+  getAdminInterviewStatusLabel,
+  getAdminInterviewStatusTone,
+  pickCandidateInterview,
+  summarizeAdminInterviews,
+  type AdminTimelineIcon,
+} from "../domain/admin-interviews-view";
 import {
   ADMIN_ACCOUNT, ADMIN_NOTIFS, resolveAccountConfig,
 } from "./header-popovers";
@@ -182,13 +192,12 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
   title: string; subtitle?: string; actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  // Antes desta correção (Prompt 08), o cabeçalho/AccountDropdown do Admin
-  // sempre exibia o nome/e-mail de demonstração (`ADMIN_ACCOUNT`,
-  // "Ana Martins"), mesmo com um admin real autenticado — porque este
-  // componente não tinha acesso à sessão. Mesmo padrão já usado por
-  // `AuthLayout` (Candidato) em App.tsx. Os DADOS de negócio exibidos nas
-  // telas Admin (candidatos, avaliadores, entrevistas mock etc.) continuam
-  // mock — só a identidade do usuário autenticado no cabeçalho muda aqui.
+  // O cabeçalho/AccountDropdown do Admin usa a identidade da sessão real
+  // (`SessionContext`); `ADMIN_ACCOUNT` (demonstração) só vale sem sessão
+  // de Admin. Mesmo padrão de `AuthLayout` (Candidato) em App.tsx.
+  // Candidatos, avaliadores, dashboard, fila/atribuição e entrevistas já vêm
+  // da API. Seguem estáticas/mockadas, fora desse fluxo: notificações do
+  // cabeçalho, Cargos e Áreas, Configurações, Consentimentos e Auditoria.
   const activeSession = useContext(SessionContext);
   const resolvedAccount =
     activeSession.authenticated && activeSession.user?.role === "ADMIN"
@@ -212,7 +221,7 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
   );
 }
 
-// ─── Shared mock data ─────────────────────────────────────────────────────────
+// ─── Shared Admin types & helpers ─────────────────────────────────────────────
 
 type AdminCandidateRow = {
   id: string;
@@ -226,19 +235,6 @@ type AdminCandidateRow = {
   professionalTitle?: string;
 };
 
-type AdminInterviewRow = {
-  id: string;
-  candidateId?: string;
-  candidate: string;
-  job: string;
-  date: string;
-  status: string;
-  statusCode?: InterviewStatus;
-  evaluator: string;
-  score: number | null;
-  realId?: string;
-};
-
 function formatAdminInterviewDateTime(timestamp?: string) {
   if (!timestamp) return "—";
   const date = new Date(timestamp);
@@ -248,11 +244,6 @@ function formatAdminInterviewDateTime(timestamp?: string) {
 function formatAdminDate(timestamp?: string) {
   if (!timestamp) return "—";
   return new Date(timestamp).toLocaleDateString("pt-BR");
-}
-
-function createAdminInterviewDisplayId(index: number) {
-  const safeIndex = Math.max(0, index);
-  return `#E-${String(42 + safeIndex).padStart(4, "0")}`;
 }
 
 // Candidatos do Admin vêm exclusivamente da API (contas reais com role
@@ -381,32 +372,35 @@ function AdminLoadingCard({ label }: { label: string }) {
   );
 }
 
-function statusVariantFromAdminStatus(status: string): "default" | "success" | "warning" | "error" | "info" | "purple" {
-  if (status === "Aguardando" || status.startsWith("Aguardando avaliação")) return "warning";
-  if (status === "Em avaliação" || status === "Atribuída") return "info";
-  if (status === "Concluído" || status === "Avaliada") return "success";
-  return "default";
-}
+type AdminInterviewsState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "success"; data: AdminInterviewList };
 
-function createAdminInterviewRows(): AdminInterviewRow[] {
-  const realRows = getAdminVisibleInterviews().map((interview, index) => {
-    const assignment = getAssignmentByInterviewId(interview.id);
-    const evaluation = getEvaluationByInterviewId(interview.id);
-    return {
-      id: createAdminInterviewDisplayId(index),
-      candidateId: interview.candidateId,
-      candidate: interview.candidateName,
-      job: interview.context.title,
-      date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
-      status: statusLabelFromInterview(interview.status),
-      statusCode: interview.status,
-      evaluator: assignment?.evaluatorName ?? "—",
-      score: getAverageScore(evaluation?.scores),
-      realId: interview.id,
+// Entrevistas REAIS (GET /admin/interviews). Sem polling e sem fallback: carregando,
+// erro (com "Tentar novamente") ou dado do Back. `candidateId` restringe ao candidato;
+// `skip` impede a consulta (nunca cai na listagem geral por engano).
+function useAdminInterviews(options: { candidateId?: string; skip?: boolean } = {}) {
+  const { candidateId, skip = false } = options;
+  const [state, setState] = useState<AdminInterviewsState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (skip) return;
+    let cancelled = false;
+    setState({ status: "loading" });
+
+    listAdminInterviews(candidateId === undefined ? {} : { candidateId }).then((result) => {
+      if (cancelled) return;
+      setState(result.ok ? { status: "success", data: result.data } : { status: "error" });
+    });
+
+    return () => {
+      cancelled = true;
     };
-  });
+  }, [candidateId, skip, attempt]);
 
-  return realRows;
+  return { state, reload: () => setAttempt((value) => value + 1) };
 }
 
 // ─── Screen: Dashboard Administrativo ────────────────────────────────────────
@@ -879,42 +873,52 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
 export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
-  const interviewRows = createAdminInterviewRows();
-  const pendingCount = interviewRows.filter((item) => item.status === "Aguardando avaliação" || item.status === "Aguardando").length;
-  const evaluatingCount = interviewRows.filter((item) => item.status === "Em avaliação").length;
-  const completedCount = interviewRows.filter((item) => item.status === "Avaliada" || item.status === "Concluído").length;
+  const { state, reload } = useAdminInterviews();
 
-  const filtered = interviewRows.filter(i =>
-    i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase())
-  );
+  const interviews = state.status === "success" ? state.data.interviews : [];
+  const summary = summarizeAdminInterviews(interviews);
+  const filtered = filterAdminInterviews(interviews, search);
+  const loadingCards = state.status === "loading";
 
   return (
     <AdminLayout current="admin-interviews" onNavigate={onNavigate}
       title="Gestão de Entrevistas"
-      subtitle={`${interviewRows.length} entrevistas registradas`}
-      actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
+      subtitle={state.status === "success" ? `${state.data.total} ${state.data.total === 1 ? "entrevista registrada" : "entrevistas registradas"}` : undefined}>
       <div className="w-full space-y-4">
         <div className="grid grid-cols-3 gap-3">
-          <StatCard value={pendingCount}  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
-          <StatCard value={evaluatingCount}  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-          <StatCard value={completedCount} label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
+          <StatCard value={loadingCards || state.status === "error" ? "—" : summary.pendingAssignment} label="Aguardando atribuição" icon={Clock}        color="bg-amber-50 text-amber-600" />
+          <StatCard value={loadingCards || state.status === "error" ? "—" : summary.inEvaluation}       label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+          <StatCard value={loadingCards || state.status === "error" ? "—" : summary.completed}          label="Concluídas"            icon={CheckCircle}  color="bg-green-50 text-green-600" />
         </div>
 
         <SearchInput
           containerClassName="max-w-sm"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar..."
+          placeholder="Buscar por candidato ou vaga..."
           className="bg-white"
         />
 
-        {filtered.length === 0 ? (
+        {state.status === "loading" && <AdminLoadingCard label="Carregando entrevistas..." />}
+
+        {state.status === "error" && (
+          <EmptyState
+            icon={AlertCircle}
+            title="Não foi possível carregar as entrevistas"
+            description={ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE}
+            action={<Btn variant="outline" onClick={reload}>Tentar novamente</Btn>}
+          />
+        )}
+
+        {state.status === "success" && filtered.length === 0 && (
           <EmptyState
             icon={MessageSquare}
-            title="Nenhuma entrevista registrada"
-            description="As entrevistas enviadas pelos candidatos aparecerão aqui."
+            title={interviews.length === 0 ? ADMIN_INTERVIEWS_EMPTY_MESSAGE : ADMIN_INTERVIEWS_EMPTY_SEARCH_MESSAGE}
+            description={interviews.length === 0 ? "As entrevistas enviadas pelos candidatos aparecerão aqui." : undefined}
           />
-        ) : (
+        )}
+
+        {state.status === "success" && filtered.length > 0 && (
           <Card>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -931,37 +935,34 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filtered.map(i => (
-                    <tr key={i.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{i.id}</td>
-                      <td className="py-3.5 px-4 font-semibold text-foreground">{i.candidate}</td>
-                      <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{i.job}</td>
-                      <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{i.date}</td>
-                      <td className="py-3.5 px-4"><Badge variant={statusVariantFromAdminStatus(i.status)}>{i.status}</Badge></td>
-                      <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{i.evaluator}</td>
-                      <td className="py-3.5 px-4">
-                        {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{formatScore(i.score)}</Badge> : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="py-3.5 px-5">
-                        <button
-                          onClick={() => {
-                            if (i.realId && i.candidateId) {
-                              routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}?interviewId=${encodeURIComponent(i.realId)}`);
-                              return;
-                            }
-                            if (i.candidateId) {
-                              routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}`);
-                              return;
-                            }
-                            onNavigate("admin-candidate-detail");
-                          }}
-                          className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map(item => {
+                    const score = item.evaluation?.overallScore ?? null;
+                    return (
+                      <tr key={item.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground" title={item.id}>{formatAdminInterviewShortId(item.id)}</td>
+                        <td className="py-3.5 px-4 font-semibold text-foreground">{item.candidate.name}</td>
+                        <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{item.jobTitle}</td>
+                        <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{formatAdminInterviewDateTime(adminInterviewReferenceDate(item))}</td>
+                        <td className="py-3.5 px-4"><Badge variant={getAdminInterviewStatusTone(item)}>{getAdminInterviewStatusLabel(item)}</Badge></td>
+                        <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{adminInterviewEvaluatorName(item)}</td>
+                        <td className="py-3.5 px-4">
+                          {score !== null
+                            ? <Badge variant={adminInterviewScoreTone(score)}>{formatAdminInterviewScore(score)}</Badge>
+                            : <span className="text-muted-foreground" title={ADMIN_INTERVIEWS_AWAITING_SCORE}>—</span>}
+                        </td>
+                        <td className="py-3.5 px-5">
+                          <button
+                            type="button"
+                            aria-label={`Ver candidato ${item.candidate.name}`}
+                            onClick={() => routerNavigate(`/admin/candidates/${encodeURIComponent(String(item.candidate.id))}?interviewId=${encodeURIComponent(item.id)}`)}
+                            className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1680,20 +1681,18 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
   const { id: candidateIdParam } = useParams();
   const [searchParams] = useSearchParams();
   const interviewIdParam = searchParams.get("interviewId") ?? undefined;
-  const adminVisibleInterviews = getAdminVisibleInterviews();
   const candidateDetail = useAdminCandidateDetail(candidateIdParam);
   const candidateProfileState = useAdminCandidateProfile(candidateIdParam);
-  const relatedInterviews = adminVisibleInterviews.filter((item) => item.candidateId === candidateIdParam);
+  // Entrevistas do candidato: SEMPRE `GET /admin/interviews?candidateId=`. Sem candidato
+  // na URL nada é consultado (nunca cai na listagem geral).
+  const interviewsState = useAdminInterviews(
+    candidateIdParam ? { candidateId: candidateIdParam } : { skip: true },
+  );
+  // `interviewId` de outro candidato (ou inexistente) cai na mais recente DESTE candidato.
   const realInterview =
-    getInterviewById(interviewIdParam) ??
-    relatedInterviews[0] ??
-    null;
-  const realInterviewDisplayIndex = realInterview
-    ? adminVisibleInterviews.findIndex((item) => item.id === realInterview.id)
-    : -1;
-  const assignment = getAssignmentByInterviewId(realInterview?.id);
-  const evaluation = getEvaluationByInterviewId(realInterview?.id);
-  const averageScore = getAverageScore(evaluation?.scores);
+    interviewsState.state.status === "success"
+      ? pickCandidateInterview(interviewsState.state.data.interviews, candidateIdParam, interviewIdParam)
+      : null;
 
   if (candidateDetail.state.status !== "success") {
     const detailState = candidateDetail.state;
@@ -1730,35 +1729,42 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
     id: candidateAccount.id,
     name: candidateAccount.name,
     email: candidateAccount.email,
-    job: realInterview ? realInterview.context.title : "Conta de candidato",
-    status: realInterview ? statusLabelFromInterview(realInterview.status) : candidateAccount.onboardingLabel,
+    job: realInterview ? realInterview.jobTitle : "Conta de candidato",
+    status: realInterview ? getAdminInterviewStatusLabel(realInterview) : candidateAccount.onboardingLabel,
   };
 
   const interview = realInterview
     ? {
-        id: createAdminInterviewDisplayId(realInterviewDisplayIndex),
-        date: formatAdminInterviewDateTime(realInterview.submittedAt ?? realInterview.createdAt),
-        evaluator: assignment?.evaluatorName ?? "—",
-        score: averageScore,
+        id: formatAdminInterviewShortId(realInterview.id),
+        date: formatAdminInterviewDateTime(adminInterviewReferenceDate(realInterview)),
+        evaluator: adminInterviewEvaluatorName(realInterview),
+        score: realInterview.evaluation?.overallScore ?? null,
       }
     : null;
 
-  const criteriaScores = evaluation?.scores
-    ? Object.entries(evaluation.scores).map(([name, score]) => ({ name, score }))
-    : [];
-
-  const timeline = [
-    ...(candidateAccount.createdAt ? [{ date: formatAdminDate(candidateAccount.createdAt), label: "Cadastro criado", icon: FileText }] : []),
-    ...(candidateAccount.onboardingCompletedAt ? [{ date: formatAdminDate(candidateAccount.onboardingCompletedAt), label: "Onboarding concluído", icon: CheckCircle }] : []),
-    ...(realInterview
-      ? [
-          { date: formatAdminInterviewDateTime(realInterview.createdAt), label: "Entrevista criada", icon: FileText },
-          ...(realInterview.submittedAt ? [{ date: formatAdminInterviewDateTime(realInterview.submittedAt), label: "Entrevista enviada", icon: MessageSquare }] : []),
-          ...(assignment ? [{ date: formatAdminInterviewDateTime(assignment.assignedAt), label: "Avaliador atribuído", icon: Clock }] : []),
-          ...(evaluation?.completedAt ? [{ date: formatAdminInterviewDateTime(evaluation.completedAt), label: "Avaliação concluída", icon: CheckCircle }] : []),
-        ]
-      : []),
-  ];
+  // Apenas timestamps reais (conta + entrevista); nenhum evento inventado.
+  const timelineIcons: Record<AdminTimelineIcon, React.ElementType> = {
+    account: FileText,
+    onboarding: CheckCircle,
+    created: FileText,
+    submitted: MessageSquare,
+    assigned: Clock,
+    completed: CheckCircle,
+  };
+  const timeline = buildCandidateTimeline(
+    {
+      createdAt: candidateAccount.createdAt,
+      onboardingCompletedAt: candidateAccount.onboardingCompletedAt,
+    },
+    realInterview,
+  ).map((event) => ({
+    icon: timelineIcons[event.icon],
+    label: event.label,
+    date:
+      event.icon === "account" || event.icon === "onboarding"
+        ? formatAdminDate(event.at)
+        : formatAdminInterviewDateTime(event.at),
+  }));
 
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
@@ -1788,7 +1794,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
                   <p className="text-muted-foreground text-sm">{candidateDisplay.email}</p>
                   <p className="text-muted-foreground text-sm mt-0.5">{candidateDisplay.job}</p>
                 </div>
-                <Badge variant={realInterview ? statusVariantFromAdminStatus(candidateDisplay.status) : "info"}>
+                <Badge variant={realInterview ? getAdminInterviewStatusTone(realInterview) : "info"}>
                   {candidateDisplay.status}
                 </Badge>
               </div>
@@ -1820,13 +1826,21 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           </Card>
 
           {/* Interview info */}
-          {interview ? (
+          {interviewsState.state.status === "loading" ? (
+            <div className="lg:col-span-2"><AdminLoadingCard label="Carregando entrevistas do candidato..." /></div>
+          ) : interviewsState.state.status === "error" ? (
+            <Card className="p-5 lg:col-span-2">
+              <h3 className="font-bold text-foreground mb-2">Entrevistas</h3>
+              <p className="text-sm text-muted-foreground mb-3">{ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE}</p>
+              <Btn variant="outline" size="sm" onClick={interviewsState.reload}>Tentar novamente</Btn>
+            </Card>
+          ) : interview && realInterview ? (
             <Card className="p-5 lg:col-span-2">
               <h3 className="font-bold text-foreground mb-4">Dados da Entrevista</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground mb-0.5">ID da Entrevista</p>
-                  <p className="font-mono font-semibold text-foreground">{interview.id}</p>
+                  <p className="font-mono font-semibold text-foreground" title={realInterview.id}>{interview.id}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground mb-0.5">Data/hora de envio</p>
@@ -1839,31 +1853,10 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
                 <div>
                   <p className="text-muted-foreground mb-0.5">Pontuação Final</p>
                   {interview.score !== null
-                    ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{formatScore(interview.score)}</Badge>
-                    : <span className="text-muted-foreground">Aguardando avaliação</span>}
+                    ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{formatAdminInterviewScore(interview.score)}</Badge>
+                    : <span className="text-muted-foreground">{ADMIN_INTERVIEWS_AWAITING_SCORE}</span>}
                 </div>
               </div>
-
-              {/* Score criteria — only if completed */}
-              {interview.score !== null && (
-                <div className="mt-5 pt-5 border-t border-border">
-                  <p className="font-semibold text-foreground mb-3 text-sm">Pontuações por Critério</p>
-                  <div className="space-y-2.5">
-                    {criteriaScores.map(s => (
-                      <div key={s.name} className="flex items-center gap-3">
-                        <span className="text-xs text-foreground w-24 shrink-0">{s.name}</span>
-                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className={`h-1.5 rounded-full ${s.score >= 8 ? "bg-green-500" : s.score >= 6 ? "bg-blue-500" : "bg-amber-500"}`}
-                            style={{ width: `${s.score * 10}%` }} />
-                        </div>
-                        <span className={`text-xs font-bold w-5 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
-                          {formatScore(s.score)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </Card>
           ) : (
             <Card className="p-5 lg:col-span-2">
@@ -1878,7 +1871,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           <Btn variant="outline" onClick={() => onNavigate("admin-candidates")}>
             Voltar à Lista
           </Btn>
-          {realInterview && candidateDisplay.status !== "Concluído" && candidateDisplay.status !== "Avaliada" && (
+          {realInterview?.status === "PENDING_ASSIGNMENT" && (
             <Btn variant="primary" onClick={() => onNavigate("admin-assign")}>
               <UserCheck className="w-3.5 h-3.5" /> Atribuir Avaliador
             </Btn>
