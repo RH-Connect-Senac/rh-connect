@@ -26,6 +26,7 @@ const listItem = {
   jobTitle: "Secretária Comercial",
   company: "Clínica Exemplo",
   overallScore: 8.1,
+  assignedAt: "2026-10-09T12:00:00.000Z",
   completedAt: "2026-10-11T12:00:00.000Z",
   questionCount: 5,
 };
@@ -91,11 +92,29 @@ describe("histórico do avaliador: listCompletedEvaluations", () => {
           jobTitle: "Secretária Comercial",
           company: "Clínica Exemplo",
           overallScore: 8.1,
+          assignedAt: "2026-10-09T12:00:00.000Z",
           completedAt: "2026-10-11T12:00:00.000Z",
           questionCount: 5,
         },
       ],
     });
+  });
+
+  it("assignedAt: null e ausente viram null; string inválida ou tipo errado invalida a resposta", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { total: 1, evaluations: [{ ...listItem, assignedAt: null }] }));
+    const nullResult = await listCompletedEvaluations();
+    expect(nullResult.ok && nullResult.data[0].assignedAt).toBe(null);
+
+    const { assignedAt: _omitted, ...withoutAssignedAt } = listItem;
+    fetchMock.mockResolvedValue(jsonResponse(200, { total: 1, evaluations: [withoutAssignedAt] }));
+    const missingResult = await listCompletedEvaluations();
+    expect(missingResult.ok && missingResult.data[0].assignedAt).toBe(null);
+
+    for (const invalid of ["ontem", "", 1790000000000, {}, true]) {
+      fetchMock.mockResolvedValue(jsonResponse(200, { total: 1, evaluations: [{ ...listItem, assignedAt: invalid }] }));
+      const result = await listCompletedEvaluations();
+      expect(result.ok).toBe(false);
+    }
   });
 
   it("histórico vazio é sucesso (estado vazio real), nunca lista fictícia", async () => {

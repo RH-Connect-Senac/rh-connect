@@ -53,6 +53,8 @@ const LIST_SELECT = {
   interview_id: true,
   job_title: true,
   job_company: true,
+  // Dashboard (gráfico "Recebidas"): momento em que a entrevista chegou ao avaliador.
+  assigned_at: true,
   candidate: { select: CANDIDATE_SELECT },
   evaluation: { select: { overall_score: true, completed_at: true } },
   _count: { select: { questions: true } },
@@ -76,6 +78,7 @@ interface ListRecord {
   interview_id: string;
   job_title: string;
   job_company: string | null;
+  assigned_at: Date | null;
   candidate: CandidateRecord;
   evaluation: HistoryEvaluationRecord | null;
   _count: { questions: number };
@@ -103,6 +106,7 @@ function toListItem(record: ListRecord) {
     jobTitle: record.job_title,
     company: record.job_company,
     overallScore: toScore(record.evaluation?.overall_score ?? null),
+    assignedAt: record.assigned_at ?? null,
     completedAt: record.evaluation?.completed_at ?? null,
     questionCount: record._count.questions,
   };

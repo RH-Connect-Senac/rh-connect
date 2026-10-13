@@ -164,15 +164,16 @@ describe("guards: Dashboard usa a fonte única e a seção fica antes da Fila", 
     screens.indexOf("export function EvalQueueScreen"),
   );
   it("usa o inProgress de useAssignedQueue, sem request nem polling novos", () => {
-    expect(dash).toContain("const { pending: queue, inProgress, newIds, reload } = useAssignedQueue();");
+    expect(dash).toContain("const { pending: queue, inProgress, all, newIds, reload } = useAssignedQueue();");
     expect(dash).toMatch(/<EvaluatorContinueSection\s+state=\{inProgress\}/);
     expect(dash).toContain('onSeeAll={() => onNavigate("eval-active")}');
+    // O histórico entra por `useCompletedHistory` (hook de sync existente), nunca por polling manual.
     expect(dash).not.toMatch(/fetch|listAssignedInterviews|useEvaluatorListSync|setInterval|setTimeout/);
   });
   it("ordem: cards numéricos, Continuar avaliando, Próximas na fila", () => {
-    const cards = dash.indexOf("Avaliações pendentes");
+    const cards = dash.indexOf("<EvaluatorMetricCards");
     const cont = dash.indexOf("<EvaluatorContinueSection");
-    const fila = dash.indexOf("Próximas na fila");
+    const fila = dash.indexOf("<EvaluatorUpcomingQueue");
     expect(cards).toBeGreaterThan(-1);
     expect(cards < cont).toBe(true);
     expect(cont < fila).toBe(true);
@@ -186,8 +187,8 @@ describe("guards: Dashboard usa a fonte única e a seção fica antes da Fila", 
     expect(src).not.toMatch(/Outras em andamento|continue-featured|Continuar avaliação|FEATURED/);
     expect(render({ status: "ready", items: [a, b] })).not.toContain("Outras em andamento");
   });
-  it("a Fila do Dashboard segue independente (pendentes, 3 primeiras, newIds)", () => {
-    expect(dash).toContain("queue.items.slice(0, 3)");
+  it("a Fila do Dashboard segue independente (pendentes, limite no domínio, newIds)", () => {
+    expect(dash).toMatch(/<EvaluatorUpcomingQueue\s+state=\{queue\}/);
     expect(dash).toContain("newIds={newIds}");
   });
   it("a seção não faz request, não usa storage e a rota de 'Ver todas' existe", () => {

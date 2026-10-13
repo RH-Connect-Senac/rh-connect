@@ -96,6 +96,9 @@ export type CompletedEvaluationItem = {
   jobTitle: string;
   company: string | null;
   overallScore: number | null;
+  // Quando a entrevista chegou ao avaliador (`interview.assigned_at`). Alimenta
+  // "Recebidas" do gráfico do Dashboard; null se o Back não informar.
+  assignedAt: string | null;
   completedAt: string | null;
   questionCount: number;
 };
@@ -438,14 +441,24 @@ function finiteNumberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+// Timestamp ISO estrito: string parseável ou null/ausente (=> null). Qualquer
+// outro formato invalida o item (nunca vira data inventada).
+function strictIsoOrNull(value: unknown): { ok: true; value: string | null } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value !== "string" || Number.isNaN(new Date(value).getTime())) return { ok: false };
+  return { ok: true, value };
+}
+
 function toCompletedItem(payload: unknown): CompletedEvaluationItem | null {
   const item = asRecord(payload);
   if (!item) return null;
   const candidate = toCandidate(item.candidate);
+  const assignedAt = strictIsoOrNull(item.assignedAt);
   if (
     typeof item.interviewId !== "string" ||
     typeof item.jobTitle !== "string" ||
-    !candidate
+    !candidate ||
+    !assignedAt.ok
   ) {
     return null;
   }
@@ -455,6 +468,7 @@ function toCompletedItem(payload: unknown): CompletedEvaluationItem | null {
     jobTitle: item.jobTitle,
     company: nullableString(item.company),
     overallScore: finiteNumberOrNull(item.overallScore),
+    assignedAt: assignedAt.value,
     completedAt: nullableString(item.completedAt),
     questionCount: typeof item.questionCount === "number" ? item.questionCount : 0,
   };

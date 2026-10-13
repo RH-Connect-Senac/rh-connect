@@ -175,11 +175,54 @@ describe('EvaluatorHistoryService.listCompleted', () => {
           jobTitle: 'Secretária Comercial',
           company: 'Clínica Exemplo',
           overallScore: 8,
+          assignedAt: submitted,
           completedAt: older,
           questionCount: 2,
         },
       ],
     });
+  });
+
+  it('expõe assignedAt (assigned_at da entrevista) no item da lista', async () => {
+    const assigned = new Date('2026-09-01T12:00:00.000Z');
+    const { service } = makeService(
+      [interview(ID_A, { assigned_at: assigned })],
+      PROFILES,
+    );
+
+    const result = await service.listCompleted(CAMILA_USER_ID);
+
+    expect(result.evaluations[0].assignedAt).toBe(assigned);
+    expect(JSON.parse(JSON.stringify(result)).evaluations[0].assignedAt).toBe(
+      '2026-09-01T12:00:00.000Z',
+    );
+  });
+
+  it('assignedAt nulo no banco continua nulo (sem inventar data)', async () => {
+    const { service } = makeService(
+      [interview(ID_A, { assigned_at: null })],
+      PROFILES,
+    );
+
+    const result = await service.listCompleted(CAMILA_USER_ID);
+
+    expect(result.evaluations[0].assignedAt).toBeNull();
+  });
+
+  it('seleciona assigned_at na consulta da lista, sem campos sensíveis', async () => {
+    const { service, prisma } = makeService([], PROFILES);
+
+    await service.listCompleted(CAMILA_USER_ID);
+
+    const call = (
+      prisma.interview.findMany.mock.calls as unknown as [
+        { select: Record<string, unknown> },
+      ][]
+    )[0][0];
+    expect(call.select.assigned_at).toBe(true);
+    expect(JSON.stringify(call.select)).not.toMatch(
+      /password|token|summary|criteria_scores|email/i,
+    );
   });
 
   it('filtra por avaliador, HUMAN, COMPLETED e avaliação COMPLETED, com teto', async () => {

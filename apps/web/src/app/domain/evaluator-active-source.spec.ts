@@ -125,7 +125,7 @@ describe("sincronização leve do avaliador (6A.3): onde há e onde NÃO há pol
     expect(SCREENS).toMatch(
       /useEvaluatorListSync\(\{\s*fetch: listAssignedInterviews,\s*intervalMs: EVALUATOR_QUEUE_SYNC_INTERVAL_MS,\s*maxBackoffMs: EVALUATOR_QUEUE_SYNC_MAX_BACKOFF_MS,/,
     );
-    expect(SCREENS.match(/useEvaluatorListSync\(/g)?.length).toBe(2); // fila + histórico
+    expect(SCREENS.match(/useEvaluatorListSync\(/g)?.length).toBe(3); // fila + histórico + histórico do Dashboard
     expect(read("domain/evaluator-list-sync.ts")).toContain("EVALUATOR_QUEUE_SYNC_INTERVAL_MS = 15000");
     expect(read("domain/evaluator-list-sync.ts")).toContain("EVALUATOR_QUEUE_SYNC_MAX_BACKOFF_MS = 60000");
   });

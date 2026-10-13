@@ -8,7 +8,6 @@
 
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
-import { Layers } from "lucide-react";
 import { SessionContext } from "../session-context";
 import {
   completeEvaluation,
@@ -52,6 +51,14 @@ import {
 } from "./evaluator-real-content";
 import { EvaluatorActiveContent } from "./evaluator-active-content";
 import { EvaluatorContinueSection } from "./evaluator-continue-section";
+import {
+  EvaluatorMetricCards,
+  EvaluatorRecentCompleted,
+  EvaluatorUpcomingQueue,
+  EvaluatorWeekActivity,
+  type WeekActivityState,
+} from "./evaluator-dashboard-content";
+import { buildDashboardMetrics, buildWeekActivity } from "../domain/evaluator-dashboard-view";
 import {
   EvaluatorHistoryContent,
   EvaluatorHistoryDetailContent,
@@ -99,6 +106,8 @@ const EVALUATION_ROUTE = "/evaluator/evaluations";
 type QueueSource = {
   pending: EvaluatorQueueState;
   inProgress: EvaluatorQueueState;
+  // Fila COMPLETA (pendentes + em andamento): base de "Recebidas" no gráfico do Dashboard.
+  all: EvaluatorQueueState;
   // Ids que ACABARAM de chegar por refresh (nunca na carga inicial).
   newIds: ReadonlySet<string>;
   reload: () => void;
@@ -128,20 +137,31 @@ function useAssignedQueue(): QueueSource {
     [state],
   );
 
-  return { ...partitioned, newIds, reload };
+  return { ...partitioned, all: state, newIds, reload };
 }
 
 function firstName(name: string | undefined) {
   return name?.trim().split(/\s+/)[0] ?? "";
 }
 
+// Histórico do Dashboard: fonte INDEPENDENTE da fila (cada uma com seu loading,
+// erro e retry). Mesmo motor de sync do Histórico: 30s, pausa em hidden/offline,
+// retoma em focus/visible/online, backoff e parada em 401/403.
+function useCompletedHistory() {
+  return useEvaluatorListSync({
+    fetch: listCompletedEvaluations,
+    intervalMs: EVALUATOR_HISTORY_SYNC_INTERVAL_MS,
+    maxBackoffMs: EVALUATOR_HISTORY_SYNC_MAX_BACKOFF_MS,
+  });
+}
+
 export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const session = useContext(SessionContext);
-  const { pending: queue, inProgress, newIds, reload } = useAssignedQueue();
+  const { pending: queue, inProgress, all, newIds, reload } = useAssignedQueue();
+  const [history, reloadHistory] = useCompletedHistory();
   const name = firstName(session.user?.name);
   const pending = queue.status === "ready" ? queue.items.length : null;
-  const active = inProgress.status === "ready" ? inProgress.items.length : null;
 
   const greeting = name ? `Bem-vindo de volta, ${name}.` : "Bem-vindo de volta.";
   const subtitle =
@@ -149,19 +169,30 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
       ? greeting
       : `${greeting} Você tem ${pending} ${pending === 1 ? "avaliação pendente" : "avaliações pendentes"}.`;
 
+  // Derivados SÓ dos dados reais já sincronizados; recalculados a cada refresh.
+  const metrics = useMemo(
+    () =>
+      buildDashboardMetrics({
+        queue: all.status === "ready" ? all.items : null,
+        history: history.status === "ready" ? history.items : null,
+        now: new Date(),
+      }),
+    [all, history],
+  );
+  const week = useMemo<WeekActivityState>(() => {
+    if (all.status === "error") return { status: "error", message: all.message };
+    if (history.status === "error") return { status: "error", message: history.message };
+    if (all.status !== "ready" || history.status !== "ready") return { status: "loading" };
+    return {
+      status: "ready",
+      activity: buildWeekActivity({ queue: all.items, history: history.items, now: new Date() }),
+    };
+  }, [all, history]);
+
   return (
     <EvalLayout current="eval-dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={subtitle}>
       <div className="w-full space-y-5">
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-          <div className="rounded-2xl border border-border bg-card p-4">
-            <p className="text-2xl font-bold text-foreground">{pending ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">Avaliações pendentes</p>
-          </div>
-          <div className="rounded-2xl border border-border bg-card p-4">
-            <p className="text-2xl font-bold text-foreground">{active ?? "—"}</p>
-            <p className="text-xs text-muted-foreground">Em andamento</p>
-          </div>
-        </div>
+        <EvaluatorMetricCards metrics={metrics} />
 
         <EvaluatorContinueSection
           state={inProgress}
@@ -169,26 +200,33 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
           onSeeAll={() => onNavigate("eval-active")}
         />
 
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-2 font-bold text-foreground">
-              <Layers className="size-4 text-amber-500" aria-hidden="true" /> Próximas na fila
-            </h3>
-            <button
-              type="button"
-              className="text-sm font-semibold text-primary hover:underline"
-              onClick={() => onNavigate("eval-queue")}
-            >
-              Ver todas
-            </button>
+        <div className="grid grid-cols-1 gap-5 2xl:grid-cols-5">
+          <div className="min-w-0 2xl:col-span-3">
+            <EvaluatorUpcomingQueue
+              state={queue}
+              onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
+              onSeeAll={() => onNavigate("eval-queue")}
+              onRetry={reload}
+              newIds={newIds}
+            />
           </div>
-          <EvaluatorQueueContent
-            state={queue.status === "ready" ? { status: "ready", items: queue.items.slice(0, 3) } : queue}
-            onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
-            onRetry={reload}
-            newIds={newIds}
-          />
-        </section>
+          <div className="min-w-0 self-start 2xl:col-span-2">
+            <EvaluatorWeekActivity
+              state={week}
+              onRetry={() => {
+                if (all.status === "error") reload();
+                if (history.status === "error") reloadHistory();
+              }}
+            />
+          </div>
+        </div>
+
+        <EvaluatorRecentCompleted
+          state={history}
+          onSeeHistory={() => onNavigate("eval-history")}
+          onView={(id) => routerNavigate(`${HISTORY_ROUTE}/${id}`)}
+          onRetry={reloadHistory}
+        />
       </div>
     </EvalLayout>
   );
