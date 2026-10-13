@@ -121,11 +121,13 @@ import {
   getRealQuestionsState,
   getRealQuestionsStateForResume,
   isUuid,
+  listRealInterviewHistory,
   saveRealAnswer,
   saveRealAnswerDraft,
   saveRealEvaluationMode,
   submitRealInterview,
   type RealInterview,
+  type RealInterviewHistory,
   type RealInterviewResult,
   type RealInterviewQuestion,
   type RealInterviewStatus,
@@ -174,6 +176,19 @@ import {
   type ReportFailureAction,
   type ReportFailureView,
 } from "./domain/candidate-report-view";
+import {
+  HISTORY_EMPTY_VIEW,
+  HISTORY_FILTERS,
+  HISTORY_FILTER_EMPTY_MESSAGE,
+  buildHistoryItemView,
+  countByFilter,
+  describeHistoryFailure,
+  filterHistory,
+  historyActionPath,
+  visibleHistoryItems,
+  type HistoryActionKind,
+  type HistoryFilter,
+} from "./domain/candidate-history-view";
 import { buildTrackingView, describeTrackingFailure, resolveSubmitDestination } from "./domain/interview-tracking-view";
 import { diffServerState } from "./domain/interview-sync-reconcile";
 import { CANCELLED_TEXTAREA_CLASS, PROGRESS_LABELS, isCancelledSession, resolveProgressVisual } from "./domain/interview-terminal-view";
@@ -4185,80 +4200,150 @@ function ReportContent({ result, onNavigate }: { result: RealInterviewResult; on
 
 // ─── Fase A: CAN-007 Histórico de Entrevistas ─────────────────────────────────
 
+type HistoryLoadState =
+  | { status: "loading" }
+  | { status: "ready"; history: RealInterviewHistory }
+  | { status: "error"; reason: string; message: string };
+
 function InterviewHistoryScreen({
   onNavigate,
-  session,
-  activeDraftEntry,
-  onContinueDraft,
+  onResumeInterview,
 }: {
   onNavigate: (s: Screen) => void;
-  session: MockAuthSession;
-  activeDraftEntry?: StoredInterviewDraftEntry | null;
-  onContinueDraft?: () => void;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
 }) {
   const routerNavigate = useNavigate();
-  const candidateIdentity = getCandidateIdentity(session);
-  const candidateInterviews = getCandidateInterviews(candidateIdentity.id);
-  type CandidateHistoryItem = {
-    id: string;
-    vaga: string;
-    empresa: string;
-    data: string;
-    hora?: string;
-    perguntas: number;
-    status: string;
-    nota: string | null;
-    badge: "success" | "warning" | "default" | "info";
-    realId?: string;
-    draft?: boolean;
-    evaluationMode?: EvaluationMode | null;
-  };
-  const realHistory = candidateInterviews.map((interview) => {
-    const report = getReportByInterviewId(interview.id);
-    const evaluation = getEvaluationByInterviewId(interview.id);
-    const average = getAverageScore(evaluation?.scores);
-    const interviewTimestamp = interview.submittedAt ?? interview.createdAt;
-    const interviewDate = new Date(interviewTimestamp);
-    return {
-      id: interview.id,
-      vaga: interview.context.title,
-      empresa: interview.context.company,
-      data: interviewDate.toLocaleDateString("pt-BR"),
-      hora: interviewDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      perguntas: interview.answers.length,
-      status: report?.status === "AVAILABLE" ? "Concluída" : statusLabelFromInterview(interview.status),
-      nota: average ? average.toFixed(1) : null,
-      badge: report?.status === "AVAILABLE" ? "success" as const : "warning" as const,
-      realId: interview.id,
-      evaluationMode: interview.evaluationMode,
-    };
-  });
-  const draftHistoryItem: CandidateHistoryItem[] = activeDraftEntry?.draft.context
-    ? [{
-      id: "active-interview-draft",
-      vaga: activeDraftEntry.draft.context.title,
-      empresa: activeDraftEntry.draft.context.company,
-      data: new Date(activeDraftEntry.updatedAt).toLocaleDateString("pt-BR"),
-      hora: new Date(activeDraftEntry.updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      perguntas: activeDraftEntry.draft.questions.length,
-      status: "Em andamento",
-      nota: null,
-      badge: "info" as const,
-      draft: true,
-      evaluationMode: activeDraftEntry.draft.evaluationMode,
-    }]
-    : [];
-  const historyItems = [...draftHistoryItem, ...realHistory];
-  const inProgressCount = historyItems.filter((item) => item.status === "Em andamento").length;
+  const [loadState, setLoadState] = useState<HistoryLoadState>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
+  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeMessage, setResumeMessage] = useState<string | null>(null);
 
-  const [filtro, setFiltro] = useState("Todos");
-  const filtered = historyItems.filter(h => {
-    if (filtro === "Todos") return true;
-    if (filtro === "Concluídas") return h.status === "Concluída";
-    if (filtro === "Aguardando") return h.status.includes("Aguardando");
-    if (filtro === "Em andamento") return h.status === "Em andamento";
-    return true;
-  });
+  useEffect(() => {
+    let cancelled = false;
+    setLoadState({ status: "loading" });
+    void listRealInterviewHistory().then((result) => {
+      if (cancelled) return;
+      setLoadState(
+        result.ok
+          ? { status: "ready", history: result.data }
+          : { status: "error", reason: result.reason, message: result.message },
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
+
+  const handleAction = async (kind: HistoryActionKind, id: string) => {
+    if (kind === "resume") {
+      if (!onResumeInterview || resumingId) return;
+      setResumingId(id);
+      setResumeMessage(null);
+      const result = await onResumeInterview(id);
+      setResumingId(null);
+      if (!result.ok) setResumeMessage(result.message);
+      return;
+    }
+    const path = historyActionPath(kind, id);
+    if (path) routerNavigate(path);
+  };
+
+  let content: ReactNode;
+  if (loadState.status === "loading") {
+    content = (
+      <Card className="p-10 text-center">
+        <Spinner />
+        <p className="text-sm text-muted-foreground mt-3">Carregando o seu histórico de entrevistas...</p>
+      </Card>
+    );
+  } else if (loadState.status === "error") {
+    const failure = describeHistoryFailure(loadState.reason, loadState.message);
+    content = (
+      <EmptyState
+        icon={AlertCircle}
+        title={failure.title}
+        description={failure.description}
+        className="p-10"
+        action={failure.canRetry ? <Btn variant="primary" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</Btn> : undefined}
+      />
+    );
+  } else if (visibleHistoryItems(loadState.history.interviews).length === 0) {
+    content = (
+      <EmptyState
+        icon={History}
+        title={HISTORY_EMPTY_VIEW.title}
+        description={HISTORY_EMPTY_VIEW.description}
+        className="p-10"
+        action={<Btn variant="primary" onClick={() => onNavigate("interview-setup")}>{HISTORY_EMPTY_VIEW.cta}</Btn>}
+      />
+    );
+  } else {
+    const all = visibleHistoryItems(loadState.history.interviews);
+    const counts = countByFilter(all);
+    const filtered = filterHistory(all, filter);
+    content = (
+      <>
+        <Card className="p-4 sm:p-5">
+          <div className="flex flex-wrap gap-3 items-center">
+            <span className="text-sm font-semibold text-foreground shrink-0">Filtrar por:</span>
+            {HISTORY_FILTERS.map((option) => (
+              <FilterChip key={option.key} onClick={() => setFilter(option.key)} selected={option.key === filter}>
+                {option.key === "all" ? option.label : `${option.label} (${counts[option.key]})`}
+              </FilterChip>
+            ))}
+          </div>
+        </Card>
+
+        {resumeMessage && (
+          <p role="alert" className="text-sm text-red-600">{resumeMessage}</p>
+        )}
+
+        <div className="space-y-3">
+          {filtered.length === 0 && (
+            <EmptyState
+              className="p-8"
+              title={<span className="text-sm font-normal text-muted-foreground">{HISTORY_FILTER_EMPTY_MESSAGE}</span>}
+            />
+          )}
+          {filtered.map((item) => {
+            const h = buildHistoryItemView(item);
+            return (
+              <Card key={h.id} className="p-4 sm:p-5 hover:shadow-md transition-all">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <p className="font-bold text-foreground text-sm">{h.title}</p>
+                      <StatusBadge tone={h.tone}>{h.statusLabel}</StatusBadge>
+                      <EvaluationModeBadge mode={h.evaluationMode} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{h.meta.join(" · ")}</p>
+                    {h.dateText && <p className="text-xs text-muted-foreground mt-0.5">{h.dateText}</p>}
+                    {h.score && (
+                      <p className="text-xs font-semibold text-green-700 mt-1.5">Nota: {h.score} / 10</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    {h.actions.map((action) => (
+                      <Btn
+                        key={action.kind}
+                        variant={action.variant}
+                        size="sm"
+                        disabled={action.kind === "resume" && resumingId !== null}
+                        onClick={() => void handleAction(action.kind, h.id)}
+                      >
+                        {action.kind === "resume" && resumingId === h.id ? "Abrindo..." : action.label}
+                      </Btn>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
 
   return (
     <AuthLayout
@@ -4267,70 +4352,7 @@ function InterviewHistoryScreen({
       title="Histórico de Entrevistas"
       subtitle="Todas as suas entrevistas simuladas"
     >
-      <div className="w-full space-y-4">
-        {/* Filtros */}
-        <Card className="p-4 sm:p-5">
-          <div className="flex flex-wrap gap-3 items-center">
-            <span className="text-sm font-semibold text-foreground shrink-0">Filtrar por:</span>
-            {["Todos", "Concluídas", "Aguardando", "Em andamento"].map(f => (
-              <FilterChip key={f} onClick={() => setFiltro(f)} selected={f === filtro}>
-                {f === "Em andamento" ? `Em andamento (${inProgressCount})` : f}
-              </FilterChip>
-            ))}
-          </div>
-        </Card>
-
-        {/* Lista */}
-        <div className="space-y-3">
-          {filtered.length === 0 && (
-            <EmptyState
-              className="p-8"
-              title={<span className="text-sm font-normal text-muted-foreground">Nenhuma entrevista encontrada para este filtro.</span>}
-            />
-          )}
-          {filtered.map((h) => (
-            <Card key={h.id} className="p-4 sm:p-5 hover:shadow-md transition-all">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <p className="font-bold text-foreground text-sm">{h.vaga}</p>
-                    <StatusBadge tone={statusToneFromBadge(h.badge)}>{h.status}</StatusBadge>
-                    <EvaluationModeBadge mode={h.evaluationMode} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {h.empresa} · {h.perguntas} perguntas · {h.data}{h.hora ? ` · ${h.hora}` : ""}
-                  </p>
-                  {h.nota && (
-                    <p className="text-xs font-semibold text-green-700 mt-1.5">Nota: {h.nota} / 10</p>
-                  )}
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  {h.draft && (
-                    <Btn variant="primary" size="sm" onClick={onContinueDraft}>
-                      Continuar entrevista
-                    </Btn>
-                  )}
-                  {h.nota && (
-                    <Btn variant="primary" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/reports/${h.realId}`) : onNavigate("report")}>
-                      Ver relatório
-                    </Btn>
-                  )}
-                  {h.badge === "warning" && (
-                    <Btn variant="outline" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/interviews/${h.realId}/status`) : onNavigate("pending")}>
-                      Acompanhar
-                    </Btn>
-                  )}
-                  {!h.draft && (
-                    <Btn variant="secondary" size="sm" onClick={() => onNavigate("interview-setup")}>
-                      Praticar novamente
-                    </Btn>
-                  )}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
+      <div className="w-full space-y-4">{content}</div>
     </AuthLayout>
   );
 }
@@ -7476,7 +7498,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
+          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} onResumeInterview={resumeInterviewFromServer} />)} />
           <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/agenda" element={protect("CANDIDATE", <InterviewAgendaScreen onNavigate={navigate} session={session} />)} />

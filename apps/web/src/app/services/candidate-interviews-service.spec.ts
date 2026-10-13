@@ -9,6 +9,7 @@ import {
   getRealQuestions,
   getRealQuestionsStateForResume,
   listInProgressInterviews,
+  listRealInterviewHistory,
   getRealQuestionsState,
   saveRealAnswer,
   saveRealAnswerDraft,
@@ -852,6 +853,103 @@ describe("resultado real do candidato (6A.3): GET /interviews/:id/result", () =>
 
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const network = await getRealInterviewResult(INTERVIEW_ID);
+    expect(!network.ok && network.message).not.toMatch(/failed to fetch/i);
+  });
+});
+
+describe("histórico real do candidato (6A.4): GET /interviews", () => {
+  function historyItem(overrides: Record<string, unknown> = {}) {
+    return {
+      id: INTERVIEW_ID,
+      status: "COMPLETED",
+      evaluationMode: "HUMAN",
+      title: "Analista de Dados",
+      company: "ACME",
+      location: "São Paulo",
+      contractType: "CLT",
+      workMode: "REMOTE",
+      submittedAt: "2026-10-12T13:00:00.000Z",
+      createdAt: "2026-10-12T12:00:00.000Z",
+      updatedAt: "2026-10-13T03:28:52.775Z",
+      assignedAt: "2026-10-13T01:00:00.000Z",
+      completedAt: "2026-10-13T03:28:52.775Z",
+      questionCount: 5,
+      overallScore: 5.6,
+      resultAvailable: true,
+      ...overrides,
+    };
+  }
+
+  it("faz UMA chamada GET /interviews com cookies (sem /result e sem N+1)", async () => {
+    fetchMock.mockResolvedValueOnce(json({ total: 2, interviews: [historyItem(), historyItem({ id: Q_IDS[0], status: "IN_PROGRESS", overallScore: null, resultAvailable: false })] }));
+    const result = await listRealInterviewHistory();
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const { url, init } = lastCall();
+    expect(url).toMatch(/\/interviews$/);
+    expect(init.method).toBe("GET");
+    expect(init.credentials).toBe("include");
+  });
+
+  it("devolve overallScore e resultAvailable exatamente como o Back, na ordem do Back", async () => {
+    fetchMock.mockResolvedValueOnce(json({ total: 2, interviews: [historyItem({ id: Q_IDS[1], overallScore: 5.6 }), historyItem({ id: Q_IDS[0], createdAt: "2026-09-01T10:00:00.000Z", overallScore: 9, resultAvailable: false })] }));
+    const result = await listRealInterviewHistory();
+    expect(result.ok && result.data.total).toBe(2);
+    expect(result.ok && result.data.interviews.map((item) => item.id)).toEqual([Q_IDS[1], Q_IDS[0]]);
+    expect(result.ok && result.data.interviews.map((item) => item.overallScore)).toEqual([5.6, 9]);
+    expect(result.ok && result.data.interviews.map((item) => item.resultAvailable)).toEqual([true, false]);
+  });
+
+  it("aceita os seis status reais e a lista vazia", async () => {
+    const statuses = ["IN_PROGRESS", "PENDING_ASSIGNMENT", "ASSIGNED", "COMPLETED", "CANCELLED", "PENDING_AI_EVALUATION"];
+    fetchMock.mockResolvedValueOnce(json({ total: 6, interviews: statuses.map((status, index) => historyItem({ id: `00000000-0000-4000-8000-00000000010${index}`, status, overallScore: null, resultAvailable: false })) }));
+    const full = await listRealInterviewHistory();
+    expect(full.ok && full.data.interviews.map((item) => item.status)).toEqual(statuses);
+    fetchMock.mockResolvedValueOnce(json({ total: 0, interviews: [] }));
+    const empty = await listRealInterviewHistory();
+    expect(empty.ok && empty.data).toEqual({ total: 0, interviews: [] });
+  });
+
+  it("campos opcionais ausentes viram null (sem placeholder)", async () => {
+    fetchMock.mockResolvedValueOnce(json({ total: 1, interviews: [historyItem({ company: null, location: undefined, contractType: null, workMode: "OUTRO", submittedAt: null, completedAt: null, overallScore: null, evaluationMode: null })] }));
+    const result = await listRealInterviewHistory();
+    const item = result.ok ? result.data.interviews[0] : null;
+    expect(item).toMatchObject({ company: null, location: null, contractType: null, workMode: null, submittedAt: null, completedAt: null, overallScore: null, evaluationMode: null });
+  });
+
+  it("resposta inválida (formato, status, id, nota ou flag) vira erro amigável", async () => {
+    const invalids: unknown[] = [
+      { interviews: [] },
+      { total: 1, interviews: "x" },
+      { total: 1, interviews: [historyItem({ status: "OUTRO" })] },
+      { total: 1, interviews: [historyItem({ id: "nao-uuid" })] },
+      { total: 1, interviews: [historyItem({ overallScore: "5.6" })] },
+      { total: 1, interviews: [historyItem({ resultAvailable: "true" })] },
+      { total: 1, interviews: [historyItem({ questionCount: -1 })] },
+      [],
+    ];
+    for (const body of invalids) {
+      fetchMock.mockResolvedValueOnce(json(body));
+      const result = await listRealInterviewHistory();
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.message).not.toMatch(/undefined|TypeError|prisma|groq/i);
+    }
+  });
+
+  it("401/403 e 5xx devolvem mensagem amigável (sem texto técnico)", async () => {
+    fetchMock.mockResolvedValueOnce(json({ message: "Forbidden resource" }, 403));
+    const forbidden = await listRealInterviewHistory();
+    expect(!forbidden.ok && forbidden.reason).toBe("forbidden");
+    fetchMock.mockResolvedValueOnce(json({ message: "PrismaClientKnownRequestError at stack" }, 500));
+    const failed = await listRealInterviewHistory();
+    expect(failed.ok).toBe(false);
+    expect(!failed.ok && failed.message).not.toMatch(/prisma|stack|groq|500/i);
+  });
+
+  it("falha de rede devolve mensagem amigável", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const network = await listRealInterviewHistory();
+    expect(network.ok).toBe(false);
     expect(!network.ok && network.message).not.toMatch(/failed to fetch/i);
   });
 });

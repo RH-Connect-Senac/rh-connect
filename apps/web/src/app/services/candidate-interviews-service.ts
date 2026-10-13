@@ -2,6 +2,7 @@
  * Entrevista REAL do candidato (Fase 2B) — cliente dos endpoints das Fases 1 e 2.
  *
  *   POST  /interviews                                 cria a Interview (IN_PROGRESS)
+ *   GET   /interviews                                 histórico do candidato (uma chamada, sem N+1)
  *   GET   /interviews/:id                             lê a Interview
  *   GET   /interviews/:id/result                      resultado HUMAN concluído (relatório do candidato)
  *   POST  /interviews/:id/questions/generate          gera/recupera as 5 perguntas (idempotente)
@@ -157,6 +158,36 @@ export type RealInProgressInterview = {
   questionCount: number;
   answeredQuestionCount: number;
   latestDraftUpdatedAt: string | null;
+};
+
+/**
+ * Item de `GET /interviews` (6A.4): resumo do Histórico. Sem perguntas/respostas (só a contagem).
+ * `overallScore` e `resultAvailable` vêm do Back e são a verdade da UI (nada é recalculado).
+ */
+export type RealHistoryItem = {
+  id: string;
+  status: RealInterviewStatus;
+  evaluationMode: RealEvaluationMode | null;
+  title: string;
+  company: string | null;
+  location: string | null;
+  contractType: string | null;
+  workMode: "REMOTE" | "HYBRID" | "ONSITE" | null;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+  assignedAt: string | null;
+  completedAt: string | null;
+  questionCount: number;
+  overallScore: number | null;
+  resultAvailable: boolean;
+};
+
+export type RealInterviewHistory = {
+  /** Total informado pelo Back (pode superar `interviews.length` se houver teto de segurança). */
+  total: number;
+  /** Mesma ordem do Back (createdAt DESC, desempate por id). */
+  interviews: RealHistoryItem[];
 };
 
 export type CandidateInterviewFailure =
@@ -340,6 +371,49 @@ function toInterviewResult(payload: unknown): RealInterviewResult | null {
       completedAt: nullableString(evaluation.completedAt),
     },
     questions: (questions as RealResultQuestion[]).sort((a, b) => a.position - b.position),
+  };
+}
+
+function toHistoryItem(payload: unknown): RealHistoryItem | null {
+  if (!payload || typeof payload !== "object") return null;
+  const item = payload as Record<string, unknown>;
+  const status = STATUSES.find((candidate) => candidate === item.status);
+  if (
+    !isUuid(item.id) ||
+    !status ||
+    typeof item.title !== "string" ||
+    typeof item.createdAt !== "string" ||
+    typeof item.resultAvailable !== "boolean" ||
+    typeof item.questionCount !== "number" ||
+    !Number.isInteger(item.questionCount) ||
+    item.questionCount < 0
+  ) {
+    return null;
+  }
+  if (item.overallScore !== null && item.overallScore !== undefined) {
+    if (typeof item.overallScore !== "number" || !Number.isFinite(item.overallScore)) return null;
+  }
+  return {
+    id: item.id,
+    status,
+    evaluationMode:
+      item.evaluationMode === "AI" || item.evaluationMode === "HUMAN" ? item.evaluationMode : null,
+    title: item.title,
+    company: nullableString(item.company),
+    location: nullableString(item.location),
+    contractType: nullableString(item.contractType),
+    workMode:
+      item.workMode === "REMOTE" || item.workMode === "HYBRID" || item.workMode === "ONSITE"
+        ? item.workMode
+        : null,
+    submittedAt: nullableString(item.submittedAt),
+    createdAt: item.createdAt,
+    updatedAt: nullableString(item.updatedAt),
+    assignedAt: nullableString(item.assignedAt),
+    completedAt: nullableString(item.completedAt),
+    questionCount: item.questionCount,
+    overallScore: typeof item.overallScore === "number" ? item.overallScore : null,
+    resultAvailable: item.resultAvailable,
   };
 }
 
@@ -573,6 +647,27 @@ export async function listInProgressInterviews(): Promise<
   const items = payload.map(toInProgressInterview);
   if (items.some((i) => i === null)) return invalidResponse();
   return { ok: true, data: items as RealInProgressInterview[] };
+}
+
+/**
+ * Histórico real do candidato (`GET /interviews`): UMA chamada, sem N+1 e sem `/result`.
+ * Mantém a ordem do Back (createdAt DESC).
+ */
+export async function listRealInterviewHistory(): Promise<
+  CandidateInterviewResult<RealInterviewHistory>
+> {
+  const response = await request("/interviews", { method: "GET" });
+  if (!response) return networkFailure();
+  if (!response.ok) {
+    return failureFromResponse(response, "Não foi possível carregar o histórico de entrevistas. Tente novamente.");
+  }
+  const body = await readJson(response);
+  if (!body || !Array.isArray(body.interviews) || typeof body.total !== "number" || !Number.isFinite(body.total)) {
+    return invalidResponse();
+  }
+  const items = body.interviews.map(toHistoryItem);
+  if (items.some((item) => item === null)) return invalidResponse();
+  return { ok: true, data: { total: body.total, interviews: items as RealHistoryItem[] } };
 }
 
 export const CANCEL_OFFLINE_MESSAGE =

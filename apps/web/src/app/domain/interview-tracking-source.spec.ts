@@ -70,7 +70,8 @@ describe("rotas preservadas", () => {
 
   it("o pós-envio e o histórico continuam navegando para /status", () => {
     expect(APP_TSX).toContain("`/candidate/interviews/${interview.id}/status`");
-    expect(APP_TSX).toContain("`/candidate/interviews/${h.realId}/status`");
+    // Histórico real (6A.4): o destino de "Acompanhar" vive no módulo puro do Histórico.
+    expect(readFileSync(join(APP, "domain/candidate-history-view.ts"), "utf8")).toContain("`/candidate/interviews/${id}/status`");
   });
 });
 
