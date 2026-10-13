@@ -109,6 +109,10 @@ export type RealInterview = {
   evaluationMode: RealEvaluationMode | null;
   submittedAt: string | null;
   createdAt: string;
+  /** Carimbos reais do Back (6A.1). null = não informado ou ainda não ocorreu. */
+  assignedAt: string | null;
+  /** Só preenchido quando a avaliação HUMANA foi concluída (nunca `updated_at`). */
+  completedAt: string | null;
   title: string;
   company: string | null;
   /** Contexto COMPLETO da vaga (necessário para reconstruir o wizard em outro dispositivo). */
@@ -237,6 +241,8 @@ function toInterview(payload: unknown): RealInterview | null {
         : null,
     submittedAt: nullableString(item.submittedAt),
     createdAt: item.createdAt,
+    assignedAt: nullableString(item.assignedAt),
+    completedAt: nullableString(item.completedAt),
     title: context.title,
     company: nullableString(context.company),
     context: {

@@ -164,6 +164,7 @@ import {
   staleNoticeTone,
 } from "./domain/interview-session-guard";
 import { startInterviewForContext } from "./domain/interview-start";
+import { buildTrackingView, describeTrackingFailure, resolveSubmitDestination } from "./domain/interview-tracking-view";
 import { diffServerState } from "./domain/interview-sync-reconcile";
 import { CANCELLED_TEXTAREA_CLASS, PROGRESS_LABELS, isCancelledSession, resolveProgressVisual } from "./domain/interview-terminal-view";
 import type { InterviewSyncResult } from "./domain/interview-sync-poller";
@@ -3633,146 +3634,228 @@ function ReviewScreen({ onNavigate, draft, onStaleExit }: { onNavigate: (s: Scre
   );
 }
 
-// ─── Screen 10: Avaliação Pendente ────────────────────────────────────────────
+// ─── Screen 10: Acompanhamento da entrevista (real, 6A.2) ─────────────────────
+// Fonte da verdade: GET /interviews/:id (Interview persistida). Sem mock e sem localStorage de
+// domínio. O resultado NÃO é carregado aqui: só há um CTA para /candidate/reports/:id.
 
-function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+type TrackingLoadState =
+  | { status: "loading" }
+  | { status: "error"; reason: string; message: string }
+  | { status: "ready"; interview: RealInterview };
+
+const TRACKING_TONE_CLASSES: Record<"warning" | "info" | "success" | "neutral", string> = {
+  warning: "bg-amber-50 border-amber-200 text-amber-500",
+  info: "bg-blue-50 border-blue-200 text-blue-600",
+  success: "bg-green-50 border-green-200 text-green-600",
+  neutral: "bg-muted border-border text-muted-foreground",
+};
+
+const TRACKING_ABOUT: Record<"HUMAN" | "AI", { q: string; a: string }[]> = {
+  HUMAN: [
+    { q: "Quem avalia?", a: "Um avaliador humano autorizado, com critérios padronizados de RH." },
+    { q: "O que você vai receber?", a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
+    { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
+  ],
+  AI: [
+    { q: "Quem avalia?", a: "A IA Avaliadora do RH Connect analisa suas respostas considerando o contexto da vaga." },
+    { q: "O que você vai receber?", a: "Pontos fortes, pontos de atenção e recomendações para evoluir." },
+    { q: "Quem vê minhas respostas?", a: "Apenas perfis autorizados envolvidos no funcionamento da plataforma." },
+  ],
+};
+
+function PendingScreen({
+  onNavigate,
+  onResumeInterview,
+}: {
+  onNavigate: (s: Screen) => void;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
+}) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
-  const interview = getInterviewById(id);
-  const report = getReportByInterviewId(id);
-  const candidateIdentity = getCandidateIdentity(session);
-  const evaluationMode = interview?.evaluationMode ?? "HUMAN";
-  const pendingDescription = evaluationMode === "AI"
-    ? "Sua entrevista foi recebida com sucesso e será analisada pela IA Avaliadora do RH Connect."
-    : "Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.";
-  const pendingStatusLabel = evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação";
-  const evaluationInfo = evaluationMode === "AI"
-    ? [
-        { q: "Quem avalia?",             a: "A IA Avaliadora do RH Connect analisa suas respostas considerando o contexto da vaga." },
-        { q: "Quando sai o resultado?",  a: "O relatório será disponibilizado após o processamento da avaliação." },
-        { q: "O que você vai receber?",  a: "Pontos fortes, pontos de atenção e recomendações para evoluir." },
-        { q: "Quem vê minhas respostas?", a: "Apenas perfis autorizados envolvidos no funcionamento da plataforma." },
-      ]
-    : [
-        { q: "Quem avalia?",             a: "Um avaliador humano autorizado com critérios padronizados de RH." },
-        { q: "Quanto tempo leva?",        a: "O resultado ficará disponível em até 72 horas após o envio." },
-        { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
-        { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
-      ];
-  const formatTimelineDate = (value?: string) => (value ? new Date(value).toLocaleDateString("pt-BR") : "—");
-  const reportAvailable = report?.status === "AVAILABLE";
-  const timelineSteps = interview
-    ? [
-        { label: "Entrevista realizada", date: formatTimelineDate(interview.createdAt), done: true },
-        { label: "Respostas enviadas", date: formatTimelineDate(interview.submittedAt), done: Boolean(interview.submittedAt) },
-        ...(evaluationMode === "HUMAN"
-          ? [{ label: "Atribuída ao avaliador", date: "—", done: Boolean(interview.assignedEvaluatorId) }]
-          : []),
-        { label: "Em avaliação", date: "—", done: reportAvailable },
-        { label: "Relatório disponível", date: formatTimelineDate(report?.generatedAt), done: reportAvailable },
-      ]
-    : [];
-  const firstPendingStep = timelineSteps.findIndex((step) => !step.done);
-  const TIMELINE: { label: string; date: string; done: boolean; active?: boolean }[] = timelineSteps.map((step, index) => ({
-    ...step,
-    active: index === firstPendingStep,
-  }));
+  const [loadState, setLoadState] = useState<TrackingLoadState>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
+  const [resuming, setResuming] = useState(false);
+  const [resumeMessage, setResumeMessage] = useState<string | null>(null);
 
-  if (!interview || interview.candidateId !== candidateIdentity.id) {
+  useEffect(() => {
+    let cancelled = false;
+    if (!id || !isUuid(id)) {
+      setLoadState({ status: "error", reason: "not_found", message: "" });
+      return;
+    }
+    setLoadState({ status: "loading" });
+    void getRealInterview(id).then((result) => {
+      if (cancelled) return;
+      setLoadState(
+        result.ok
+          ? { status: "ready", interview: result.data }
+          : { status: "error", reason: result.reason, message: result.message },
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, reloadKey]);
+
+  if (loadState.status === "loading") {
     return (
-      <AuthLayout current="pending" onNavigate={onNavigate} title="Entrevista indisponível" subtitle="Acompanhamento da entrevista">
-        <Card className="w-full max-w-2xl p-6 text-center">
-          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">Não encontramos esta entrevista na sua conta</h3>
-          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para acompanhar entrevistas vinculadas ao seu perfil.</p>
-          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+      <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista">
+        <Card className="w-full max-w-xl p-10 text-center">
+          <Spinner />
+          <p className="text-sm text-muted-foreground mt-3">Carregando o acompanhamento da entrevista...</p>
         </Card>
       </AuthLayout>
     );
   }
 
+  if (loadState.status === "error") {
+    const failure = describeTrackingFailure(loadState.reason, loadState.message);
+    return (
+      <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista">
+        <EmptyState
+          icon={AlertCircle}
+          title={failure.title}
+          description={failure.description}
+          className="w-full max-w-xl p-10"
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {failure.canRetry && (
+                <Btn variant="primary" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</Btn>
+              )}
+              <Btn variant={failure.canRetry ? "outline" : "primary"} onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+            </div>
+          }
+        />
+      </AuthLayout>
+    );
+  }
+
+  const interview = loadState.interview;
+  const view = buildTrackingView(interview);
+  const aboutMode = interview.evaluationMode === "HUMAN" || interview.evaluationMode === "AI" ? interview.evaluationMode : null;
+  const showAbout = aboutMode !== null && ["pending-assignment", "assigned", "completed", "pending-ai"].includes(view.kind);
+  const showWaiting = ["pending-assignment", "assigned", "pending-ai"].includes(view.kind);
+  const HeroIcon = view.kind === "completed" ? Check : view.kind === "cancelled" || view.kind === "unsupported" ? AlertCircle : Clock;
+
+  const handlePrimary = async () => {
+    if (view.primaryCta === "view-result") {
+      routerNavigate(`/candidate/reports/${interview.id}`);
+      return;
+    }
+    if (view.primaryCta === "resume-interview") {
+      if (!onResumeInterview || resuming) return;
+      setResuming(true);
+      setResumeMessage(null);
+      const result = await onResumeInterview(interview.id);
+      setResuming(false);
+      if (!result.ok) setResumeMessage(result.message);
+      return;
+    }
+    onNavigate("interview-history");
+  };
+
   return (
-    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle={`${interview.context.title} · ${interview.context.company}`}>
+    <AuthLayout
+      current="pending"
+      onNavigate={onNavigate}
+      title="Acompanhamento da Entrevista"
+      subtitle={interview.company ? `${interview.title} · ${interview.company}` : interview.title}
+    >
       <div className="w-full">
-        {/* Status hero */}
+        {/* Status principal */}
         <Card className="p-6 sm:p-8 mb-6 text-center">
-          <div className="w-16 h-16 bg-amber-50 border-2 border-amber-200 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Clock className="w-8 h-8 text-amber-500" />
+          <div className={`w-16 h-16 border-2 rounded-2xl flex items-center justify-center mx-auto mb-4 ${TRACKING_TONE_CLASSES[view.badgeTone]}`}>
+            <HeroIcon className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-bold text-foreground mb-2">Entrevista em avaliação</h2>
-          <p className="text-muted-foreground text-sm max-w-md mx-auto mb-5">
-            {pendingDescription}
-          </p>
+          <h2 className="text-xl font-bold text-foreground mb-2">{view.title}</h2>
+          <p className={`text-muted-foreground text-sm max-w-md mx-auto ${view.deadlineNotice ? "mb-2" : "mb-5"}`}>{view.description}</p>
+          {view.deadlineNotice && (
+            <p className="text-muted-foreground text-sm max-w-md mx-auto mb-5">{view.deadlineNotice}</p>
+          )}
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <StatusBadge tone="warning">
-              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />
-              {pendingStatusLabel}
+            <StatusBadge tone={view.badgeTone}>
+              {view.badgeLive && <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />}
+              {view.badgeLabel}
             </StatusBadge>
             <span className="text-xs text-muted-foreground">· Protocolo {interview.id}</span>
           </div>
         </Card>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {/* Timeline */}
-          <Card className="p-5">
-            <h3 className="font-bold text-foreground mb-5 text-sm">Histórico da entrevista</h3>
-            {TIMELINE.map((step, i) => (
-              <div key={step.label} className="flex gap-3">
-                <div className="flex flex-col items-center">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${step.done ? "bg-green-100 border-2 border-green-500" : (step as any).active ? "bg-amber-100 border-2 border-amber-400" : "bg-muted border-2 border-border"}`}>
-                    {step.done
-                      ? <Check className="w-3.5 h-3.5 text-green-600" />
-                      : (step as any).active
-                      ? <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-                      : <div className="w-2 h-2 bg-muted-foreground/30 rounded-full" />}
+          {view.steps.length > 0 && (
+            <Card className="p-5">
+              <h3 className="font-bold text-foreground mb-5 text-sm">Histórico da entrevista</h3>
+              {view.steps.map((timelineStep, i) => (
+                <div key={timelineStep.key} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${timelineStep.state === "done" ? "bg-green-100 border-2 border-green-500" : timelineStep.state === "current" ? "bg-amber-100 border-2 border-amber-400" : "bg-muted border-2 border-border"}`}>
+                      {timelineStep.state === "done"
+                        ? <Check className="w-3.5 h-3.5 text-green-600" />
+                        : timelineStep.state === "current"
+                        ? <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                        : <div className="w-2 h-2 bg-muted-foreground/30 rounded-full" />}
+                    </div>
+                    {i < view.steps.length - 1 && (
+                      <div className={`w-px h-7 ${timelineStep.state === "done" ? "bg-green-300" : "bg-border"}`} />
+                    )}
                   </div>
-                  {i < TIMELINE.length - 1 && (
-                    <div className={`w-px h-7 ${step.done ? "bg-green-300" : "bg-border"}`} />
-                  )}
-                </div>
-                <div className="pb-4">
-                  <p className={`text-sm font-semibold ${step.done || (step as any).active ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</p>
-                  <p className="text-xs text-muted-foreground">{step.date}</p>
-                </div>
-              </div>
-            ))}
-          </Card>
-
-          {/* Info panel */}
-          <Card className="p-5">
-            <h3 className="font-bold text-foreground mb-4 text-sm flex items-center gap-2">
-              <Info className="w-4 h-4 text-blue-600" /> Sobre a avaliação
-            </h3>
-            <div className="space-y-3">
-              {evaluationInfo.map(({ q, a }) => (
-                <div key={q} className="p-3 bg-muted/40 rounded-xl">
-                  <p className="text-xs font-bold text-foreground mb-1">{q}</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{a}</p>
+                  <div className="pb-4">
+                    <p className={`text-sm font-semibold ${timelineStep.state === "upcoming" ? "text-muted-foreground" : "text-foreground"}`}>{timelineStep.label}</p>
+                    {timelineStep.date && <p className="text-xs text-muted-foreground">{timelineStep.date}</p>}
+                  </div>
                 </div>
               ))}
-            </div>
-          </Card>
-
-          {/* Enquanto aguarda + CTA */}
-          <div className="space-y-4 xl:col-start-3">
-            <Card className="p-5 bg-blue-50 border-blue-100">
-              <p className="text-sm font-bold text-foreground mb-3">Enquanto aguarda...</p>
-              <ul className="space-y-2">
-                {["Revise materiais de preparação","Complete seu perfil profissional","Analise outra URL de vaga","Pratique uma nova entrevista"].map(s => (
-                  <li key={s} className="flex items-center gap-2 text-xs text-foreground">
-                    <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0" /> {s}
-                  </li>
-                ))}
-              </ul>
             </Card>
+          )}
+
+          {showAbout && aboutMode && (
+            <Card className="p-5">
+              <h3 className="font-bold text-foreground mb-4 text-sm flex items-center gap-2">
+                <Info className="w-4 h-4 text-blue-600" /> Sobre a avaliação
+              </h3>
+              <div className="space-y-3">
+                {TRACKING_ABOUT[aboutMode].map(({ q, a }) => (
+                  <div key={q} className="p-3 bg-muted/40 rounded-xl">
+                    <p className="text-xs font-bold text-foreground mb-1">{q}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{a}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <div className="space-y-4 xl:col-start-3">
+            {showWaiting && (
+              <Card className="p-5 bg-blue-50 border-blue-100">
+                <p className="text-sm font-bold text-foreground mb-3">Enquanto aguarda...</p>
+                <ul className="space-y-2">
+                  {["Revise materiais de preparação", "Complete seu perfil profissional", "Analise outra URL de vaga", "Pratique uma nova entrevista"].map((s) => (
+                    <li key={s} className="flex items-center gap-2 text-xs text-foreground">
+                      <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0" /> {s}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+            {resumeMessage && (
+              <Alert variant="warning" className="flex gap-3 rounded-2xl p-4">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">{resumeMessage}</p>
+              </Alert>
+            )}
             <Btn
-              variant={report?.status === "AVAILABLE" ? "primary" : "outline"}
+              variant={view.primaryCta === "back-to-history" ? "outline" : "primary"}
               className="w-full"
-              disabled={report?.status !== "AVAILABLE"}
-              onClick={() => id && routerNavigate(`/candidate/reports/${id}`)}
+              disabled={resuming}
+              onClick={() => void handlePrimary()}
             >
-              {report?.status === "AVAILABLE" ? "Ver resultado disponível" : "Resultado ainda indisponível"} <ArrowRight className="w-4 h-4" />
+              {resuming ? <><Spinner />Abrindo...</> : <>{view.primaryCtaLabel} <ArrowRight className="w-4 h-4" /></>}
             </Btn>
+            {view.primaryCta !== "back-to-history" && (
+              <Btn variant="outline" className="w-full" onClick={() => onNavigate("interview-history")}>
+                Voltar ao histórico
+              </Btn>
+            )}
           </div>
         </div>
       </div>
@@ -5107,7 +5190,13 @@ function InterviewConfirmScreen({
     // Envio concluído aqui OU já enviado antes (idempotente, mesma modalidade): o rascunho
     // local é descartado e nada é recriado.
     onDraftCompleted?.();
-    routerNavigate(`/candidate/interviews/${result.data.id}/success`);
+    // HUMAN confirmado pelo backend vai direto ao acompanhamento real (sem tela intermediária
+    // nem clique em "Acompanhar"). AI mantém a tela de envio existente (Fase 3 pausada).
+    routerNavigate(
+      resolveSubmitDestination(result.data) === "status"
+        ? `/candidate/interviews/${result.data.id}/status`
+        : `/candidate/interviews/${result.data.id}/success`,
+    );
   };
 
   return (
@@ -5264,6 +5353,10 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
     );
   }
   const interview = loadState.interview;
+  // HUMAN nunca fica nesta tela legada (nem por link/reload): o acompanhamento real a substitui.
+  if (resolveSubmitDestination(interview) === "status") {
+    return <Navigate to={`/candidate/interviews/${interview.id}/status`} replace />;
+  }
   if (interview.status === "IN_PROGRESS") {
     return (
       <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
@@ -7525,7 +7618,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} onStaleExit={leaveStaleInterview} />)} />
           </Route>
           <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} onResumeInterview={resumeInterviewFromServer} />)} />
           <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
 
           <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />

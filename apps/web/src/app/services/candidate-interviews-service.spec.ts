@@ -685,3 +685,59 @@ describe("mensagens de erro seguras (UX)", () => {
     expect(!result.ok && result.message).toBe("Este rascunho foi alterado em outro dispositivo.");
   });
 });
+
+describe("acompanhamento real (6A.2): GET /interviews/:id", () => {
+  it("mapeia assignedAt e completedAt reais do Back (sem inventar nenhum)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(
+        interviewBody({
+          status: "COMPLETED",
+          evaluationMode: "HUMAN",
+          submittedAt: "2026-10-12T13:00:00.000Z",
+          assignedAt: "2026-10-13T01:00:00.000Z",
+          completedAt: "2026-10-13T03:28:52.775Z",
+        }),
+      ),
+    );
+    const result = await getRealInterview(INTERVIEW_ID);
+    expect(result.ok && result.data.assignedAt).toBe("2026-10-13T01:00:00.000Z");
+    expect(result.ok && result.data.completedAt).toBe("2026-10-13T03:28:52.775Z");
+  });
+
+  it("Back mais antigo (sem os carimbos) ou com null: ambos viram null", async () => {
+    fetchMock.mockResolvedValueOnce(json(interviewBody({ status: "PENDING_ASSIGNMENT", evaluationMode: "HUMAN" })));
+    const missing = await getRealInterview(INTERVIEW_ID);
+    expect(missing.ok && missing.data.assignedAt).toBeNull();
+    expect(missing.ok && missing.data.completedAt).toBeNull();
+
+    fetchMock.mockResolvedValueOnce(json(interviewBody({ assignedAt: null, completedAt: null })));
+    const nulls = await getRealInterview(INTERVIEW_ID);
+    expect(nulls.ok && nulls.data.completedAt).toBeNull();
+  });
+
+  it("lê só GET /interviews/:id (uma chamada; nunca /result, /questions nem POST)", async () => {
+    fetchMock.mockResolvedValueOnce(json(interviewBody({ status: "COMPLETED", evaluationMode: "HUMAN" })));
+    await getRealInterview(INTERVIEW_ID);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const { url, init } = lastCall();
+    expect(url).toMatch(new RegExp(`/interviews/${INTERVIEW_ID}$`));
+    expect(init.method).toBe("GET");
+    expect(init.credentials).toBe("include");
+  });
+
+  it("404 vira not_found; 5xx e rede viram mensagem amigável (sem texto técnico)", async () => {
+    fetchMock.mockResolvedValueOnce(json({ statusCode: 404, message: "Entrevista não encontrada." }, 404));
+    const notFound = await getRealInterview(INTERVIEW_ID);
+    expect(!notFound.ok && notFound.reason).toBe("not_found");
+
+    fetchMock.mockResolvedValueOnce(json({ message: "PrismaClientKnownRequestError at db" }, 500));
+    const server = await getRealInterview(INTERVIEW_ID);
+    expect(!server.ok && server.reason).toBe("error");
+    expect(!server.ok && server.message).not.toMatch(/prisma|500|stack/i);
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const network = await getRealInterview(INTERVIEW_ID);
+    expect(!network.ok && network.reason).toBe("error");
+    expect(!network.ok && network.message).not.toMatch(/failed to fetch/i);
+  });
+});
