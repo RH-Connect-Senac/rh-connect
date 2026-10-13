@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import heroEntrevista from "../../assets/landing/hero-entrevista-3.webp";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import { LandingFaq } from "./landing-faq";
 import { LandingFooter } from "./landing-footer";
 import { BackToTop } from "./ui/back-to-top";
 import { Button as UIButton } from "./ui/button";
@@ -235,7 +236,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       {/* ── Como funciona ── */}
       <section
         id="como-funciona"
-        className="bg-white px-4 py-16 sm:px-8 sm:py-24"
+        className="scroll-mt-16 bg-white px-4 py-16 sm:px-8 sm:py-24"
       >
         <div className="mx-auto max-w-6xl">
           <div className="mx-auto mb-12 max-w-3xl text-center sm:mb-14">
@@ -293,7 +294,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Benefícios ── */}
-      <section id="beneficios" className="px-4 sm:px-8 py-14 sm:py-20 bg-slate-50/60">
+      <section id="beneficios" className="scroll-mt-16 px-4 sm:px-8 py-14 sm:py-20 bg-slate-50/60">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 sm:mb-12">
             <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Benefícios</p>
@@ -409,7 +410,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Para quem é ── */}
-      <section id="para-quem" className="px-4 sm:px-8 py-14 sm:py-20 bg-background">
+      <section id="para-quem" className="scroll-mt-16 px-4 sm:px-8 py-14 sm:py-20 bg-background">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 sm:mb-12">
             <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Para quem é</p>
@@ -434,6 +435,9 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
         </div>
       </section>
 
+      {/* ── FAQ ── */}
+      <LandingFaq onNavigate={onNavigate} />
+
       {/* ── CTA central ── */}
       <section className="px-4 sm:px-8 py-12 sm:py-16" style={{ background: "linear-gradient(135deg, #0F2652 0%, #1D4ED8 100%)" }}>
         <div className="max-w-2xl mx-auto text-center">
@@ -448,7 +452,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Sobre o projeto ── */}
-      <section id="sobre" className="px-4 sm:px-8 py-12 sm:py-16 bg-white">
+      <section id="sobre" className="scroll-mt-16 px-4 sm:px-8 py-12 sm:py-16 bg-white">
         <div className="max-w-6xl mx-auto">
           <div className="p-5 sm:p-8 bg-slate-50 rounded-2xl border border-border">
             <div className="mx-auto max-w-3xl text-center">

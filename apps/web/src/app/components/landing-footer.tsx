@@ -7,6 +7,7 @@ import { ROUTER_BASENAME, getPathForScreen } from "../router/routes";
 const FOOTER_SECTION_LINKS = [
   { label: "Como funciona", sectionId: "como-funciona" },
   { label: "Benefícios", sectionId: "beneficios" },
+  { label: "Perguntas frequentes", sectionId: "faq" },
   { label: "Sobre o projeto", sectionId: "sobre" },
 ] as const;
 
@@ -15,6 +16,15 @@ let pendingLandingSectionId: string | null = null;
 
 /** Página legal aberta pelo footer; ao montar, ela deve começar no topo (não herdar o scroll anterior). */
 let pendingLegalTopPath: string | null = null;
+
+/**
+ * Abre uma página legal (Termos/Privacidade) marcando que ela deve começar no topo.
+ * Compartilhada com o link de Privacidade do FAQ para não duplicar essa regra.
+ */
+export function navigateToLegalPage<S extends "terms" | "privacy">(screen: S, onNavigate: (screen: S) => void) {
+  pendingLegalTopPath = getPathForScreen(screen);
+  onNavigate(screen);
+}
 
 function scrollToLandingSection(sectionId: string, behavior: ScrollBehavior): boolean {
   const target = document.getElementById(sectionId);
@@ -83,8 +93,7 @@ export function LandingFooter({
       return;
     }
 
-    pendingLegalTopPath = targetPath;
-    onNavigate(screen);
+    navigateToLegalPage(screen, onNavigate);
   };
 
   const handleSectionClick = (event: MouseEvent<HTMLAnchorElement>, sectionId: string) => {
