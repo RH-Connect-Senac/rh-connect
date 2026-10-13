@@ -159,8 +159,12 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </header>
 
       {/* ── Hero ── */}
-      <section className="relative isolate flex min-h-[calc(100svh-4rem)] items-center overflow-hidden bg-white px-4 py-14 sm:px-8 sm:py-20 lg:py-20">
-        <div className="absolute inset-0 -z-10">
+      {/* Mobile (< sm): imagem em faixa no topo + texto abaixo, em área branca
+          protegida (sem texto sobre o rosto). A partir de sm: texto à esquerda e
+          pessoa à direita, com a imagem deslocada à direita (sangra além da
+          borda, cortada pelo overflow-hidden) para o texto não tocar o rosto. */}
+      <section className="relative isolate flex flex-col overflow-hidden bg-white sm:min-h-[34rem] sm:flex-row sm:items-center sm:px-8 sm:py-16 lg:min-h-[min(calc(100svh-4rem),56rem)] lg:py-20">
+        <div className="relative h-64 w-full min-[430px]:h-72 sm:absolute sm:inset-y-0 sm:left-0 sm:-right-[22%] sm:-z-10 sm:h-auto md:-right-[12%] lg:right-0">
           <img
             src={heroEntrevista}
             alt=""
@@ -169,8 +173,8 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
             decoding="async"
             className="
         h-full w-full object-cover
-        object-[60%_center]
-        sm:object-[65%_center]
+        object-[88%_30%]
+        sm:object-[100%_center]
         lg:object-[62%_center]
       "
           />
@@ -178,19 +182,20 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div
             className="
         absolute inset-0
-        bg-[linear-gradient(180deg,_rgba(255,255,255,0.88)_0%,_rgba(255,255,255,0.80)_28%,_rgba(255,255,255,0.74)_52%,_rgba(255,255,255,0.56)_72%,_rgba(255,255,255,0.20)_100%)]
-        sm:bg-[linear-gradient(90deg,_rgba(255,255,255,0.96)_0%,_rgba(255,255,255,0.90)_30%,_rgba(239,246,255,0.72)_48%,_rgba(30,91,255,0.18)_62%,_rgba(0,0,0,0)_78%)]
+        bg-[linear-gradient(180deg,_rgba(255,255,255,0)_62%,_rgba(255,255,255,1)_100%)]
+        sm:bg-[linear-gradient(90deg,_rgba(255,255,255,0.97)_0%,_rgba(255,255,255,0.92)_40%,_rgba(255,255,255,0.55)_50%,_rgba(255,255,255,0)_60%)]
+        lg:bg-[linear-gradient(90deg,_rgba(255,255,255,0.96)_0%,_rgba(255,255,255,0.90)_30%,_rgba(239,246,255,0.72)_48%,_rgba(30,91,255,0.18)_62%,_rgba(0,0,0,0)_78%)]
       "
           />
         </div>
 
-        <div className="mx-auto w-full max-w-6xl">
-          <div className="max-w-[22rem] sm:max-w-xl">
-            <h1 className="mb-5 text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
+        <div className="mx-auto w-full max-w-6xl px-4 pb-10 pt-2 sm:px-0 sm:pb-0 sm:pt-0">
+          <div className="max-w-[26rem] sm:max-w-[19rem] md:max-w-[22rem] lg:max-w-[30rem] xl:max-w-xl">
+            <h1 className="mb-4 text-balance text-[1.75rem] font-extrabold leading-[1.15] tracking-tight text-foreground sm:mb-5 sm:text-[1.875rem] md:text-[2.125rem] lg:text-[2.75rem] lg:leading-tight lg:tracking-normal xl:text-5xl">
               Seu treinamento para conquistar a vaga dos seus sonhos
             </h1>
 
-            <p className="mb-8 max-w-lg text-base leading-relaxed text-slate-600 sm:text-lg">
+            <p className="mb-6 max-w-lg text-base leading-relaxed text-slate-600 sm:mb-8 lg:text-lg">
               Pratique entrevistas relacionadas ao seu objetivo profissional,
               desenvolva suas respostas e receba orientações para evoluir.
             </p>
@@ -210,7 +215,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
                 className="
             inline-flex w-full items-center justify-center gap-2
             rounded-xl
-            border border-white/70
+            border border-blue-200 lg:border-white/70
             bg-white/75
             px-6 py-3.5
             text-base font-semibold text-blue-700
