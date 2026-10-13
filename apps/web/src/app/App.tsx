@@ -64,8 +64,8 @@ import { EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalInterviewDe
 import {
   AdminDashboardScreen, AdminCandidatesScreen, AdminCandidateDetailScreen,
   AdminEvaluatorsScreen, AdminEvaluatorFormScreen,
-  AdminInterviewsScreen, AdminAssignScreen, AdminQuestionsScreen,
-  AdminQuestionFormScreen, AdminRolesScreen, AdminCriteriaScreen,
+  AdminInterviewsScreen, AdminAssignScreen,
+  AdminRolesScreen, AdminCriteriaScreen,
   AdminConsentScreen, AdminAuditScreen, AdminSettingsScreen,
   AdminOnboardingScreen,
 } from "./components/admin-screens";
@@ -334,7 +334,7 @@ const AUTH_SCREENS: Screen[] = [
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
   "admin-dashboard","admin-candidates","admin-candidate-detail","admin-evaluators","admin-evaluator-form",
   "admin-interviews","admin-assign",
-  "admin-questions","admin-question-form","admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
+  "admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
 ];
 
 const DASHBOARD_BY_ROLE: Record<MockUserRole, string> = {
@@ -7539,8 +7539,6 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/admin/evaluators/new" element={protect("ADMIN", <AdminEvaluatorFormScreen onNavigate={navigate} />)} />
           <Route path="/admin/interviews" element={protect("ADMIN", <AdminInterviewsScreen onNavigate={navigate} />)} />
           <Route path="/admin/assignments" element={protect("ADMIN", <AdminAssignScreen onNavigate={navigate} />)} />
-          <Route path="/admin/questions" element={protect("ADMIN", <AdminQuestionsScreen onNavigate={navigate} />)} />
-          <Route path="/admin/questions/new" element={protect("ADMIN", <AdminQuestionFormScreen onNavigate={navigate} />)} />
           <Route path="/admin/roles" element={protect("ADMIN", <AdminRolesScreen onNavigate={navigate} />)} />
           <Route path="/admin/criteria" element={protect("ADMIN", <AdminCriteriaScreen onNavigate={navigate} />)} />
           <Route path="/admin/consents" element={protect("ADMIN", <AdminConsentScreen onNavigate={navigate} />)} />

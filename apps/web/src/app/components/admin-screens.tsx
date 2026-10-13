@@ -70,7 +70,7 @@ import {
 import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
 import { SessionContext } from "../session-context";
 import {
-  Home, Users, Settings, ChevronLeft, ChevronRight,
+  Home, Users, Settings, ChevronRight,
   Bell, CheckCircle, AlertCircle, Target, FileText, Shield,
   Plus, Eye, Edit2, Trash2, X, Check, Filter,
   TrendingUp, Award, Clock, Star, BarChart2, Download,
@@ -82,7 +82,6 @@ import { SwitchVisual } from "./ui/switch";
 import { Input } from "./ui/input";
 import { SearchInput } from "./ui/search-input";
 import { NativeSelect } from "./ui/native-select";
-import { Textarea } from "./ui/textarea";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
@@ -172,7 +171,6 @@ const ADMIN_NAV: ProfileShellNavItem[] = [
   { icon: UserCheck,   label: "Avaliadores",      screen: "admin-evaluators" },
   { icon: MessageSquare, label: "Entrevistas",      screen: "admin-interviews" },
   { icon: Link2,       label: "Atribuições",      screen: "admin-assign" },
-  { icon: MessageSquare, label: "Banco de Perguntas", screen: "admin-questions" },
   { icon: Briefcase,   label: "Cargos e Áreas",  screen: "admin-roles" },
   { icon: Target,      label: "Critérios",        screen: "admin-criteria" },
   { icon: Shield,      label: "Consentimentos",   screen: "admin-consent" },
@@ -411,16 +409,6 @@ function createAdminInterviewRows(): AdminInterviewRow[] {
 
   return realRows;
 }
-
-const QUESTIONS_DATA = [
-  { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica", active: true },
-  { id: 2, text: "Descreva uma situação em que precisou lidar com um prazo apertado.", category: "Comportamental", difficulty: "Intermediária", active: true },
-  { id: 3, text: "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?", category: "Perfil", difficulty: "Básica", active: true },
-  { id: 4, text: "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.", category: "Comportamental", difficulty: "Intermediária", active: true },
-  { id: 5, text: "Onde você se vê profissionalmente daqui a três anos?", category: "Carreira", difficulty: "Básica", active: true },
-  { id: 6, text: "Como você lida com situações de conflito no ambiente de trabalho?", category: "Comportamental", difficulty: "Avançada", active: true },
-  { id: 7, text: "Descreva um projeto ou iniciativa do qual você se orgulha.", category: "Experiência", difficulty: "Intermediária", active: false },
-];
 
 // ─── Screen: Dashboard Administrativo ────────────────────────────────────────
 
@@ -1184,128 +1172,6 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
             </div>
           </>
         )}
-      </div>
-    </AdminLayout>
-  );
-}
-
-// ─── Screen: Banco de Perguntas ───────────────────────────────────────────────
-
-export function AdminQuestionsScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const [search, setSearch] = useState("");
-  const filtered = QUESTIONS_DATA.filter(q =>
-    q.text.toLowerCase().includes(search.toLowerCase()) ||
-    q.category.toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <AdminLayout current="admin-questions" onNavigate={onNavigate}
-      title="Banco de Perguntas"
-      subtitle={`${QUESTIONS_DATA.length} perguntas cadastradas`}
-      actions={<Btn variant="primary" size="sm" onClick={() => onNavigate("admin-question-form")}><Plus className="w-3.5 h-3.5" /> Nova Pergunta</Btn>}>
-      <div className="w-full space-y-4">
-        <SearchInput
-          containerClassName="max-w-sm"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar pergunta ou categoria..."
-          className="bg-white"
-        />
-
-        <div className="space-y-3">
-          {filtered.map(q => (
-            <Card key={q.id} className="p-4 sm:p-5">
-              <div className="flex items-start gap-3">
-                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">{q.id}</div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium leading-relaxed mb-2 ${!q.active ? "text-muted-foreground line-through" : "text-foreground"}`}>{q.text}</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="info">{q.category}</Badge>
-                    <Badge variant={q.difficulty === "Básica" ? "success" : q.difficulty === "Intermediária" ? "warning" : "error"}>{q.difficulty}</Badge>
-                    {!q.active && <Badge variant="default">Inativa</Badge>}
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button onClick={() => onNavigate("admin-question-form")} className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                  <button className="p-1.5 text-muted-foreground hover:text-red-500 rounded-lg hover:bg-muted transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
-    </AdminLayout>
-  );
-}
-
-// ─── Screen: Formulário de Pergunta ──────────────────────────────────────────
-
-export function AdminQuestionFormScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const [saved, setSaved] = useState(false);
-
-  if (saved) {
-    return (
-      <AdminLayout current="admin-questions" onNavigate={onNavigate} title="Pergunta Salva">
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center max-w-sm">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-green-600" />
-            </div>
-            <h2 className="text-xl font-bold text-foreground mb-2">Pergunta salva!</h2>
-            <p className="text-muted-foreground mb-5 text-sm">A pergunta foi adicionada ao banco com sucesso.</p>
-            <div className="flex gap-3 justify-center">
-              <Btn variant="outline" onClick={() => setSaved(false)}>Adicionar outra</Btn>
-              <Btn variant="primary" onClick={() => onNavigate("admin-questions")}>Ver banco de perguntas</Btn>
-            </div>
-          </div>
-        </div>
-      </AdminLayout>
-    );
-  }
-
-  return (
-    <AdminLayout current="admin-questions" onNavigate={onNavigate}
-      title="Nova Pergunta"
-      subtitle="Adicionar ao banco de perguntas">
-      <div className="w-full max-w-2xl space-y-5">
-        <Card className="p-5 sm:p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-foreground mb-1.5">Texto da pergunta *</label>
-            <Textarea rows={3} placeholder="Digite o enunciado completo da pergunta..."
-              className="min-h-0 bg-white resize-none" />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Categoria *</label>
-              <NativeSelect className="bg-white">
-                <option value="">Selecione...</option>
-                {["Perfil","Comportamental","Carreira","Experiência","Técnica"].map(c => <option key={c}>{c}</option>)}
-              </NativeSelect>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Nível de dificuldade *</label>
-              <NativeSelect className="bg-white">
-                <option value="">Selecione...</option>
-                {["Básica","Intermediária","Avançada"].map(d => <option key={d}>{d}</option>)}
-              </NativeSelect>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-foreground mb-1.5">Orientação ao avaliador <span className="text-muted-foreground font-normal">(opcional)</span></label>
-            <Textarea rows={2} placeholder="Dicas de o que observar nesta resposta..."
-              className="min-h-0 bg-white resize-none" />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-foreground mb-1.5">Resposta esperada / exemplos <span className="text-muted-foreground font-normal">(opcional)</span></label>
-            <Textarea rows={3} placeholder="Elementos de uma boa resposta..."
-              className="min-h-0 bg-white resize-none" />
-          </div>
-        </Card>
-
-        <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("admin-questions")}><ChevronLeft className="w-3.5 h-3.5" /> Cancelar</Btn>
-          <Btn variant="primary" className="flex-1" onClick={() => setSaved(true)}>Salvar Pergunta</Btn>
-        </div>
       </div>
     </AdminLayout>
   );
@@ -2160,16 +2026,16 @@ const ADMIN_ONBOARDING_STEPS = [
     id: 2,
     icon: Target,
     color: "bg-amber-100 text-amber-600",
-    title: "Perguntas e critérios",
+    title: "Critérios de avaliação",
     content: (
       <div className="space-y-3 text-sm text-muted-foreground">
-        <p>Configure o conteúdo avaliativo da plataforma: as <strong className="text-foreground">perguntas</strong> usadas nas entrevistas e os <strong className="text-foreground">critérios</strong> de pontuação dos avaliadores.</p>
+        <p>Configure os <strong className="text-foreground">critérios</strong> de pontuação usados pelos avaliadores nas entrevistas.</p>
         <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
           <Zap className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-800">Mantenha o banco de perguntas atualizado e os critérios alinhados com os objetivos do processo seletivo.</p>
+          <p className="text-xs text-amber-800">Mantenha os critérios alinhados com os objetivos do processo seletivo.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
-          {["Banco de perguntas", "Critérios de avaliação", "Cargos e áreas", "Consentimentos"].map(label => (
+          {["Critérios de avaliação", "Cargos e áreas", "Consentimentos"].map(label => (
             <div key={label} className="flex items-center gap-1.5 p-2 bg-muted/50 rounded-lg">
               <Check className="w-3 h-3 text-primary shrink-0" />
               <span className="font-medium text-foreground">{label}</span>

@@ -107,7 +107,10 @@ describe("TransientNotice (sucesso da atribuição do Admin)", () => {
   it("guards: tela do Admin usa o aviso só para sucesso; erro segue persistente; sem lógica extra", () => {
     const admin = readFileSync(new URL("../components/admin-screens.tsx", import.meta.url), "utf8");
     const start = admin.indexOf("export function AdminAssignScreen");
-    const screen = admin.slice(start, admin.indexOf("// ─── Screen: Banco de Perguntas"));
+    const end = admin.indexOf("// ─── Screen: Cargos e Áreas");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const screen = admin.slice(start, end);
     expect(screen).toContain("new TransientNotice(setAssignNotice)");
     expect(screen).toContain("notice.destroy()");
     expect(screen).toContain("noticeRef.current?.show(`Entrevista atribuída a ${evaluator.name}.`)");

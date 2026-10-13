@@ -11,7 +11,7 @@ const adminScreens = readFileSync(
 
 function sliceAssignScreen(): string {
   const start = adminScreens.indexOf("export function AdminAssignScreen");
-  const end = adminScreens.indexOf("// ─── Screen: Banco de Perguntas");
+  const end = adminScreens.indexOf("// ─── Screen: Cargos e Áreas");
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return adminScreens.slice(start, end);

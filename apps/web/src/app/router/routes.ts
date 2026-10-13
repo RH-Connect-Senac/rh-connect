@@ -11,7 +11,7 @@ export type AppScreen =
   | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-history-detail" | "eval-criteria" | "eval-settings"
   | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
   | "admin-interviews" | "admin-assign"
-  | "admin-questions" | "admin-question-form" | "admin-roles" | "admin-criteria"
+  | "admin-roles" | "admin-criteria"
   | "admin-consent" | "admin-audit" | "admin-settings";
 
 type RouteGroup = "public" | "candidate" | "evaluator" | "admin";
@@ -81,8 +81,6 @@ export const APP_ROUTES = [
   { screen: "admin-evaluator-form", path: "/admin/evaluators/new", label: "Formulario avaliador", group: "admin", priority: "P1", status: "simulado", backDependency: "sim" },
   { screen: "admin-interviews", path: "/admin/interviews", label: "Entrevistas", group: "admin", priority: "P0", status: "mockado", backDependency: "sim" },
   { screen: "admin-assign", path: "/admin/assignments", label: "Atribuicoes", group: "admin", priority: "P0", status: "simulado", backDependency: "sim" },
-  { screen: "admin-questions", path: "/admin/questions", label: "Perguntas", group: "admin", priority: "P1", status: "mockado", backDependency: "sim" },
-  { screen: "admin-question-form", path: "/admin/questions/new", label: "Formulario pergunta", group: "admin", priority: "P3", status: "simulado", backDependency: "sim" },
   { screen: "admin-roles", path: "/admin/roles", label: "Cargos e areas", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "admin-criteria", path: "/admin/criteria", label: "Criterios admin", group: "admin", priority: "P1", status: "mockado", backDependency: "sim" },
   { screen: "admin-consent", path: "/admin/consents", label: "Consentimentos", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },

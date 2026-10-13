@@ -58,7 +58,7 @@ describe("Dashboard Admin real (4.3B): UI", () => {
   });
 
   it("ações rápidas: sem 'Adicionar pergunta' e sem 'logs de auditoria'; badges vêm do summary", () => {
-    expect(DASHBOARD).not.toMatch(/admin-question-form|admin-audit|Adicionar pergunta|logs de auditoria/);
+    expect(DASHBOARD).not.toMatch(/admin-questions|admin-question-form|admin-audit|Adicionar pergunta|Nova Pergunta|logs de auditoria/);
     expect(DASHBOARD).toContain('label: "Atribuir entrevistas"');
     expect(DASHBOARD).not.toContain("Atribuir avaliações pendentes");
     expect(DASHBOARD).toContain('"admin-assign"');

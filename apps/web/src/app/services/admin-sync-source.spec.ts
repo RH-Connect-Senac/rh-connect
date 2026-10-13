@@ -18,10 +18,12 @@ const slice = (from: string, to: string) => {
 const CANDIDATES_HOOK = slice("function useAdminCandidatesList(", "function useAdminCandidateDetail");
 const CANDIDATES_SCREEN = slice("export function AdminCandidatesScreen", "type AdminEvaluatorsState");
 const EVALUATORS_AREA = slice("type AdminEvaluatorsState", "export function AdminInterviewsScreen");
-const ASSIGN_SCREEN = slice("const ASSIGN_SYNC", "export function AdminQuestionsScreen");
+const ASSIGN_SCREEN = slice("const ASSIGN_SYNC", "export function AdminRolesScreen");
 const DASHBOARD = slice("const DASHBOARD_SYNC", "export function AdminCandidatesScreen");
 const INTERVIEWS = slice("export function AdminInterviewsScreen", "const ASSIGN_SYNC");
-const AFTER_ASSIGN = SCREENS.slice(SCREENS.indexOf("export function AdminQuestionsScreen"));
+const AFTER_ASSIGN_START = SCREENS.indexOf("export function AdminRolesScreen");
+expect(AFTER_ASSIGN_START).toBeGreaterThan(-1);
+const AFTER_ASSIGN = SCREENS.slice(AFTER_ASSIGN_START);
 const DETAIL_HOOKS = slice("function useAdminCandidateDetail", "function useAdminCandidateProfile");
 
 describe("sync do Admin (4.2): onde há polling", () => {
