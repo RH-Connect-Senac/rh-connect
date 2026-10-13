@@ -1,11 +1,45 @@
 /** RH Connect — Telas do Administrador */
 
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useContext, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import type { InterviewStatus } from "../domain/interviews";
 import type { MockAccountStatus } from "../services/auth-service";
 import { buildAdminProfileView } from "../domain/admin-profile-view";
+import {
+  ASSIGNED_COUNT_HINT,
+  ASSIGNED_COUNT_LABEL,
+  EVALUATORS_EMPTY,
+  EVALUATOR_ACTIVE_LABEL,
+  evaluatorAreaLine,
+  evaluatorInitials,
+  evaluatorsSubtitle,
+  presentableEvaluators,
+} from "../domain/admin-evaluators-view";
+import { TransientNotice } from "../domain/transient-notice";
+import { useCandidateLiveResource } from "../hooks/use-candidate-live-resource";
+import {
+  ADMIN_CANDIDATES_SYNC_INTERVAL_MS,
+  ADMIN_CANDIDATES_SYNC_MAX_BACKOFF_MS,
+  ADMIN_DASHBOARD_SYNC_INTERVAL_MS,
+  ADMIN_DASHBOARD_SYNC_MAX_BACKOFF_MS,
+  ADMIN_EVALUATORS_SYNC_INTERVAL_MS,
+  ADMIN_EVALUATORS_SYNC_MAX_BACKOFF_MS,
+  ADMIN_QUEUE_SYNC_INTERVAL_MS,
+  ADMIN_QUEUE_SYNC_MAX_BACKOFF_MS,
+  combineQueueResults,
+  resolveSelection,
+  type AdminQueueData,
+} from "../domain/admin-live-sync";
+import {
+  buildChartData,
+  describeActivity,
+  formatDashboardScore,
+  scoreSupportText,
+  toDashboardSnapshot,
+  type AdminDashboardSnapshot,
+  type DashboardActivityIcon,
+} from "../domain/admin-dashboard-view";
 import type { ProfessionalProfile } from "../domain/professional-profile";
+import { getAdminDashboard } from "../services/admin-dashboard-service";
 import {
   getAdminCandidate,
   getAdminCandidateProfile,
@@ -14,34 +48,50 @@ import {
   type AdminCandidatesList,
 } from "../services/admin-candidates-service";
 import {
-  assignInterview,
-  getAdminVisibleInterviews,
-  getAssignmentByInterviewId,
-  getAverageScore,
-  getEvaluationByInterviewId,
-  formatScore,
-  getInterviewById,
-  getPendingAdminInterviews,
-  statusLabelFromInterview,
-} from "../services/interviews-service";
+  ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE,
+  assignInterviewToEvaluator,
+  listAdminEvaluators,
+  listAdminInterviews,
+  listPendingAssignmentInterviews,
+  type AdminEvaluator,
+  type AdminInterviewList,
+  type AdminQueueInterview,
+} from "../services/admin-interviews-service";
+import {
+  ADMIN_INTERVIEWS_AWAITING_SCORE,
+  ADMIN_INTERVIEWS_EMPTY_MESSAGE,
+  ADMIN_INTERVIEWS_EMPTY_SEARCH_MESSAGE,
+  adminInterviewEvaluatorName,
+  adminInterviewReferenceDate,
+  adminInterviewScoreTone,
+  buildCandidateTimeline,
+  filterAdminInterviews,
+  formatAdminInterviewScore,
+  formatAdminInterviewShortId,
+  getAdminInterviewStatusLabel,
+  getAdminInterviewStatusTone,
+  pickCandidateInterview,
+  summarizeAdminInterviews,
+  type AdminTimelineIcon,
+} from "../domain/admin-interviews-view";
 import {
   ADMIN_ACCOUNT, ADMIN_NOTIFS, resolveAccountConfig,
 } from "./header-popovers";
 import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
 import { SessionContext } from "../session-context";
 import {
-  Home, Users, Settings, ChevronLeft, ChevronRight,
-  Bell, CheckCircle, AlertCircle, Target, FileText, Shield,
+  Home, Users, Settings, ChevronRight,
+  Bell, CheckCircle, AlertCircle, FileText, Shield,
   Plus, Eye, Edit2, Trash2, X, Check, Filter,
   TrendingUp, Award, Clock, Star, BarChart2, Download,
   MessageSquare, Briefcase, Link2, Lock, Database, ToggleLeft,
-  ToggleRight, History, Info, UserCheck, RefreshCw, Send, ArrowRight, Zap,
+  ToggleRight, History, UserCheck, RefreshCw, Send, ArrowRight,
 } from "lucide-react";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import { SwitchVisual } from "./ui/switch";
 import { Input } from "./ui/input";
 import { SearchInput } from "./ui/search-input";
 import { NativeSelect } from "./ui/native-select";
-import { Textarea } from "./ui/textarea";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
 import { Badge as UIBadge } from "./ui/badge";
@@ -58,11 +108,6 @@ import {
 import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
 
 type NavFn = (s: string) => void;
-type PendingEvaluatorInvite = {
-  id: string;
-  name: string;
-  email: string;
-};
 
 // ─── Local UI Helpers ─────────────────────────────────────────────────────────
 
@@ -111,8 +156,8 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   return <UICard padding="none" className={className}>{children}</UICard>;
 }
 
-function StatCard({ value, label, icon: Icon, color }: {
-  value: string | number; label: string; icon: React.ElementType; color: string;
+function StatCard({ value, label, icon: Icon, color, hint }: {
+  value: string | number; label: string; icon: React.ElementType; color: string; hint?: string | null;
 }) {
   return (
     <Card className="p-3 sm:p-5 flex items-center gap-2 sm:gap-4">
@@ -122,6 +167,7 @@ function StatCard({ value, label, icon: Icon, color }: {
       <div className="min-w-0">
         <p className="text-lg sm:text-2xl font-bold text-foreground leading-tight">{value}</p>
         <p className="text-[11px] sm:text-xs text-muted-foreground font-medium mt-0.5 leading-snug line-clamp-2">{label}</p>
+        {hint ? <p className="text-[10px] sm:text-[11px] text-muted-foreground/80 mt-0.5 leading-snug">{hint}</p> : null}
       </div>
     </Card>
   );
@@ -135,9 +181,7 @@ const ADMIN_NAV: ProfileShellNavItem[] = [
   { icon: UserCheck,   label: "Avaliadores",      screen: "admin-evaluators" },
   { icon: MessageSquare, label: "Entrevistas",      screen: "admin-interviews" },
   { icon: Link2,       label: "Atribuições",      screen: "admin-assign" },
-  { icon: MessageSquare, label: "Banco de Perguntas", screen: "admin-questions" },
   { icon: Briefcase,   label: "Cargos e Áreas",  screen: "admin-roles" },
-  { icon: Target,      label: "Critérios",        screen: "admin-criteria" },
   { icon: Shield,      label: "Consentimentos",   screen: "admin-consent" },
   { icon: FileText,    label: "Auditoria",        screen: "admin-audit" },
   { icon: Settings,    label: "Configurações",    screen: "admin-settings" },
@@ -148,13 +192,12 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
   title: string; subtitle?: string; actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  // Antes desta correção (Prompt 08), o cabeçalho/AccountDropdown do Admin
-  // sempre exibia o nome/e-mail de demonstração (`ADMIN_ACCOUNT`,
-  // "Ana Martins"), mesmo com um admin real autenticado — porque este
-  // componente não tinha acesso à sessão. Mesmo padrão já usado por
-  // `AuthLayout` (Candidato) em App.tsx. Os DADOS de negócio exibidos nas
-  // telas Admin (candidatos, avaliadores, entrevistas mock etc.) continuam
-  // mock — só a identidade do usuário autenticado no cabeçalho muda aqui.
+  // O cabeçalho/AccountDropdown do Admin usa a identidade da sessão real
+  // (`SessionContext`); `ADMIN_ACCOUNT` (demonstração) só vale sem sessão
+  // de Admin. Mesmo padrão de `AuthLayout` (Candidato) em App.tsx.
+  // Candidatos, avaliadores, dashboard, fila/atribuição e entrevistas já vêm
+  // da API. Seguem estáticas/mockadas, fora desse fluxo: notificações do
+  // cabeçalho, Cargos e Áreas, Configurações, Consentimentos e Auditoria.
   const activeSession = useContext(SessionContext);
   const resolvedAccount =
     activeSession.authenticated && activeSession.user?.role === "ADMIN"
@@ -178,18 +221,7 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
   );
 }
 
-// ─── Shared mock data ─────────────────────────────────────────────────────────
-
-// Conjunto oficial de avaliadores mock do Admin: Carlos, Eduardo e Camila
-// (ativos) — Patricia aparece em "Convites pendentes". As métricas são
-// zeradas: no futuro serão derivadas das atribuições e avaliações reais.
-// Média só é exibida quando há avaliação concluída (done > 0); caso contrário
-// aparece "—", para não parecer uma nota real igual a zero.
-const EVALUATORS = [
-  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Secretariado · Assessoria Executiva", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-];
+// ─── Shared Admin types & helpers ─────────────────────────────────────────────
 
 type AdminCandidateRow = {
   id: string;
@@ -203,19 +235,6 @@ type AdminCandidateRow = {
   professionalTitle?: string;
 };
 
-type AdminInterviewRow = {
-  id: string;
-  candidateId?: string;
-  candidate: string;
-  job: string;
-  date: string;
-  status: string;
-  statusCode?: InterviewStatus;
-  evaluator: string;
-  score: number | null;
-  realId?: string;
-};
-
 function formatAdminInterviewDateTime(timestamp?: string) {
   if (!timestamp) return "—";
   const date = new Date(timestamp);
@@ -225,11 +244,6 @@ function formatAdminInterviewDateTime(timestamp?: string) {
 function formatAdminDate(timestamp?: string) {
   if (!timestamp) return "—";
   return new Date(timestamp).toLocaleDateString("pt-BR");
-}
-
-function createAdminInterviewDisplayId(index: number) {
-  const safeIndex = Math.max(0, index);
-  return `#E-${String(42 + safeIndex).padStart(4, "0")}`;
 }
 
 // Candidatos do Admin vêm exclusivamente da API (contas reais com role
@@ -255,29 +269,28 @@ type AdminRemoteState<T> =
   | { status: "not_found" }
   | { status: "success"; data: T };
 
-function useAdminCandidatesList() {
-  const [state, setState] = useState<AdminRemoteState<AdminCandidatesList>>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
+// `sync: true` (Fase 4.2) liga o refresh silencioso (30 s, pausa hidden/offline, retoma em
+// focus/visible/online) SÓ na tela de lista. O Dashboard usa o hook sem `sync`: carrega uma vez.
+const CANDIDATES_SYNC = {
+  intervalMs: ADMIN_CANDIDATES_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_CANDIDATES_SYNC_MAX_BACKOFF_MS,
+};
 
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
+function useAdminCandidatesList(options: { sync?: boolean } = {}) {
+  const live = useCandidateLiveResource<AdminCandidatesList>({
+    resourceKey: "admin-candidates",
+    fetch: listAdminCandidates,
+    sync: options.sync ? CANDIDATES_SYNC : undefined,
+  });
+  const liveState = live.state;
+  const state: AdminRemoteState<AdminCandidatesList> =
+    liveState.status === "ready"
+      ? { status: "success", data: liveState.value }
+      : liveState.status === "error"
+        ? { status: "error", message: liveState.message }
+        : { status: "loading" };
 
-    listAdminCandidates().then((result) => {
-      if (cancelled) return;
-      setState(
-        result.ok
-          ? { status: "success", data: result.data }
-          : { status: "error", message: result.message },
-      );
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [attempt]);
-
-  return { state, reload: () => setAttempt((value) => value + 1) };
+  return { state, reload: live.reload };
 }
 
 function useAdminCandidateDetail(candidateId: string | undefined) {
@@ -359,97 +372,64 @@ function AdminLoadingCard({ label }: { label: string }) {
   );
 }
 
-function statusVariantFromAdminStatus(status: string): "default" | "success" | "warning" | "error" | "info" | "purple" {
-  if (status === "Aguardando" || status.startsWith("Aguardando avaliação")) return "warning";
-  if (status === "Em avaliação" || status === "Atribuída") return "info";
-  if (status === "Concluído" || status === "Avaliada") return "success";
-  return "default";
-}
+type AdminInterviewsState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "success"; data: AdminInterviewList };
 
-function createAdminInterviewRows(): AdminInterviewRow[] {
-  const realRows = getAdminVisibleInterviews().map((interview, index) => {
-    const assignment = getAssignmentByInterviewId(interview.id);
-    const evaluation = getEvaluationByInterviewId(interview.id);
-    return {
-      id: createAdminInterviewDisplayId(index),
-      candidateId: interview.candidateId,
-      candidate: interview.candidateName,
-      job: interview.context.title,
-      date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
-      status: statusLabelFromInterview(interview.status),
-      statusCode: interview.status,
-      evaluator: assignment?.evaluatorName ?? "—",
-      score: getAverageScore(evaluation?.scores),
-      realId: interview.id,
+// Entrevistas REAIS (GET /admin/interviews). Sem polling e sem fallback: carregando,
+// erro (com "Tentar novamente") ou dado do Back. `candidateId` restringe ao candidato;
+// `skip` impede a consulta (nunca cai na listagem geral por engano).
+function useAdminInterviews(options: { candidateId?: string; skip?: boolean } = {}) {
+  const { candidateId, skip = false } = options;
+  const [state, setState] = useState<AdminInterviewsState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (skip) return;
+    let cancelled = false;
+    setState({ status: "loading" });
+
+    listAdminInterviews(candidateId === undefined ? {} : { candidateId }).then((result) => {
+      if (cancelled) return;
+      setState(result.ok ? { status: "success", data: result.data } : { status: "error" });
+    });
+
+    return () => {
+      cancelled = true;
     };
-  });
+  }, [candidateId, skip, attempt]);
 
-  return realRows;
+  return { state, reload: () => setAttempt((value) => value + 1) };
 }
-
-const QUESTIONS_DATA = [
-  { id: 1, text: "Fale sobre você e o que te motivou a se candidatar para esta vaga.", category: "Perfil", difficulty: "Básica", active: true },
-  { id: 2, text: "Descreva uma situação em que precisou lidar com um prazo apertado.", category: "Comportamental", difficulty: "Intermediária", active: true },
-  { id: 3, text: "Qual é o seu maior ponto forte e como ele contribuiria para esta posição?", category: "Perfil", difficulty: "Básica", active: true },
-  { id: 4, text: "Conte sobre uma experiência em que trabalhou em equipe para resolver um problema.", category: "Comportamental", difficulty: "Intermediária", active: true },
-  { id: 5, text: "Onde você se vê profissionalmente daqui a três anos?", category: "Carreira", difficulty: "Básica", active: true },
-  { id: 6, text: "Como você lida com situações de conflito no ambiente de trabalho?", category: "Comportamental", difficulty: "Avançada", active: true },
-  { id: 7, text: "Descreva um projeto ou iniciativa do qual você se orgulha.", category: "Experiência", difficulty: "Intermediária", active: false },
-];
 
 // ─── Screen: Dashboard Administrativo ────────────────────────────────────────
 
 // ─── Gráfico Interativo de Entrevistas por Mês ───────────────────────────────
 
-const MONTH_SHORT_LABELS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-const MONTH_FULL_LABELS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+type DashboardChartPeriod = "6m" | "12m";
 
-/** Entrevistas reais enviadas por mês, nos últimos `months` meses (zero quando não há dado). */
-function buildMonthlyInterviewData(months: number) {
-  const now = new Date();
-  const buckets = Array.from({ length: months }, (_, index) => {
-    const date = new Date(now.getFullYear(), now.getMonth() - (months - 1 - index), 1);
-    return {
-      key: date.getFullYear() * 12 + date.getMonth(),
-      m: MONTH_SHORT_LABELS[date.getMonth()],
-      full: MONTH_FULL_LABELS[date.getMonth()],
-      v: 0,
-    };
-  });
-
-  for (const interview of getAdminVisibleInterviews()) {
-    const date = new Date(interview.submittedAt ?? interview.createdAt);
-    if (Number.isNaN(date.getTime())) continue;
-    const bucket = buckets.find((item) => item.key === date.getFullYear() * 12 + date.getMonth());
-    if (bucket) bucket.v += 1;
-  }
-
-  return buckets.map(({ m, full, v }) => ({ m, full, v }));
-}
-
-function InterviewsChartCard() {
-  const data6m = buildMonthlyInterviewData(6);
-  const data12m = buildMonthlyInterviewData(12);
-
-  const [period, setPeriod] = useState<"6m" | "12m">("6m");
+/** Gráfico de entrevistas por mês: dados vêm de `interviewsByMonth` do endpoint (`null` = carregando). */
+function InterviewsChartCard({ interviewsByMonth }: { interviewsByMonth: AdminDashboardSnapshot["interviewsByMonth"] | null }) {
+  const [period, setPeriod] = useState<DashboardChartPeriod>("6m");
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const hasData = interviewsByMonth !== null;
 
   useEffect(() => {
     setMounted(false);
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
-  }, [period]);
+  }, [period, hasData]);
 
-  const data = period === "6m" ? data6m : data12m;
+  const data = interviewsByMonth ? buildChartData(interviewsByMonth, period) : [];
   const maxV = Math.max(...data.map(d => d.v), 1);
 
-  const toggle = (m: string) => setSelected(s => s === m ? null : m);
+  const toggle = (key: string) => setSelected(s => s === key ? null : key);
 
   return (
     <Card className="lg:col-span-2 p-5 sm:p-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <h3 className="font-bold text-foreground flex items-center gap-2">
           <BarChart2 className="w-4 h-4 text-blue-500" />
@@ -470,32 +450,33 @@ function InterviewsChartCard() {
         </div>
       </div>
 
-      {/* Bars */}
+      {!hasData ? (
+        <div className="h-40 rounded-xl bg-muted/60 animate-pulse" role="status" aria-label="Carregando gráfico" />
+      ) : (
       <div className="flex items-end gap-1.5 sm:gap-2 h-40" style={{ overflow: "visible" }}>
         {data.map((d, i) => {
-          const isHov = hovered === d.m;
-          const isSel = selected === d.m;
+          const isHov = hovered === d.key;
+          const isSel = selected === d.key;
           const barH = mounted ? Math.max((d.v / maxV) * 128, 4) : 0;
           return (
             <div
-              key={d.m}
+              key={d.key}
               className="flex-1 flex flex-col items-center gap-1.5 relative cursor-pointer select-none outline-none"
-              onMouseEnter={() => setHovered(d.m)}
+              onMouseEnter={() => setHovered(d.key)}
               onMouseLeave={() => setHovered(null)}
-              onClick={() => toggle(d.m)}
-              onTouchStart={() => setHovered(d.m)}
-              onTouchEnd={() => { toggle(d.m); setHovered(null); }}
+              onClick={() => toggle(d.key)}
+              onTouchStart={() => setHovered(d.key)}
+              onTouchEnd={() => { toggle(d.key); setHovered(null); }}
               role="button"
               tabIndex={0}
-              onKeyDown={e => e.key === "Enter" && toggle(d.m)}
-              aria-label={`${d.full}: ${d.v} entrevistas${isSel ? ", selecionado" : ""}`}
+              onKeyDown={e => e.key === "Enter" && toggle(d.key)}
+              aria-label={`${d.full}: ${d.v} ${d.v === 1 ? "entrevista" : "entrevistas"}${isSel ? ", selecionado" : ""}`}
               aria-pressed={isSel}
             >
-              {/* Tooltip */}
               {isHov && (
                 <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
                   <div className="bg-gray-900 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg shadow-xl whitespace-nowrap leading-none">
-                    {d.full} — {d.v} entrevistas
+                    {d.full} — {d.v} {d.v === 1 ? "entrevista" : "entrevistas"}
                   </div>
                   <div className="w-0 h-0 mx-auto" style={{
                     borderLeft: "5px solid transparent",
@@ -505,12 +486,10 @@ function InterviewsChartCard() {
                 </div>
               )}
 
-              {/* Value label */}
               <span className={`text-[11px] font-bold leading-none transition-colors ${
                 isSel ? "text-blue-600" : isHov ? "text-foreground" : "text-muted-foreground"
               }`}>{d.v}</span>
 
-              {/* Bar */}
               <div
                 className={`w-full rounded-t-md transition-colors ${
                   isSel ? "bg-blue-600" : isHov ? "bg-blue-500" : "bg-primary/80"
@@ -522,7 +501,6 @@ function InterviewsChartCard() {
                 }}
               />
 
-              {/* Month label */}
               <span className={`text-[11px] leading-none transition-colors ${
                 isSel ? "text-blue-600 font-semibold" : isHov ? "text-foreground" : "text-muted-foreground"
               }`}>{d.m}</span>
@@ -530,12 +508,12 @@ function InterviewsChartCard() {
           );
         })}
       </div>
+      )}
 
-      {/* Selected state footer */}
       {selected && (
         <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
           <p className="text-[11px] text-muted-foreground">
-            Filtrando por <span className="font-semibold text-blue-600">{data.find(d => d.m === selected)?.full}</span>
+            Filtrando por <span className="font-semibold text-blue-600">{data.find(d => d.key === selected)?.full}</span>
           </p>
           <button
             onClick={() => setSelected(null)}
@@ -549,80 +527,122 @@ function InterviewsChartCard() {
   );
 }
 
-export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const candidatesList = useAdminCandidatesList();
-  const candidateCount = candidatesList.state.status === "success" ? candidatesList.state.data.total : null;
-  const interviewRows = createAdminInterviewRows();
-  const pendingInterviews = getPendingAdminInterviews();
-  const averageScores = interviewRows.map((item) => item.score).filter((score): score is number => score !== null);
-  const averageScore = averageScores.length
-    ? averageScores.reduce((sum, score) => sum + score, 0) / averageScores.length
-    : null;
+// ─── Dashboard Admin REAL (Fase 4.3B) ─────────────────────────────────────────
 
-  const recentRealActivity = getAdminVisibleInterviews().slice(0, 4).map((interview, index) => ({
-    time: new Date(interview.submittedAt ?? interview.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-    user: "Sistema",
-    action: interview.status === "PENDING_EVALUATION" ? "Nova entrevista recebida" : statusLabelFromInterview(interview.status),
-    detail: `${createAdminInterviewDisplayId(index)} · ${interview.candidateName} · ${interview.context.title}`,
-  }));
-  const activity = recentRealActivity;
+// Números agregados vêm de UM endpoint (`GET /admin/dashboard`). Sync leve de 30 s pelo motor
+// compartilhado (pausa hidden/offline, retoma em focus/visible/online, 401/403 encerram).
+const DASHBOARD_SYNC = {
+  intervalMs: ADMIN_DASHBOARD_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_DASHBOARD_SYNC_MAX_BACKOFF_MS,
+};
+
+// `generatedAt` muda a cada resposta; o snapshot o descarta para o refresh só re-renderizar
+// quando algum número realmente mudou.
+async function fetchAdminDashboardSnapshot() {
+  const result = await getAdminDashboard();
+  return result.ok ? { ok: true as const, data: toDashboardSnapshot(result.data) } : result;
+}
+
+function useAdminDashboard() {
+  return useCandidateLiveResource<AdminDashboardSnapshot>({
+    resourceKey: "admin-dashboard",
+    fetch: fetchAdminDashboardSnapshot,
+    sync: DASHBOARD_SYNC,
+  });
+}
+
+const ACTIVITY_ICONS: Record<DashboardActivityIcon, React.ElementType> = {
+  candidate: Users,
+  interview: FileText,
+  assigned: UserCheck,
+  evaluation: CheckCircle,
+};
+
+export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const { state, reload } = useAdminDashboard();
+  const dashboard = state.status === "ready" ? state.value : null;
+  const summary = dashboard?.summary ?? null;
+  const activity = dashboard ? dashboard.recentActivity.map(describeActivity) : [];
+
+  const quickActions = [
+    { label: "Atribuir entrevistas",          screen: "admin-assign", count: summary ? summary.pendingAssignmentCount : null },
+    { label: "Gerenciar candidatos",          screen: "admin-candidates", count: summary ? summary.candidateCount : null },
+    { label: "Gerenciar avaliadores",         screen: "admin-evaluators", count: summary ? summary.activeEvaluatorCount : null },
+  ];
 
   return (
     <AdminLayout current="admin-dashboard" onNavigate={onNavigate} title="Dashboard Administrativo" subtitle="Visão geral do sistema RH Connect · SENAC-DF">
       <div className="w-full space-y-5">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard value={candidateCount ?? "—"}  label="Candidatos cadastrados" icon={Users}     color="bg-blue-50 text-blue-600" />
-          <StatCard value={EVALUATORS.filter((evaluator) => evaluator.status === "Ativo").length}   label="Avaliadores ativos"     icon={UserCheck} color="bg-teal-50 text-teal-600" />
-          <StatCard value={pendingInterviews.length}   label="Avaliações pendentes"   icon={Clock}     color="bg-amber-50 text-amber-600" />
-          <StatCard value={averageScore !== null ? formatScore(averageScore) : "—"}  label="Score médio geral"      icon={Star}      color="bg-green-50 text-green-600" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Monthly chart — interactive */}
-          <InterviewsChartCard />
-
-          {/* Quick links */}
-          <Card className="p-5 sm:p-6">
-            <h3 className="font-bold text-foreground mb-4">Ações Rápidas</h3>
-            <div className="space-y-2">
-              {[
-                { label: "Atribuir avaliações pendentes", screen: "admin-assign", count: pendingInterviews.length },
-                { label: "Gerenciar candidatos",          screen: "admin-candidates", count: candidateCount },
-                { label: "Adicionar pergunta",            screen: "admin-question-form", count: null },
-                { label: "Ver logs de auditoria",         screen: "admin-audit", count: null },
-              ].map(a => (
-                <button key={a.label} onClick={() => onNavigate(a.screen)}
-                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-muted transition-colors text-left">
-                  <span className="text-sm font-medium text-foreground">{a.label}</span>
-                  <div className="flex items-center gap-2">
-                    {a.count !== null && <Badge variant="info">{a.count}</Badge>}
-                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                </button>
-              ))}
+        {state.status === "error" ? (
+          <EmptyState
+            icon={AlertCircle}
+            title="Não foi possível carregar o dashboard"
+            description={state.message}
+            action={<Btn variant="outline" onClick={reload}>Tentar novamente</Btn>}
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <StatCard value={summary ? summary.candidateCount : "—"} label="Candidatos cadastrados" icon={Users} color="bg-blue-50 text-blue-600" />
+              <StatCard value={summary ? summary.activeEvaluatorCount : "—"} label="Avaliadores ativos" icon={UserCheck} color="bg-teal-50 text-teal-600" />
+              <StatCard value={summary ? summary.pendingAssignmentCount : "—"} label="Aguardando atribuição" icon={Clock} color="bg-amber-50 text-amber-600" />
+              <StatCard
+                value={summary ? formatDashboardScore(summary.averageScore) : "—"}
+                label="Pontuação média"
+                hint={summary ? (scoreSupportText(summary.averageScoreSample) ?? "Avaliações humanas concluídas") : "Avaliações humanas concluídas"}
+                icon={Star}
+                color="bg-green-50 text-green-600"
+              />
             </div>
-          </Card>
-        </div>
 
-        {/* Recent activity */}
-        <Card className="p-5 sm:p-6">
-          <h3 className="font-bold text-foreground mb-4 flex items-center gap-2"><History className="w-4 h-4" /> Atividade Recente</h3>
-          <div className="space-y-3">
-            {activity.length === 0 && (
-              <p className="text-sm text-muted-foreground">Nenhuma atividade recente.</p>
-            )}
-            {activity.map((a, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className="text-xs text-muted-foreground w-12 shrink-0 pt-0.5">{a.time}</span>
-                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm text-foreground"><span className="font-semibold">{a.user}</span> · {a.action}</p>
-                  <p className="text-xs text-muted-foreground">{a.detail}</p>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <InterviewsChartCard interviewsByMonth={dashboard ? dashboard.interviewsByMonth : null} />
+
+              <Card className="p-5 sm:p-6">
+                <h3 className="font-bold text-foreground mb-4">Ações Rápidas</h3>
+                <div className="space-y-2">
+                  {quickActions.map(a => (
+                    <button key={a.label} onClick={() => onNavigate(a.screen)}
+                      className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-muted transition-colors text-left">
+                      <span className="text-sm font-medium text-foreground">{a.label}</span>
+                      <div className="flex items-center gap-2">
+                        {a.count !== null && <Badge variant="info">{a.count}</Badge>}
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+              </Card>
+            </div>
+
+            <Card className="p-5 sm:p-6">
+              <h3 className="font-bold text-foreground mb-4 flex items-center gap-2"><History className="w-4 h-4" /> Atividade Recente</h3>
+              {!dashboard ? (
+                <div className="space-y-3" role="status" aria-label="Carregando atividade recente">
+                  {[0, 1, 2].map(i => <div key={i} className="h-9 rounded-lg bg-muted/60 animate-pulse" />)}
+                </div>
+              ) : activity.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhuma atividade recente.</p>
+              ) : (
+                <div className="space-y-3">
+                  {activity.map(a => {
+                    const Icon = ACTIVITY_ICONS[a.icon];
+                    return (
+                      <div key={a.id} className="flex items-start gap-3">
+                        <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">{a.time}</span>
+                        <Icon className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm text-foreground">{a.title}</p>
+                          {a.detail ? <p className="text-xs text-muted-foreground">{a.detail}</p> : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </>
+        )}
       </div>
     </AdminLayout>
   );
@@ -634,7 +654,7 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const { state: candidatesState, reload: reloadCandidates } = useAdminCandidatesList();
+  const { state: candidatesState, reload: reloadCandidates } = useAdminCandidatesList({ sync: true });
   const candidateRows = candidatesState.status === "success" ? candidatesState.data.candidates.map(toAdminCandidateRow) : [];
   const filtered = candidateRows.filter(c =>
     (status === "all" || c.accountStatus === status) &&
@@ -754,158 +774,95 @@ export function AdminCandidatesScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Gestão de Avaliadores ───────────────────────────────────────────
 
+// ─── Avaliadores REAIS (Fase 4.1) ────────────────────────────────────────────
+// Lista: GET /admin/evaluators, exibindo só avaliadores ativos e elegíveis. Sem mock, sem
+// localStorage, sem métricas inventadas (a API só informa `assignedCount`). Sync leve na 4.2.
+// O fluxo de convite/ativação foi adiado e NÃO é exposto aqui.
+
+type AdminEvaluatorsState =
+  | { status: "loading" }
+  | { status: "error"; message: string; canRetry: boolean }
+  | { status: "success"; evaluators: AdminEvaluator[] };
+
+const EVALUATORS_SYNC = {
+  intervalMs: ADMIN_EVALUATORS_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_EVALUATORS_SYNC_MAX_BACKOFF_MS,
+};
+
+// 4.2: carga inicial com loading + refresh silencioso (30 s). Falha temporária mantém a lista; 401/403
+// (já após a renovação de sessão do service) encerra o polling e preserva o que está na tela.
+function useAdminEvaluatorsList() {
+  const live = useCandidateLiveResource<AdminEvaluator[]>({
+    resourceKey: "admin-evaluators",
+    fetch: listAdminEvaluators,
+    sync: EVALUATORS_SYNC,
+  });
+  const liveState = live.state;
+  const state: AdminEvaluatorsState =
+    liveState.status === "ready"
+      ? { status: "success", evaluators: liveState.value }
+      : liveState.status === "error"
+        ? { status: "error", message: liveState.message, canRetry: liveState.reason !== "unauthorized" && liveState.reason !== "forbidden" }
+        : { status: "loading" };
+
+  return { state, reload: live.reload };
+}
+
+function EvaluatorCard({ evaluator }: { evaluator: AdminEvaluator }) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between mb-3 gap-2">
+        <div className="w-10 h-10 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
+          {evaluatorInitials(evaluator.name)}
+        </div>
+        <Badge variant="success">{EVALUATOR_ACTIVE_LABEL}</Badge>
+      </div>
+      <p className="font-bold text-foreground text-sm">{evaluator.name}</p>
+      <p className="text-xs text-muted-foreground mb-1">{evaluatorAreaLine(evaluator)}</p>
+      <p className="text-xs text-muted-foreground mb-3 break-all">{evaluator.email}</p>
+      <div className="bg-muted/50 rounded-lg p-2 text-center" title={ASSIGNED_COUNT_HINT}>
+        <p className="text-sm font-bold text-foreground">{evaluator.assignedCount}</p>
+        <p className="text-[10px] text-muted-foreground">{ASSIGNED_COUNT_LABEL}</p>
+      </div>
+    </Card>
+  );
+}
+
 export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const routerNavigate = useNavigate();
-  const [showAdd, setShowAdd] = useState(false);
-  const [inviteSent, setInviteSent] = useState(false);
-  const [inviteName, setInviteName] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteArea, setInviteArea] = useState("");
-  const [lastInvite, setLastInvite] = useState<PendingEvaluatorInvite | null>(null);
-  const [pendingInvites, setPendingInvites] = useState<PendingEvaluatorInvite[]>([
-    {
-      id: "pending-invite-001",
-      name: "Patricia Gomes",
-      email: "patricia.gomes@gmail.com",
-    },
-  ]);
-  const statusVariant = { "Ativo": "success", "Férias": "warning" } as const;
-  const canSendInvite = inviteName.trim().length > 0 && /^[^\s@]+@gmail\.com$/i.test(inviteEmail.trim());
-
-  const handleSendInvite = () => {
-    if (!canSendInvite) return;
-
-    const invite = {
-      id: `pending-invite-${Date.now()}`,
-      name: inviteName.trim(),
-      email: inviteEmail.trim(),
-    };
-    setPendingInvites((current) => [invite, ...current]);
-    setLastInvite(invite);
-    setInviteName("");
-    setInviteEmail("");
-    setInviteArea("");
-    setShowAdd(false);
-    setInviteSent(true);
-    setTimeout(() => setInviteSent(false), 8000);
-  };
+  const list = useAdminEvaluatorsList();
+  const evaluators = list.state.status === "success" ? list.state.evaluators : null;
+  const visible = evaluators ? presentableEvaluators(evaluators) : [];
 
   return (
     <AdminLayout current="admin-evaluators" onNavigate={onNavigate}
       title="Gestão de Avaliadores"
-      subtitle={`${EVALUATORS.length} avaliadores cadastrados · ${pendingInvites.length} convite(s) pendente(s)`}
-      actions={<Btn variant="primary" size="sm" onClick={() => { setShowAdd(true); setInviteSent(false); }}><Plus className="w-3.5 h-3.5" /> Convidar Avaliador</Btn>}>
+      subtitle={evaluatorsSubtitle(evaluators)}>
       <div className="w-full space-y-4">
-        {inviteSent && (
-          <Alert variant="success" className="flex items-start gap-3 px-5 py-4">
-            <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-green-800">Convite criado!</p>
-              <p className="text-xs text-green-700 mt-0.5">
-                {lastInvite ? `${lastInvite.name} ficou com status Aguardando ativação. ` : ""}
-                O avaliador receberá orientações para ativar a conta.
-              </p>
+        {list.state.status === "loading" && <AdminLoadingCard label="Carregando avaliadores..." />}
+
+        {list.state.status === "error" && (
+          <Alert variant="error" className="flex items-start gap-3 p-4">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm">{list.state.message}</p>
+              {list.state.canRetry && (
+                <Btn variant="outline" size="sm" className="mt-3" onClick={list.reload}>
+                  <RefreshCw className="w-3.5 h-3.5" /> Tentar novamente
+                </Btn>
+              )}
             </div>
-            <button
-              onClick={() => routerNavigate("/evaluator/activate?token=demo-patricia")}
-              className="text-xs text-green-700 underline underline-offset-2 hover:text-green-900 shrink-0 font-medium">
-              Ver simulação da ativação
-            </button>
           </Alert>
         )}
 
-        {showAdd && (
-          <Card className="p-5 sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-foreground">Convidar Avaliador</h3>
-              <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">O avaliador receberá orientações para definir sua própria senha e ativar a conta.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Nome completo *</label>
-                <Input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Ex: João Pereira" className="bg-white" /></div>
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">E-mail *</label>
-                <Input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="nome@gmail.com" type="email" className="bg-white" /></div>
-              <div><label className="block text-sm font-semibold text-foreground mb-1.5">Área de especialização</label>
-                <NativeSelect value={inviteArea} onChange={e => setInviteArea(e.target.value)} className="bg-white">
-                  <option value="">Selecione...</option>
-                  {PROFESSIONAL_AREA_OPTIONS.map(area => <option key={area}>{area}</option>)}
-                </NativeSelect></div>
-            </div>
-            <div className="flex gap-3">
-              <Btn variant="outline" onClick={() => setShowAdd(false)}>Cancelar</Btn>
-              <Btn variant="primary" onClick={handleSendInvite} disabled={!canSendInvite}><Send className="w-3.5 h-3.5" /> Enviar Convite</Btn>
-            </div>
-          </Card>
+        {evaluators && visible.length === 0 && (
+          <EmptyState icon={UserCheck} title={EVALUATORS_EMPTY.title} description={EVALUATORS_EMPTY.description} />
         )}
 
-        {pendingInvites.length > 0 && (
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-bold text-foreground text-sm">Convites pendentes</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Avaliador sem senha definida até concluir a ativação.</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {pendingInvites.map(ev => (
-                <div key={ev.id} className="border border-border rounded-xl p-4 bg-white">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="w-9 h-9 bg-amber-50 text-amber-700 rounded-xl flex items-center justify-center text-xs font-bold">
-                      {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
-                    </div>
-                    <Badge variant="warning">Aguardando ativação</Badge>
-                  </div>
-                  <p className="font-bold text-foreground text-sm">{ev.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{ev.email}</p>
-                  <div className="grid grid-cols-3 gap-2 text-center mt-3">
-                    {["Pendentes", "Concluídas", "Média"].map(label => (
-                      <div key={label} className="bg-muted/50 rounded-lg p-2">
-                        <p className="text-sm font-bold text-foreground">—</p>
-                        <p className="text-[10px] text-muted-foreground">{label}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-3">Senha ainda não definida</p>
-                </div>
-              ))}
-            </div>
-          </Card>
+        {visible.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {visible.map(ev => <EvaluatorCard key={ev.id} evaluator={ev} />)}
+          </div>
         )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {EVALUATORS.map(ev => (
-            <Card key={ev.id} className="p-5">
-              <div className="flex items-start justify-between mb-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-sm font-bold">
-                  {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
-                </div>
-                <Badge variant={statusVariant[ev.status]}>{ev.status}</Badge>
-              </div>
-              <p className="font-bold text-foreground text-sm">{ev.name}</p>
-              <p className="text-xs text-muted-foreground mb-1">{ev.area}</p>
-              <p className="text-xs text-muted-foreground mb-3">{ev.email}</p>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.pending}</p>
-                  <p className="text-[10px] text-muted-foreground">Pendentes</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.done}</p>
-                  <p className="text-[10px] text-muted-foreground">Concluídas</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-2">
-                  <p className="text-sm font-bold text-foreground">{ev.done > 0 ? ev.avg : "—"}</p>
-                  <p className="text-[10px] text-muted-foreground">Média</p>
-                </div>
-              </div>
-              <div className="flex gap-2 mt-3">
-                <Btn variant="ghost" size="sm" className="flex-1" onClick={() => onNavigate("admin-evaluator-form")}><Edit2 className="w-3 h-3" /></Btn>
-                <Btn variant="ghost" size="sm" className="flex-1 text-red-500 hover:text-red-600"><Trash2 className="w-3 h-3" /></Btn>
-              </div>
-            </Card>
-          ))}
-        </div>
       </div>
     </AdminLayout>
   );
@@ -916,42 +873,52 @@ export function AdminEvaluatorsScreen({ onNavigate }: { onNavigate: NavFn }) {
 export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const [search, setSearch] = useState("");
-  const interviewRows = createAdminInterviewRows();
-  const pendingCount = interviewRows.filter((item) => item.status === "Aguardando avaliação" || item.status === "Aguardando").length;
-  const evaluatingCount = interviewRows.filter((item) => item.status === "Em avaliação").length;
-  const completedCount = interviewRows.filter((item) => item.status === "Avaliada" || item.status === "Concluído").length;
+  const { state, reload } = useAdminInterviews();
 
-  const filtered = interviewRows.filter(i =>
-    i.candidate.toLowerCase().includes(search.toLowerCase()) || i.job.toLowerCase().includes(search.toLowerCase())
-  );
+  const interviews = state.status === "success" ? state.data.interviews : [];
+  const summary = summarizeAdminInterviews(interviews);
+  const filtered = filterAdminInterviews(interviews, search);
+  const loadingCards = state.status === "loading";
 
   return (
     <AdminLayout current="admin-interviews" onNavigate={onNavigate}
       title="Gestão de Entrevistas"
-      subtitle={`${interviewRows.length} entrevistas registradas`}
-      actions={<Btn variant="outline" size="sm"><Download className="w-3.5 h-3.5" /> Exportar</Btn>}>
+      subtitle={state.status === "success" ? `${state.data.total} ${state.data.total === 1 ? "entrevista registrada" : "entrevistas registradas"}` : undefined}>
       <div className="w-full space-y-4">
         <div className="grid grid-cols-3 gap-3">
-          <StatCard value={pendingCount}  label="Aguardando avaliação" icon={Clock}        color="bg-amber-50 text-amber-600" />
-          <StatCard value={evaluatingCount}  label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-          <StatCard value={completedCount} label="Concluídas este mês"   icon={CheckCircle}  color="bg-green-50 text-green-600" />
+          <StatCard value={loadingCards || state.status === "error" ? "—" : summary.pendingAssignment} label="Aguardando atribuição" icon={Clock}        color="bg-amber-50 text-amber-600" />
+          <StatCard value={loadingCards || state.status === "error" ? "—" : summary.inEvaluation}       label="Em avaliação"          icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+          <StatCard value={loadingCards || state.status === "error" ? "—" : summary.completed}          label="Concluídas"            icon={CheckCircle}  color="bg-green-50 text-green-600" />
         </div>
 
         <SearchInput
           containerClassName="max-w-sm"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar..."
+          placeholder="Buscar por candidato ou vaga..."
           className="bg-white"
         />
 
-        {filtered.length === 0 ? (
+        {state.status === "loading" && <AdminLoadingCard label="Carregando entrevistas..." />}
+
+        {state.status === "error" && (
+          <EmptyState
+            icon={AlertCircle}
+            title="Não foi possível carregar as entrevistas"
+            description={ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE}
+            action={<Btn variant="outline" onClick={reload}>Tentar novamente</Btn>}
+          />
+        )}
+
+        {state.status === "success" && filtered.length === 0 && (
           <EmptyState
             icon={MessageSquare}
-            title="Nenhuma entrevista registrada"
-            description="As entrevistas enviadas pelos candidatos aparecerão aqui."
+            title={interviews.length === 0 ? ADMIN_INTERVIEWS_EMPTY_MESSAGE : ADMIN_INTERVIEWS_EMPTY_SEARCH_MESSAGE}
+            description={interviews.length === 0 ? "As entrevistas enviadas pelos candidatos aparecerão aqui." : undefined}
           />
-        ) : (
+        )}
+
+        {state.status === "success" && filtered.length > 0 && (
           <Card>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -963,42 +930,39 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
                     <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden sm:table-cell">Data/hora</th>
                     <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
                     <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4 hidden md:table-cell">Avaliador</th>
-                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Score</th>
+                    <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Pontuação</th>
                     <th className="py-3 px-5" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filtered.map(i => (
-                    <tr key={i.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground">{i.id}</td>
-                      <td className="py-3.5 px-4 font-semibold text-foreground">{i.candidate}</td>
-                      <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{i.job}</td>
-                      <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{i.date}</td>
-                      <td className="py-3.5 px-4"><Badge variant={statusVariantFromAdminStatus(i.status)}>{i.status}</Badge></td>
-                      <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{i.evaluator}</td>
-                      <td className="py-3.5 px-4">
-                        {i.score !== null ? <Badge variant={i.score >= 8 ? "success" : "info"}>{formatScore(i.score)}</Badge> : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="py-3.5 px-5">
-                        <button
-                          onClick={() => {
-                            if (i.realId && i.candidateId) {
-                              routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}?interviewId=${encodeURIComponent(i.realId)}`);
-                              return;
-                            }
-                            if (i.candidateId) {
-                              routerNavigate(`/admin/candidates/${encodeURIComponent(i.candidateId)}`);
-                              return;
-                            }
-                            onNavigate("admin-candidate-detail");
-                          }}
-                          className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map(item => {
+                    const score = item.evaluation?.overallScore ?? null;
+                    return (
+                      <tr key={item.id} className="hover:bg-muted/30 transition-colors">
+                        <td className="py-3.5 px-5 font-mono text-xs text-muted-foreground" title={item.id}>{formatAdminInterviewShortId(item.id)}</td>
+                        <td className="py-3.5 px-4 font-semibold text-foreground">{item.candidate.name}</td>
+                        <td className="py-3.5 px-4 text-muted-foreground hidden lg:table-cell">{item.jobTitle}</td>
+                        <td className="py-3.5 px-4 text-muted-foreground hidden sm:table-cell">{formatAdminInterviewDateTime(adminInterviewReferenceDate(item))}</td>
+                        <td className="py-3.5 px-4"><Badge variant={getAdminInterviewStatusTone(item)}>{getAdminInterviewStatusLabel(item)}</Badge></td>
+                        <td className="py-3.5 px-4 text-muted-foreground hidden md:table-cell">{adminInterviewEvaluatorName(item)}</td>
+                        <td className="py-3.5 px-4">
+                          {score !== null
+                            ? <Badge variant={adminInterviewScoreTone(score)}>{formatAdminInterviewScore(score)}</Badge>
+                            : <span className="text-muted-foreground" title={ADMIN_INTERVIEWS_AWAITING_SCORE}>—</span>}
+                        </td>
+                        <td className="py-3.5 px-5">
+                          <button
+                            type="button"
+                            aria-label={`Ver candidato ${item.candidate.name}`}
+                            onClick={() => routerNavigate(`/admin/candidates/${encodeURIComponent(String(item.candidate.id))}?interviewId=${encodeURIComponent(item.id)}`)}
+                            className="p-1.5 text-muted-foreground hover:text-primary rounded-lg hover:bg-muted transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1011,27 +975,91 @@ export function AdminInterviewsScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 // ─── Screen: Atribuição de Avaliações ────────────────────────────────────────
 
+const ASSIGN_SYNC = {
+  intervalMs: ADMIN_QUEUE_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_QUEUE_SYNC_MAX_BACKOFF_MS,
+};
+
 export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [, refresh] = useState(0);
+  // Fila e avaliadores vêm exclusivamente da API (entrevistas HUMAN em
+  // PENDING_ASSIGNMENT e avaliadores reais em `evaluator_profile`). Nada vem do
+  // armazenamento local nem de mock. Sem fallback: carregando, erro ou dado real.
+  const [selectedRaw, setSelected] = useState<string | null>(null);
+  // Fase 4.2: fila + avaliadores são UM recurso com refresh silencioso (15 s). Depois de atribuir
+  // (ou de um conflito) a tela lê de novo em silêncio, sem spinner e sem esvaziar a fila.
+  const live = useCandidateLiveResource<AdminQueueData>({
+    resourceKey: "admin-assign-queue",
+    fetch: async () => {
+      const [queueResult, evaluatorsResult] = await Promise.all([listPendingAssignmentInterviews(), listAdminEvaluators()]);
+      return combineQueueResults(queueResult, evaluatorsResult);
+    },
+    sync: ASSIGN_SYNC,
+  });
+  const remote: AdminRemoteState<AdminQueueData> =
+    live.state.status === "ready"
+      ? { status: "success", data: live.state.value }
+      : live.state.status === "error"
+        ? { status: "error", message: live.state.message }
+        : { status: "loading" };
+  const [assigningEvaluatorId, setAssigningEvaluatorId] = useState<number | null>(null);
+  const [assignError, setAssignError] = useState("");
+  const [assignNotice, setAssignNotice] = useState("");
+  // Sucesso da atribuição é transitório (~4s); novo sucesso reinicia o timer e
+  // a desmontagem cancela o timer pendente. Erro continua persistente.
+  const noticeRef = useRef<TransientNotice | null>(null);
+  useEffect(() => {
+    const notice = new TransientNotice(setAssignNotice);
+    noticeRef.current = notice;
+    return () => {
+      notice.destroy();
+      noticeRef.current = null;
+    };
+  }, []);
+  const assigningRef = useRef(false);
 
-  const realPending = getPendingAdminInterviews().map((interview) => ({
-    id: interview.id,
-    candidate: interview.candidateName,
-    job: interview.context.title,
-    date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
-    realId: interview.id,
-  }));
-  const pending = realPending;
+  const reload = live.reload;
 
-  const handleAssign = (evaluatorId: string) => {
-    if (!selected) return;
-    const selectedInterview = pending.find((item) => item.id === selected);
-    if (selectedInterview?.realId) {
-      assignInterview(selectedInterview.realId, evaluatorId);
-      refresh((value) => value + 1);
+  const pending =
+    remote.status === "success"
+      ? remote.data.interviews.map((interview) => ({
+          id: interview.id,
+          candidate: interview.candidate.name,
+          job: interview.jobTitle,
+          date: formatAdminInterviewDateTime(interview.submittedAt ?? interview.createdAt),
+        }))
+      : [];
+  // Somente avaliadores com conta ACTIVE podem receber entrevistas (INVITED,
+  // ex.: convite pendente, não aparece como opção de atribuição).
+  const eligibleEvaluators =
+    remote.status === "success"
+      ? remote.data.evaluators.filter((evaluator) => evaluator.eligible)
+      : [];
+
+  // Se outro Admin atribuiu a entrevista selecionada, ela some da fila e a seleção é descartada.
+  const selected = resolveSelection(selectedRaw, remote.status === "success" ? remote.data.interviews : []);
+
+  const handleAssign = async (evaluator: AdminEvaluator) => {
+    if (!selected || assigningRef.current) return;
+    assigningRef.current = true;
+    setAssigningEvaluatorId(evaluator.id);
+    setAssignError("");
+    noticeRef.current?.clear();
+
+    const result = await assignInterviewToEvaluator(selected, evaluator.id);
+
+    assigningRef.current = false;
+    setAssigningEvaluatorId(null);
+
+    if (result.ok) {
+      noticeRef.current?.show(`Entrevista atribuída a ${evaluator.name}.`);
+    } else {
+      setAssignError(result.message);
     }
+
+    // Em sucesso ou conflito (ex.: outro Admin atribuiu antes) a fila é relida da API em
+    // silêncio (sem spinner); a tela nunca "adivinha" o novo estado localmente.
     setSelected(null);
+    void live.refresh({ supersede: true });
   };
 
   return (
@@ -1039,190 +1067,111 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
       title="Atribuição de Avaliações"
       subtitle="Associe entrevistas pendentes a avaliadores disponíveis">
       <div className="w-full space-y-4">
-        <Alert variant="warning" className="flex items-start gap-3 p-4">
-          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-700">{pending.length} entrevista{pending.length !== 1 ? "s" : ""} aguardando atribuição.</p>
-        </Alert>
+        {remote.status === "loading" && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+            <Spinner size="md" /> Carregando fila de atribuição...
+          </div>
+        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {/* Pending interviews */}
-          <div>
-            <h3 className="font-bold text-foreground mb-3">Entrevistas Pendentes</h3>
-            <div className="space-y-2.5">
-              {pending.length === 0 && (
-                <EmptyState
-                  icon={CheckCircle}
-                  title="Nenhuma entrevista pendente"
-                  description="Quando um candidato enviar uma entrevista, ela aparecerá aqui para atribuição."
-                />
-              )}
-              {pending.map(i => (
-                <button key={i.id} type="button" onClick={() => setSelected(i.id === selected ? null : i.id)} aria-pressed={selected === i.id}
-                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i.id ? "border-primary bg-blue-50" : "border-border bg-white hover:border-primary/30"}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-foreground">{i.candidate}</p>
-                      <p className="text-sm text-muted-foreground">{i.job} · {i.date}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {selected === i.id ? <Check className="w-4 h-4 text-primary" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-                    </div>
-                  </div>
-                </button>
-              ))}
+        {remote.status === "error" && (
+          <Alert variant="error" className="flex items-start gap-3 p-4">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm">{remote.message}</p>
+              <Btn variant="outline" size="sm" className="mt-3" onClick={reload}>
+                <RefreshCw className="w-3.5 h-3.5" /> Tentar novamente
+              </Btn>
             </div>
-          </div>
+          </Alert>
+        )}
 
-          {/* Evaluators */}
-          <div>
-            <h3 className="font-bold text-foreground mb-3">Avaliadores Disponíveis</h3>
-            {!selected ? (
-              <div className="p-8 border-2 border-dashed border-border rounded-xl text-center text-muted-foreground">
-                <p className="text-sm">Selecione uma entrevista à esquerda para atribuir</p>
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {EVALUATORS.filter(e => e.status === "Ativo").map(ev => (
-                  <button key={ev.id} onClick={() => handleAssign(ev.id)}
-                    className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
-                        {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+        {assignNotice && (
+          <Alert variant="success" className="flex items-start gap-3 p-4" role="status">
+            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="text-sm">{assignNotice}</p>
+          </Alert>
+        )}
+
+        {assignError && (
+          <Alert variant="error" className="flex items-start gap-3 p-4" role="alert">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="text-sm">{assignError}</p>
+          </Alert>
+        )}
+
+        {remote.status === "success" && (
+          <>
+            <Alert variant="warning" className="flex items-start gap-3 p-4">
+              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-700">{pending.length} entrevista{pending.length !== 1 ? "s" : ""} aguardando atribuição.</p>
+            </Alert>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Pending interviews */}
+              <div>
+                <h3 className="font-bold text-foreground mb-3">Entrevistas Pendentes</h3>
+                <div className="space-y-2.5">
+                  {pending.length === 0 && (
+                    <EmptyState
+                      icon={CheckCircle}
+                      title="Nenhuma entrevista pendente"
+                      description="Quando um candidato enviar uma entrevista, ela aparecerá aqui para atribuição."
+                    />
+                  )}
+                  {pending.map(i => (
+                    <button key={i.id} type="button" onClick={() => setSelected(i.id === selected ? null : i.id)} aria-pressed={selected === i.id}
+                      className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selected === i.id ? "border-primary bg-blue-50" : "border-border bg-white hover:border-primary/30"}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-foreground">{i.candidate}</p>
+                          <p className="text-sm text-muted-foreground">{i.job} · {i.date}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {selected === i.id ? <Check className="w-4 h-4 text-primary" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-foreground">{ev.name}</p>
-                        <p className="text-xs text-muted-foreground">{ev.area} · {ev.pending} pendentes</p>
-                      </div>
-                      <Badge variant="info">Média {ev.done > 0 ? ev.avg : "—"}</Badge>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </AdminLayout>
-  );
-}
-
-// ─── Screen: Banco de Perguntas ───────────────────────────────────────────────
-
-export function AdminQuestionsScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const [search, setSearch] = useState("");
-  const filtered = QUESTIONS_DATA.filter(q =>
-    q.text.toLowerCase().includes(search.toLowerCase()) ||
-    q.category.toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <AdminLayout current="admin-questions" onNavigate={onNavigate}
-      title="Banco de Perguntas"
-      subtitle={`${QUESTIONS_DATA.length} perguntas cadastradas`}
-      actions={<Btn variant="primary" size="sm" onClick={() => onNavigate("admin-question-form")}><Plus className="w-3.5 h-3.5" /> Nova Pergunta</Btn>}>
-      <div className="w-full space-y-4">
-        <SearchInput
-          containerClassName="max-w-sm"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar pergunta ou categoria..."
-          className="bg-white"
-        />
-
-        <div className="space-y-3">
-          {filtered.map(q => (
-            <Card key={q.id} className="p-4 sm:p-5">
-              <div className="flex items-start gap-3">
-                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">{q.id}</div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium leading-relaxed mb-2 ${!q.active ? "text-muted-foreground line-through" : "text-foreground"}`}>{q.text}</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="info">{q.category}</Badge>
-                    <Badge variant={q.difficulty === "Básica" ? "success" : q.difficulty === "Intermediária" ? "warning" : "error"}>{q.difficulty}</Badge>
-                    {!q.active && <Badge variant="default">Inativa</Badge>}
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button onClick={() => onNavigate("admin-question-form")} className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                  <button className="p-1.5 text-muted-foreground hover:text-red-500 rounded-lg hover:bg-muted transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </button>
+                  ))}
                 </div>
               </div>
-            </Card>
-          ))}
-        </div>
-      </div>
-    </AdminLayout>
-  );
-}
 
-// ─── Screen: Formulário de Pergunta ──────────────────────────────────────────
-
-export function AdminQuestionFormScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const [saved, setSaved] = useState(false);
-
-  if (saved) {
-    return (
-      <AdminLayout current="admin-questions" onNavigate={onNavigate} title="Pergunta Salva">
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <div className="text-center max-w-sm">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-green-600" />
+              {/* Evaluators */}
+              <div>
+                <h3 className="font-bold text-foreground mb-3">Avaliadores Disponíveis</h3>
+                {!selected ? (
+                  <div className="p-8 border-2 border-dashed border-border rounded-xl text-center text-muted-foreground">
+                    <p className="text-sm">Selecione uma entrevista à esquerda para atribuir</p>
+                  </div>
+                ) : eligibleEvaluators.length === 0 ? (
+                  <EmptyState
+                    icon={UserCheck}
+                    title="Nenhum avaliador ativo"
+                    description="Somente avaliadores com conta ativa podem receber entrevistas."
+                  />
+                ) : (
+                  <div className="space-y-2.5">
+                    {eligibleEvaluators.map(ev => (
+                      <button key={ev.id} type="button" onClick={() => handleAssign(ev)}
+                        disabled={assigningEvaluatorId !== null}
+                        className="w-full text-left p-4 rounded-xl border border-border bg-white hover:border-primary hover:bg-blue-50 transition-all disabled:opacity-60 disabled:cursor-not-allowed">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 bg-gradient-to-br from-teal-400 to-teal-600 rounded-xl flex items-center justify-center text-white text-xs font-bold">
+                            {ev.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-foreground">{ev.name}</p>
+                            <p className="text-xs text-muted-foreground">{ev.area ?? "Área não informada"} · {ev.assignedCount} pendente{ev.assignedCount !== 1 ? "s" : ""}</p>
+                          </div>
+                          {assigningEvaluatorId === ev.id && <Spinner />}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-            <h2 className="text-xl font-bold text-foreground mb-2">Pergunta salva!</h2>
-            <p className="text-muted-foreground mb-5 text-sm">A pergunta foi adicionada ao banco com sucesso.</p>
-            <div className="flex gap-3 justify-center">
-              <Btn variant="outline" onClick={() => setSaved(false)}>Adicionar outra</Btn>
-              <Btn variant="primary" onClick={() => onNavigate("admin-questions")}>Ver banco de perguntas</Btn>
-            </div>
-          </div>
-        </div>
-      </AdminLayout>
-    );
-  }
-
-  return (
-    <AdminLayout current="admin-questions" onNavigate={onNavigate}
-      title="Nova Pergunta"
-      subtitle="Adicionar ao banco de perguntas">
-      <div className="w-full max-w-2xl space-y-5">
-        <Card className="p-5 sm:p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-foreground mb-1.5">Texto da pergunta *</label>
-            <Textarea rows={3} placeholder="Digite o enunciado completo da pergunta..."
-              className="min-h-0 bg-white resize-none" />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Categoria *</label>
-              <NativeSelect className="bg-white">
-                <option value="">Selecione...</option>
-                {["Perfil","Comportamental","Carreira","Experiência","Técnica"].map(c => <option key={c}>{c}</option>)}
-              </NativeSelect>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Nível de dificuldade *</label>
-              <NativeSelect className="bg-white">
-                <option value="">Selecione...</option>
-                {["Básica","Intermediária","Avançada"].map(d => <option key={d}>{d}</option>)}
-              </NativeSelect>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-foreground mb-1.5">Orientação ao avaliador <span className="text-muted-foreground font-normal">(opcional)</span></label>
-            <Textarea rows={2} placeholder="Dicas de o que observar nesta resposta..."
-              className="min-h-0 bg-white resize-none" />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-foreground mb-1.5">Resposta esperada / exemplos <span className="text-muted-foreground font-normal">(opcional)</span></label>
-            <Textarea rows={3} placeholder="Elementos de uma boa resposta..."
-              className="min-h-0 bg-white resize-none" />
-          </div>
-        </Card>
-
-        <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("admin-questions")}><ChevronLeft className="w-3.5 h-3.5" /> Cancelar</Btn>
-          <Btn variant="primary" className="flex-1" onClick={() => setSaved(true)}>Salvar Pergunta</Btn>
-        </div>
+          </>
+        )}
       </div>
     </AdminLayout>
   );
@@ -1332,66 +1281,6 @@ export function AdminRolesScreen({ onNavigate }: { onNavigate: NavFn }) {
   );
 }
 
-// ─── Screen: Critérios de Avaliação ──────────────────────────────────────────
-
-export function AdminCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const criteria = [
-    { name: "Clareza",      weight: "15%", desc: "Expressão clara e objetiva", active: true },
-    { name: "Coerência",    weight: "15%", desc: "Lógica e consistência interna", active: true },
-    { name: "Objetividade", weight: "10%", desc: "Foco na resposta, sem digressões", active: true },
-    { name: "Domínio",      weight: "20%", desc: "Conhecimento técnico da área", active: true },
-    { name: "Organização",  weight: "15%", desc: "Estrutura da resposta", active: true },
-    { name: "Aderência aos requisitos", weight: "15%", desc: "Relação com os requisitos da vaga", active: true },
-    { name: "Capacidade de exemplificar", weight: "10%", desc: "Uso de exemplos e evidências", active: true },
-  ];
-
-  return (
-    <AdminLayout current="admin-criteria" onNavigate={onNavigate}
-      title="Critérios de Avaliação"
-      subtitle="Configure os critérios e pesos usados nas avaliações">
-      <div className="w-full space-y-4">
-        <Alert variant="info" className="flex items-start gap-3 p-4">
-          <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-blue-700">Os pesos devem somar 100%. Alterações afetam todas as avaliações futuras.</p>
-        </Alert>
-
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-5">Critério</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Descrição</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Peso</th>
-                  <th className="text-left font-semibold text-muted-foreground text-xs py-3 px-4">Status</th>
-                  <th className="py-3 px-5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {criteria.map(c => (
-                  <tr key={c.name} className="hover:bg-muted/30 transition-colors">
-                    <td className="py-3.5 px-5 font-semibold text-foreground">{c.name}</td>
-                    <td className="py-3.5 px-4 text-muted-foreground">{c.desc}</td>
-                    <td className="py-3.5 px-4"><Badge variant="info">{c.weight}</Badge></td>
-                    <td className="py-3.5 px-4"><Badge variant="success">Ativo</Badge></td>
-                    <td className="py-3.5 px-5">
-                      <button className="p-1.5 text-muted-foreground hover:text-blue-600 rounded-lg hover:bg-muted transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="px-5 py-3 border-t border-border flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">Soma total dos pesos: <span className="font-bold text-foreground">100%</span></p>
-            <Btn variant="primary" size="sm">Salvar Alterações</Btn>
-          </div>
-        </Card>
-      </div>
-    </AdminLayout>
-  );
-}
-
 // ─── Screen: Consentimentos e Privacidade ────────────────────────────────────
 
 export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
@@ -1446,9 +1335,7 @@ export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
-                <div className={`w-10 h-6 rounded-full relative ${s.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${s.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={s.on} />
               </div>
             ))}
           </div>
@@ -1590,9 +1477,7 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
-                <div className={`w-10 h-6 rounded-full relative ${s.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${s.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={s.on} />
               </div>
             ))}
           </Card>
@@ -1629,9 +1514,7 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
-                <div className={`w-10 h-6 rounded-full relative ${s.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${s.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={s.on} />
               </div>
             ))}
           </Card>
@@ -1798,20 +1681,18 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
   const { id: candidateIdParam } = useParams();
   const [searchParams] = useSearchParams();
   const interviewIdParam = searchParams.get("interviewId") ?? undefined;
-  const adminVisibleInterviews = getAdminVisibleInterviews();
   const candidateDetail = useAdminCandidateDetail(candidateIdParam);
   const candidateProfileState = useAdminCandidateProfile(candidateIdParam);
-  const relatedInterviews = adminVisibleInterviews.filter((item) => item.candidateId === candidateIdParam);
+  // Entrevistas do candidato: SEMPRE `GET /admin/interviews?candidateId=`. Sem candidato
+  // na URL nada é consultado (nunca cai na listagem geral).
+  const interviewsState = useAdminInterviews(
+    candidateIdParam ? { candidateId: candidateIdParam } : { skip: true },
+  );
+  // `interviewId` de outro candidato (ou inexistente) cai na mais recente DESTE candidato.
   const realInterview =
-    getInterviewById(interviewIdParam) ??
-    relatedInterviews[0] ??
-    null;
-  const realInterviewDisplayIndex = realInterview
-    ? adminVisibleInterviews.findIndex((item) => item.id === realInterview.id)
-    : -1;
-  const assignment = getAssignmentByInterviewId(realInterview?.id);
-  const evaluation = getEvaluationByInterviewId(realInterview?.id);
-  const averageScore = getAverageScore(evaluation?.scores);
+    interviewsState.state.status === "success"
+      ? pickCandidateInterview(interviewsState.state.data.interviews, candidateIdParam, interviewIdParam)
+      : null;
 
   if (candidateDetail.state.status !== "success") {
     const detailState = candidateDetail.state;
@@ -1848,35 +1729,42 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
     id: candidateAccount.id,
     name: candidateAccount.name,
     email: candidateAccount.email,
-    job: realInterview ? realInterview.context.title : "Conta de candidato",
-    status: realInterview ? statusLabelFromInterview(realInterview.status) : candidateAccount.onboardingLabel,
+    job: realInterview ? realInterview.jobTitle : "Conta de candidato",
+    status: realInterview ? getAdminInterviewStatusLabel(realInterview) : candidateAccount.onboardingLabel,
   };
 
   const interview = realInterview
     ? {
-        id: createAdminInterviewDisplayId(realInterviewDisplayIndex),
-        date: formatAdminInterviewDateTime(realInterview.submittedAt ?? realInterview.createdAt),
-        evaluator: assignment?.evaluatorName ?? "—",
-        score: averageScore,
+        id: formatAdminInterviewShortId(realInterview.id),
+        date: formatAdminInterviewDateTime(adminInterviewReferenceDate(realInterview)),
+        evaluator: adminInterviewEvaluatorName(realInterview),
+        score: realInterview.evaluation?.overallScore ?? null,
       }
     : null;
 
-  const criteriaScores = evaluation?.scores
-    ? Object.entries(evaluation.scores).map(([name, score]) => ({ name, score }))
-    : [];
-
-  const timeline = [
-    ...(candidateAccount.createdAt ? [{ date: formatAdminDate(candidateAccount.createdAt), label: "Cadastro criado", icon: FileText }] : []),
-    ...(candidateAccount.onboardingCompletedAt ? [{ date: formatAdminDate(candidateAccount.onboardingCompletedAt), label: "Onboarding concluído", icon: CheckCircle }] : []),
-    ...(realInterview
-      ? [
-          { date: formatAdminInterviewDateTime(realInterview.createdAt), label: "Entrevista criada", icon: FileText },
-          ...(realInterview.submittedAt ? [{ date: formatAdminInterviewDateTime(realInterview.submittedAt), label: "Entrevista enviada", icon: MessageSquare }] : []),
-          ...(assignment ? [{ date: formatAdminInterviewDateTime(assignment.assignedAt), label: "Avaliador atribuído", icon: Clock }] : []),
-          ...(evaluation?.completedAt ? [{ date: formatAdminInterviewDateTime(evaluation.completedAt), label: "Avaliação concluída", icon: CheckCircle }] : []),
-        ]
-      : []),
-  ];
+  // Apenas timestamps reais (conta + entrevista); nenhum evento inventado.
+  const timelineIcons: Record<AdminTimelineIcon, React.ElementType> = {
+    account: FileText,
+    onboarding: CheckCircle,
+    created: FileText,
+    submitted: MessageSquare,
+    assigned: Clock,
+    completed: CheckCircle,
+  };
+  const timeline = buildCandidateTimeline(
+    {
+      createdAt: candidateAccount.createdAt,
+      onboardingCompletedAt: candidateAccount.onboardingCompletedAt,
+    },
+    realInterview,
+  ).map((event) => ({
+    icon: timelineIcons[event.icon],
+    label: event.label,
+    date:
+      event.icon === "account" || event.icon === "onboarding"
+        ? formatAdminDate(event.at)
+        : formatAdminInterviewDateTime(event.at),
+  }));
 
   return (
     <AdminLayout current="admin-candidates" onNavigate={onNavigate}
@@ -1906,7 +1794,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
                   <p className="text-muted-foreground text-sm">{candidateDisplay.email}</p>
                   <p className="text-muted-foreground text-sm mt-0.5">{candidateDisplay.job}</p>
                 </div>
-                <Badge variant={realInterview ? statusVariantFromAdminStatus(candidateDisplay.status) : "info"}>
+                <Badge variant={realInterview ? getAdminInterviewStatusTone(realInterview) : "info"}>
                   {candidateDisplay.status}
                 </Badge>
               </div>
@@ -1938,13 +1826,21 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           </Card>
 
           {/* Interview info */}
-          {interview ? (
+          {interviewsState.state.status === "loading" ? (
+            <div className="lg:col-span-2"><AdminLoadingCard label="Carregando entrevistas do candidato..." /></div>
+          ) : interviewsState.state.status === "error" ? (
+            <Card className="p-5 lg:col-span-2">
+              <h3 className="font-bold text-foreground mb-2">Entrevistas</h3>
+              <p className="text-sm text-muted-foreground mb-3">{ADMIN_INTERVIEWS_LOAD_ERROR_MESSAGE}</p>
+              <Btn variant="outline" size="sm" onClick={interviewsState.reload}>Tentar novamente</Btn>
+            </Card>
+          ) : interview && realInterview ? (
             <Card className="p-5 lg:col-span-2">
               <h3 className="font-bold text-foreground mb-4">Dados da Entrevista</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground mb-0.5">ID da Entrevista</p>
-                  <p className="font-mono font-semibold text-foreground">{interview.id}</p>
+                  <p className="font-mono font-semibold text-foreground" title={realInterview.id}>{interview.id}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground mb-0.5">Data/hora de envio</p>
@@ -1955,33 +1851,12 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
                   <p className="font-semibold text-foreground">{interview.evaluator === "—" ? "Não atribuído" : interview.evaluator}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground mb-0.5">Score Final</p>
+                  <p className="text-muted-foreground mb-0.5">Pontuação Final</p>
                   {interview.score !== null
-                    ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{formatScore(interview.score)}</Badge>
-                    : <span className="text-muted-foreground">Aguardando avaliação</span>}
+                    ? <Badge variant={interview.score >= 8 ? "success" : interview.score >= 7 ? "info" : "warning"}>{formatAdminInterviewScore(interview.score)}</Badge>
+                    : <span className="text-muted-foreground">{ADMIN_INTERVIEWS_AWAITING_SCORE}</span>}
                 </div>
               </div>
-
-              {/* Score criteria — only if completed */}
-              {interview.score !== null && (
-                <div className="mt-5 pt-5 border-t border-border">
-                  <p className="font-semibold text-foreground mb-3 text-sm">Scores por Critério</p>
-                  <div className="space-y-2.5">
-                    {criteriaScores.map(s => (
-                      <div key={s.name} className="flex items-center gap-3">
-                        <span className="text-xs text-foreground w-24 shrink-0">{s.name}</span>
-                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className={`h-1.5 rounded-full ${s.score >= 8 ? "bg-green-500" : s.score >= 6 ? "bg-blue-500" : "bg-amber-500"}`}
-                            style={{ width: `${s.score * 10}%` }} />
-                        </div>
-                        <span className={`text-xs font-bold w-5 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
-                          {formatScore(s.score)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </Card>
           ) : (
             <Card className="p-5 lg:col-span-2">
@@ -1996,7 +1871,7 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
           <Btn variant="outline" onClick={() => onNavigate("admin-candidates")}>
             Voltar à Lista
           </Btn>
-          {realInterview && candidateDisplay.status !== "Concluído" && candidateDisplay.status !== "Avaliada" && (
+          {realInterview?.status === "PENDING_ASSIGNMENT" && (
             <Btn variant="primary" onClick={() => onNavigate("admin-assign")}>
               <UserCheck className="w-3.5 h-3.5" /> Atribuir Avaliador
             </Btn>
@@ -2009,111 +1884,13 @@ export function AdminCandidateDetailScreen({ onNavigate }: { onNavigate: NavFn }
 
 // ─── Screen: Formulário de Avaliador ─────────────────────────────────────────
 
-export function AdminEvaluatorFormScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const isEdit = true;
-  const defaultData = isEdit ? EVALUATORS[0] : null;
-
-  const [form, setForm] = useState({
-    name:   defaultData?.name  ?? "",
-    email:  defaultData?.email ?? "",
-    area:   defaultData?.area  ?? "",
-    status: defaultData?.status ?? "Ativo",
-  });
-  const [saved, setSaved] = useState(false);
-
-  const field = (key: keyof typeof form, label: string, type = "text", placeholder = "") => (
-    <div>
-      <label className="block text-sm font-semibold text-foreground mb-1.5">{label} *</label>
-      <Input
-        type={type}
-        value={form[key]}
-        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-        placeholder={placeholder}
-        className="bg-white"
-      />
-    </div>
-  );
-
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onNavigate("admin-evaluators"); }, 1500);
-  };
-
-  return (
-    <AdminLayout current="admin-evaluators" onNavigate={onNavigate}
-      title={isEdit ? "Editar Avaliador" : "Novo Avaliador"}
-      subtitle={isEdit ? `Editando: ${defaultData?.name}` : "Preencha os dados do novo avaliador"}
-      actions={
-        <Btn variant="outline" size="sm" onClick={() => onNavigate("admin-evaluators")}>
-          Voltar
-        </Btn>
-      }>
-      <div className="w-full max-w-2xl space-y-4">
-        {saved && (
-          <Alert variant="success" className="flex items-center gap-3 px-5 py-3.5 text-green-700">
-            <CheckCircle className="w-4 h-4 shrink-0" />
-            <span className="text-sm font-semibold">Avaliador salvo com sucesso! Redirecionando...</span>
-          </Alert>
-        )}
-
-        <Card className="p-6 space-y-4">
-          <h3 className="font-bold text-foreground">Dados Pessoais</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {field("name",  "Nome completo",        "text",  "Ex: João Pereira")}
-            {field("email", "E-mail", "email", "nome@gmail.com")}
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Área de especialização *</label>
-              <NativeSelect
-                value={form.area}
-                onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
-                className="bg-white"
-              >
-                <option value="">Selecione...</option>
-                {PROFESSIONAL_AREA_OPTIONS.map(area => <option key={area}>{area}</option>)}
-              </NativeSelect>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-foreground mb-1.5">Status</label>
-              <NativeSelect
-                value={form.status}
-                onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-                className="bg-white">
-                <option value="Ativo">Ativo</option>
-                <option value="Férias">Férias</option>
-                <option value="Inativo">Inativo</option>
-              </NativeSelect>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <h3 className="font-bold text-foreground mb-4">Permissões de Avaliação</h3>
-          <div className="space-y-3">
-            {[
-              { label: "Avaliar entrevistas de candidatos",         on: true },
-              { label: "Visualizar histórico completo",             on: true },
-              { label: "Exportar relatórios individuais",           on: false },
-              { label: "Receber atribuições automáticas do sistema", on: true },
-            ].map(p => (
-              <div key={p.label} className="flex items-center justify-between gap-4 py-2">
-                <p className="text-sm text-foreground">{p.label}</p>
-                <div className={`w-10 h-6 rounded-full relative cursor-pointer ${p.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${p.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("admin-evaluators")}>Cancelar</Btn>
-          <Btn variant="primary" className="flex-1" onClick={handleSave} disabled={saved}>
-            <Check className="w-3.5 h-3.5" /> {isEdit ? "Salvar Alterações" : "Cadastrar Avaliador"}
-          </Btn>
-        </div>
-      </div>
-    </AdminLayout>
-  );
+// O cadastro/convite de avaliadores foi adiado. A rota antiga não expõe formulário: volta para a lista.
+export function AdminEvaluatorFormScreen({ onNavigate: _onNavigate }: { onNavigate: NavFn }) {
+  const routerNavigate = useNavigate();
+  useEffect(() => {
+    routerNavigate("/admin/evaluators", { replace: true });
+  }, [routerNavigate]);
+  return null;
 }
 
 // ─── Screen: Onboarding do Administrador ─────────────────────────────────────
@@ -2138,7 +1915,7 @@ const ADMIN_ONBOARDING_STEPS = [
         <div className="space-y-2">
           {[
             { label: "Candidatos",  desc: "Acompanhe candidaturas, status e resultados" },
-            { label: "Avaliadores", desc: "Convide, gerencie e monitore avaliadores" },
+            { label: "Avaliadores", desc: "Acompanhe os avaliadores ativos" },
           ].map(s => (
             <div key={s.label} className="flex items-start gap-2 p-2.5 bg-muted/40 rounded-lg">
               <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
@@ -2171,29 +1948,6 @@ const ADMIN_ONBOARDING_STEPS = [
                 <p className="font-semibold text-foreground text-xs">{s.label}</p>
                 <p className="text-xs">{s.desc}</p>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    ),
-  },
-  {
-    id: 2,
-    icon: Target,
-    color: "bg-amber-100 text-amber-600",
-    title: "Perguntas e critérios",
-    content: (
-      <div className="space-y-3 text-sm text-muted-foreground">
-        <p>Configure o conteúdo avaliativo da plataforma: as <strong className="text-foreground">perguntas</strong> usadas nas entrevistas e os <strong className="text-foreground">critérios</strong> de pontuação dos avaliadores.</p>
-        <div className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
-          <Zap className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-800">Mantenha o banco de perguntas atualizado e os critérios alinhados com os objetivos do processo seletivo.</p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          {["Banco de perguntas", "Critérios de avaliação", "Cargos e áreas", "Consentimentos"].map(label => (
-            <div key={label} className="flex items-center gap-1.5 p-2 bg-muted/50 rounded-lg">
-              <Check className="w-3 h-3 text-primary shrink-0" />
-              <span className="font-medium text-foreground">{label}</span>
             </div>
           ))}
         </div>

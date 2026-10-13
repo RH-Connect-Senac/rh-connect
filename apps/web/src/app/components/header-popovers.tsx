@@ -43,10 +43,13 @@ export const CANDIDATE_ACCOUNT: AccountConfig = {
   settingsScreen: "settings",
 };
 
+// Base NEUTRA: nunca carrega nome/e-mail de uma pessoa real. A identidade
+// exibida vem da sessão (`resolveAccountConfig`); sem sessão de avaliador, o
+// cabeçalho mostra apenas o rótulo genérico.
 export const EVAL_ACCOUNT: AccountConfig = {
-  name: "Carlos Andrade",
-  email: "carlos.andrade@gmail.com",
-  initials: "CA",
+  name: "Avaliador",
+  email: "",
+  initials: "AV",
   avatarClass: "bg-gradient-to-br from-teal-500 to-teal-700",
   profileLabel: "Minha conta",
   profileScreen: "eval-settings",
@@ -63,21 +66,33 @@ export const ADMIN_ACCOUNT: AccountConfig = {
   settingsScreen: "admin-settings",
 };
 
-// V1: não há sistema real de notificações. Todos os perfis (Candidato,
-// Avaliador e Admin) exibem apenas a mesma comunicação genérica de boas-vindas,
-// sem simular evento novo/não lido (unread: false) e sem navegação associada.
-const WELCOME_NOTIFS: NotifItem[] = [
-  {
-    id: "welcome",
-    title: "Bem-vindo ao RH Connect!",
-    desc: "Explore os recursos da plataforma e continue sua jornada de preparação.",
-    unread: false,
-  },
-];
+// V1: não há sistema real de notificações (nada persistido no navegador nem no Back):
+// cada perfil exibe só uma comunicação estática de boas-vindas, sem simular
+// evento novo/não lido (unread: false) e sem navegação associada. Apenas o TEXTO
+// varia por papel; papel desconhecido usa uma mensagem neutra e segura.
+export type WelcomeRole = "CANDIDATE" | "EVALUATOR" | "ADMIN";
 
-export const CANDIDATE_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
-export const EVAL_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
-export const ADMIN_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
+const WELCOME_TITLE = "Bem-vindo ao RH Connect!";
+const WELCOME_DESC_BY_ROLE: Record<WelcomeRole, string> = {
+  CANDIDATE: "Explore os recursos da plataforma e continue sua jornada de preparação.",
+  EVALUATOR: "Acompanhe suas avaliações atribuídas e continue seu trabalho pela plataforma.",
+  ADMIN: "Gerencie candidatos, avaliadores e acompanhe o andamento das entrevistas pela plataforma.",
+};
+const WELCOME_DESC_FALLBACK = "Explore os recursos da plataforma RH Connect.";
+
+export function welcomeNotifsForRole(role?: string | null): NotifItem[] {
+  const desc =
+    role && Object.prototype.hasOwnProperty.call(WELCOME_DESC_BY_ROLE, role)
+      ? WELCOME_DESC_BY_ROLE[role as WelcomeRole]
+      : WELCOME_DESC_FALLBACK;
+  return [{ id: "welcome", title: WELCOME_TITLE, desc, unread: false }];
+}
+
+// Cada shell (Candidato/Avaliador/Admin) já recebe a sua constante; as rotas
+// de cada perfil são protegidas pelo papel autenticado.
+export const CANDIDATE_NOTIFS: NotifItem[] = welcomeNotifsForRole("CANDIDATE");
+export const EVAL_NOTIFS: NotifItem[] = welcomeNotifsForRole("EVALUATOR");
+export const ADMIN_NOTIFS: NotifItem[] = welcomeNotifsForRole("ADMIN");
 
 // ─── Identidade real (Prompt 08) ───────────────────────────────────────────────
 
@@ -148,8 +163,9 @@ export function AccountDropdown({ config, onNavigate }: { config: AccountConfig;
                 {config.initials}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-bold text-foreground truncate">{config.name}</p>
-                <p className="text-xs text-muted-foreground truncate">{config.email}</p>
+                {/* Nome: até 2 linhas (quebra natural); só trunca se nem assim couber. E-mail: 1 linha. */}
+                <p className="text-sm font-bold text-foreground leading-snug break-words line-clamp-2" title={config.name}>{config.name}</p>
+                <p className="text-xs text-muted-foreground truncate" title={config.email}>{config.email}</p>
               </div>
             </div>
           </div>

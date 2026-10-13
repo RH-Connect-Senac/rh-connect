@@ -123,10 +123,9 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 
 #### 5a. `AdminOnboardingScreen` (introdução operacional do administrador)
 - Layout sem sidebar (primeiro acesso), curto e direto
-- Stepper com **3 etapas** (não mais que isso):
+- Stepper com **2 etapas** (não mais que isso):
   1. **Gestão de usuários e avaliadores** — candidatos registrados, convidar avaliadores
   2. **Entrevistas e atribuições** — atribuir avaliações, acompanhar status
-  3. **Perguntas e critérios** — banco de perguntas, critérios de avaliação
 - Nenhuma gamificação, nenhum elemento visual extra
 - Botão final "Ir para o Dashboard" → `onNavigate("admin-dashboard")`
 
@@ -285,10 +284,7 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 | `admin-evaluators` | `AdminEvaluatorsScreen` | ⚠️ Incompleta (edição não implementada) |
 | `admin-interviews` | `AdminInterviewsScreen` | ⚠️ Incompleta (Eye sem ação) |
 | `admin-assign` | `AdminAssignScreen` | ✅ Completa |
-| `admin-questions` | `AdminQuestionsScreen` | ⚠️ Incompleta (edição sem tela própria) |
-| `admin-question-form` | `AdminQuestionFormScreen` | ⚠️ Incompleta (criação apenas, sem modo de edição) |
 | `admin-roles` | `AdminRolesScreen` | ⚠️ Incompleta (Edit/Delete sem ação) |
-| `admin-criteria` | `AdminCriteriaScreen` | ⚠️ Incompleta (Edit sem ação) |
 | `admin-consent` | `AdminConsentScreen` | ✅ Completa |
 | `admin-audit` | `AdminAuditScreen` | ✅ Completa |
 | `admin-settings` | `AdminSettingsScreen` | ✅ Completa |
@@ -309,10 +305,6 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 | BUG-B04 | `AdminEvaluatorsScreen` botão Edit | Sem `onClick` — sem `admin-evaluator-form` |
 | BUG-B05 | `AdminEvaluatorsScreen` botão Delete | Sem `onClick` — sem modal de confirmação |
 | BUG-B06 | `AdminRolesScreen` Edit/Delete | Sem `onClick` |
-| BUG-B07 | `AdminCriteriaScreen` Edit | Sem `onClick` |
-| BUG-B08 | `AdminQuestionsScreen` Edit por item | Sem `onClick` — `admin-question-form` não tem modo de edição |
-| BUG-B09 | `AdminQuestionsScreen` Delete por item | Sem `onClick` |
-| BUG-B10 | `AdminQuestionFormScreen` | `current="admin-questions"` — sidebar destaca item errado |
 
 ---
 
@@ -322,8 +314,8 @@ Contém `CandidateOnboardingScreen`. Usa o mesmo padrão dos arquivos de compone
 |---|---|---|---|---|
 | Candidato | 25 | 14 | 1 (`job-detail`) | 13 |
 | Avaliador | 8 | 6 | 1 (`eval-done`) | 9 |
-| Administrador | 12 | 8 | 2 (`admin-candidate-detail`, `admin-evaluator-form`) | 10 |
-| **Total** | **45** | **28** | **4** | **32** |
+| Administrador | 9 | 5 | 2 (`admin-candidate-detail`, `admin-evaluator-form`) | 6 |
+| **Total** | **42** | **25** | **4** | **28** |
 
 ---
 
@@ -346,24 +338,23 @@ Estes bugs quebram o fluxo principal e devem ser resolvidos primeiro por impacta
 4. `job-detail` — detalhe de uma vaga (candidato, opcional)
 
 ### Prioridade 3 — Botões mortos prioritários
-1. `AdminQuestionsScreen` Edit → abrir `admin-question-form` em modo edição
-2. `EvalQueueScreen` "Ver" → abrir detalhe da avaliação pendente
-3. `EvalHistoryScreen` Eye → abrir relatório da avaliação concluída
-4. `AdminCandidatesScreen` Eye → navegar para `admin-candidate-detail`
-5. `AdminEvaluatorsScreen` Edit → abrir `admin-evaluator-form`
+1. `EvalQueueScreen` "Ver" → abrir detalhe da avaliação pendente
+2. `EvalHistoryScreen` Eye → abrir relatório da avaliação concluída
+3. `AdminCandidatesScreen` Eye → navegar para `admin-candidate-detail`
+4. `AdminEvaluatorsScreen` Edit → abrir `admin-evaluator-form`
 
 ### Prioridade 4 — Botões mortos secundários
-6. `MaterialsScreen` "Abrir material" — definir ação (modal ou nova tela)
-7. `DevelopmentContent` "Acessar curso" — definir ação
-8. `ReportScreen` "Exportar PDF" — definir ação (modal de feedback)
-9. Filtros decorativos em `InterviewHistoryScreen`
-10. `ProfileScreen` botões "Adicionar"
+5. `MaterialsScreen` "Abrir material" — definir ação (modal ou nova tela)
+6. `DevelopmentContent` "Acessar curso" — definir ação
+7. `ReportScreen` "Exportar PDF" — definir ação (modal de feedback)
+8. Filtros decorativos em `InterviewHistoryScreen`
+9. `ProfileScreen` botões "Adicionar"
 
 ### Prioridade 5 — Melhorias pontuais
 - Links do footer da LandingScreen (`terms`, `privacy`)
 - `EvalScreenView`: corrigir lógica dos dots e desacoplar dados mockados
 - `EvalSettingsScreen` "Cancelar"
-- `AdminRolesScreen`, `AdminCriteriaScreen` Edit/Delete
+- `AdminRolesScreen` Edit/Delete
 
 ---
 

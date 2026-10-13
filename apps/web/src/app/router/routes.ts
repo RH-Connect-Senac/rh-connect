@@ -8,15 +8,15 @@ export type AppScreen =
   | "interview-history" | "agenda" | "development" | "disc-test"
   | "interview-setup" | "consent" | "evaluation-mode" | "prep" | "interview" | "review" | "interview-confirm" | "interview-done"
   | "pending" | "report"
-  | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-criteria" | "eval-settings"
+  | "eval-dashboard" | "eval-queue" | "eval-active" | "eval-screen" | "eval-review" | "eval-done" | "eval-history" | "eval-history-detail" | "eval-criteria" | "eval-settings"
   | "admin-dashboard" | "admin-candidates" | "admin-candidate-detail" | "admin-evaluators" | "admin-evaluator-form"
   | "admin-interviews" | "admin-assign"
-  | "admin-questions" | "admin-question-form" | "admin-roles" | "admin-criteria"
+  | "admin-roles"
   | "admin-consent" | "admin-audit" | "admin-settings";
 
 type RouteGroup = "public" | "candidate" | "evaluator" | "admin";
 type RoutePriority = "P0" | "P1" | "P2" | "P3";
-type RouteStatus = "visual" | "mockado" | "simulado";
+type RouteStatus = "visual" | "mockado" | "simulado" | "real";
 
 export type AppRoute = {
   screen: AppScreen;
@@ -62,13 +62,14 @@ export const APP_ROUTES = [
 
   { screen: "eval-activate", path: "/evaluator/activate", label: "Ativacao avaliador", group: "evaluator", priority: "P1", status: "simulado", backDependency: "sim" },
   { screen: "eval-onboarding", path: "/evaluator/onboarding", label: "Onboarding avaliador", group: "evaluator", priority: "P1", status: "simulado", backDependency: "sim" },
-  { screen: "eval-dashboard", path: "/evaluator/dashboard", label: "Dashboard avaliador", group: "evaluator", priority: "P0", status: "mockado", backDependency: "sim" },
-  { screen: "eval-queue", path: "/evaluator/evaluations", label: "Fila de avaliacoes", group: "evaluator", priority: "P0", status: "mockado", backDependency: "sim" },
-  { screen: "eval-active", path: "/evaluator/evaluations/active", label: "Em andamento", group: "evaluator", priority: "P2", status: "mockado", backDependency: "sim" },
-  { screen: "eval-screen", path: "/evaluator/evaluations/:id", label: "Tela de avaliacao", group: "evaluator", priority: "P0", status: "simulado", backDependency: "sim" },
+  { screen: "eval-dashboard", path: "/evaluator/dashboard", label: "Dashboard avaliador", group: "evaluator", priority: "P0", status: "real", backDependency: "sim" },
+  { screen: "eval-queue", path: "/evaluator/evaluations", label: "Fila de avaliacoes", group: "evaluator", priority: "P0", status: "real", backDependency: "sim" },
+  { screen: "eval-active", path: "/evaluator/evaluations/active", label: "Em andamento", group: "evaluator", priority: "P2", status: "real", backDependency: "sim" },
+  { screen: "eval-screen", path: "/evaluator/evaluations/:id", label: "Tela de avaliacao", group: "evaluator", priority: "P0", status: "real", backDependency: "sim" },
   { screen: "eval-review", path: "/evaluator/evaluations/:id/review", label: "Revisao de avaliacao", group: "evaluator", priority: "P0", status: "simulado", backDependency: "sim" },
   { screen: "eval-done", path: "/evaluator/evaluations/:id/success", label: "Avaliacao enviada", group: "evaluator", priority: "P0", status: "simulado", backDependency: "sim" },
-  { screen: "eval-history", path: "/evaluator/history", label: "Historico avaliador", group: "evaluator", priority: "P3", status: "mockado", backDependency: "sim" },
+  { screen: "eval-history", path: "/evaluator/history", label: "Historico avaliador", group: "evaluator", priority: "P3", status: "real", backDependency: "sim" },
+  { screen: "eval-history-detail", path: "/evaluator/history/:id", label: "Detalhe do historico avaliador", group: "evaluator", priority: "P3", status: "real", backDependency: "sim" },
   { screen: "eval-criteria", path: "/evaluator/criteria", label: "Criterios avaliador", group: "evaluator", priority: "P2", status: "mockado", backDependency: "sim" },
   { screen: "eval-settings", path: "/evaluator/settings", label: "Configuracoes avaliador", group: "evaluator", priority: "P3", status: "simulado", backDependency: "sim" },
 
@@ -80,10 +81,7 @@ export const APP_ROUTES = [
   { screen: "admin-evaluator-form", path: "/admin/evaluators/new", label: "Formulario avaliador", group: "admin", priority: "P1", status: "simulado", backDependency: "sim" },
   { screen: "admin-interviews", path: "/admin/interviews", label: "Entrevistas", group: "admin", priority: "P0", status: "mockado", backDependency: "sim" },
   { screen: "admin-assign", path: "/admin/assignments", label: "Atribuicoes", group: "admin", priority: "P0", status: "simulado", backDependency: "sim" },
-  { screen: "admin-questions", path: "/admin/questions", label: "Perguntas", group: "admin", priority: "P1", status: "mockado", backDependency: "sim" },
-  { screen: "admin-question-form", path: "/admin/questions/new", label: "Formulario pergunta", group: "admin", priority: "P3", status: "simulado", backDependency: "sim" },
   { screen: "admin-roles", path: "/admin/roles", label: "Cargos e areas", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
-  { screen: "admin-criteria", path: "/admin/criteria", label: "Criterios admin", group: "admin", priority: "P1", status: "mockado", backDependency: "sim" },
   { screen: "admin-consent", path: "/admin/consents", label: "Consentimentos", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "admin-audit", path: "/admin/audit", label: "Auditoria", group: "admin", priority: "P3", status: "mockado", backDependency: "sim" },
   { screen: "admin-settings", path: "/admin/settings", label: "Configuracoes admin", group: "admin", priority: "P3", status: "simulado", backDependency: "sim" },
@@ -98,6 +96,7 @@ const PARENT_LIST_SCREEN: Partial<Record<AppScreen, AppScreen>> = {
   "eval-screen": "eval-queue",
   "eval-review": "eval-queue",
   "eval-done": "eval-queue",
+  "eval-history-detail": "eval-history",
   "admin-candidate-detail": "admin-candidates",
 };
 

@@ -7,6 +7,7 @@
  * o perfil completo já recalculado pelo Back (`isComplete` / `missingSections`),
  * e a tela só reflete o que a API confirmou (sem atualização otimista).
  */
+import { sanitizeServerMessage } from "../domain/user-friendly-error";
 import type {
   AcademicLevel,
   ContractType,
@@ -142,7 +143,11 @@ async function run(
       reason === "invalid" || reason === "conflict" || reason === "not_found"
         ? await extractApiMessage(response)
         : null;
-    return { ok: false, reason, message: apiMessage ?? DEFAULT_MESSAGES[reason] };
+    return {
+      ok: false,
+      reason,
+      message: sanitizeServerMessage(apiMessage, { status: response.status, fallback: DEFAULT_MESSAGES[reason], scope: "profile" }),
+    };
   }
 
   try {

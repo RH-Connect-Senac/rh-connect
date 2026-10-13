@@ -4,6 +4,7 @@ import type {
   MockAuthUser,
   MockUserRole,
 } from "./auth-service";
+import { FRIENDLY_ERROR_MESSAGES, sanitizeServerMessage } from "../domain/user-friendly-error";
 
 /**
  * Login e sessão REAIS, para os três perfis (CANDIDATE, EVALUATOR, ADMIN) —
@@ -92,18 +93,18 @@ async function readErrorMessage(
   try {
     const payload = (await response.json()) as { message?: unknown };
 
-    if (typeof payload.message === "string" && payload.message.trim()) {
-      return payload.message;
-    }
-
-    if (Array.isArray(payload.message) && payload.message.length > 0) {
-      return payload.message.map(String).join(" ");
-    }
+    const message =
+      typeof payload.message === "string"
+        ? payload.message
+        : Array.isArray(payload.message) && payload.message.length > 0
+          ? payload.message.map(String).join(" ")
+          : null;
+    return sanitizeServerMessage(message, { status: response.status, fallback, scope: "login" });
   } catch {
     // Mantém a mensagem padrão quando a API não retorna JSON.
   }
 
-  return fallback;
+  return sanitizeServerMessage(null, { status: response.status, fallback, scope: "login" });
 }
 
 type CurrentUserResult =
@@ -238,7 +239,7 @@ export async function loginRealWithCredentials(
   } catch {
     return {
       ok: false,
-      message: "Resposta inválida do servidor. Tente novamente.",
+      message: FRIENDLY_ERROR_MESSAGES.generic,
     };
   }
 
@@ -247,7 +248,7 @@ export async function loginRealWithCredentials(
   if (!user) {
     return {
       ok: false,
-      message: "Resposta inválida do servidor. Tente novamente.",
+      message: FRIENDLY_ERROR_MESSAGES.generic,
     };
   }
 

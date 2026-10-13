@@ -1,6 +1,7 @@
 /** RH Connect — Aplicação Front-end */
 
-import { useState, useRef, useEffect, useContext, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { friendlyErrorMessage } from "./domain/user-friendly-error";
+import { useState, useRef, useEffect, useCallback, useContext, useId, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -56,15 +57,15 @@ import {
   isSpeechContextSecure,
 } from "./domain/speech-dictation";
 import {
-  EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalScreenView,
-  EvalReviewScreen, EvalDoneScreen, EvalHistoryScreen, EvalCriteriaScreen, EvalSettingsScreen,
+  EvalCriteriaScreen, EvalSettingsScreen,
   EvalActivateScreen, EvalOnboardingScreen,
 } from "./components/eval-screens";
+import { EvalDashboardScreen, EvalQueueScreen, EvalActiveScreen, EvalInterviewDetailScreen, EvalDraftEvaluationScreen, EvalRealReviewScreen, EvalCompletionSuccessScreen, EvalHistoryScreen, EvalHistoryDetailScreen } from "./components/evaluator-real-screens";
 import {
   AdminDashboardScreen, AdminCandidatesScreen, AdminCandidateDetailScreen,
   AdminEvaluatorsScreen, AdminEvaluatorFormScreen,
-  AdminInterviewsScreen, AdminAssignScreen, AdminQuestionsScreen,
-  AdminQuestionFormScreen, AdminRolesScreen, AdminCriteriaScreen,
+  AdminInterviewsScreen, AdminAssignScreen,
+  AdminRolesScreen,
   AdminConsentScreen, AdminAuditScreen, AdminSettingsScreen,
   AdminOnboardingScreen,
 } from "./components/admin-screens";
@@ -95,6 +96,7 @@ import {
 import { Card as UICard } from "./components/ui/card";
 import { Badge as UIBadge } from "./components/ui/badge";
 import { StatusBadge } from "./components/ui/status-badge";
+import { Switch } from "./components/ui/switch";
 import { Alert } from "./components/ui/alert";
 import { FilterChip } from "./components/ui/filter-chip";
 import { EmptyState } from "./components/ui/empty-state";
@@ -107,11 +109,122 @@ import {
 } from "./router/routes";
 import {
   analyzeJobUrl,
-  evaluateInterviewWithAi,
-  generateInterviewQuestions,
-  type InterviewQuestion,
   type JobInterviewContext,
 } from "./services/interview-context-service";
+import {
+  cancelRealInterview,
+  createRealInterview,
+  generateRealQuestions,
+  getRealInterview,
+  getRealInterviewResult,
+  getRealQuestions,
+  getRealQuestionsState,
+  getRealQuestionsStateForResume,
+  isUuid,
+  listRealInterviewHistory,
+  saveRealAnswer,
+  saveRealAnswerDraft,
+  saveRealEvaluationMode,
+  submitRealInterview,
+  type RealInterview,
+  type RealInterviewHistory,
+  type RealInterviewResult,
+  type RealInterviewQuestion,
+  type RealInterviewStatus,
+} from "./services/candidate-interviews-service";
+import {
+  clearAnswerDraft,
+  clearAnswerDraftsForInterview,
+  clearInterviewUrlPrefill,
+  deriveHighestReachedIndex,
+  getAnswerDraft,
+  getQuestionNavState,
+  isQuestionNavigable,
+  normalizeInterviewAnswer,
+  peekInterviewUrlPrefill,
+  resolveLinkCopyEffect,
+  resolveRestoredAnswer,
+  shouldShowCopiedLinkNotice,
+  resolveInitialQuestionIndex,
+  safeLocalStorage,
+  storeInterviewUrlPrefill,
+} from "./services/interview-ux-state";
+import {
+  ANSWER_SYNC_TONE_CLASS,
+  AnswerDraftAutosave,
+  describeAnswerSync,
+  describeAnswerSyncTone,
+  type AnswerAutosaveSnapshot,
+  type RemoteDraft,
+} from "./domain/interview-answer-autosave";
+import { confirmOfficialAnswer, withOfficialAnswer } from "./domain/interview-answer-confirmation";
+import {
+  attachExitProtection,
+  describeStaleInterview,
+  flushBeforeLeaving,
+  isExitProtectionActive,
+  shouldDiscardTerminalDraft,
+  isInterviewEditable,
+  staleNoticeTone,
+} from "./domain/interview-session-guard";
+import { startInterviewForContext } from "./domain/interview-start";
+import {
+  UNSUPPORTED_REPORT_VIEW,
+  buildReportView,
+  describeReportFailure,
+  isSupportedReportResult,
+  type ReportFailureAction,
+  type ReportFailureView,
+} from "./domain/candidate-report-view";
+import {
+  HISTORY_EMPTY_VIEW,
+  HISTORY_FILTERS,
+  HISTORY_FILTER_EMPTY_MESSAGE,
+  buildHistoryItemView,
+  countByFilter,
+  describeHistoryFailure,
+  filterHistory,
+  historyActionPath,
+  visibleHistoryItems,
+  type HistoryActionKind,
+  type HistoryFilter,
+} from "./domain/candidate-history-view";
+import { buildTrackingView, describeTrackingFailure, isTrackingTerminal, resolveSubmitDestination } from "./domain/interview-tracking-view";
+import { diffServerState } from "./domain/interview-sync-reconcile";
+import { CANCELLED_TEXTAREA_CLASS, PROGRESS_LABELS, isCancelledSession, resolveProgressVisual } from "./domain/interview-terminal-view";
+import type { InterviewSyncResult } from "./domain/interview-sync-poller";
+import { useInterviewSyncPolling } from "./hooks/use-interview-sync-polling";
+import { InterviewSessionTerminalContext } from "./hooks/interview-session-terminal";
+import { useInterviewSessionGuard } from "./hooks/use-interview-session-guard";
+import { useInProgressInterviews } from "./hooks/use-in-progress-interviews";
+import { useCandidateInterviewHistory } from "./hooks/use-candidate-interview-history";
+import { useCandidateLiveResource } from "./hooks/use-candidate-live-resource";
+import { CANDIDATE_TRACKING_SYNC_INTERVAL_MS, CANDIDATE_TRACKING_SYNC_MAX_BACKOFF_MS } from "./domain/candidate-live-sync";
+import {
+  DASHBOARD_RECENT_EMPTY,
+  buildDashboardRecent,
+  buildDashboardSummary,
+  dashboardActionPath,
+  describeDashboardInterviewsFailure,
+  formatDashboardScore,
+} from "./domain/candidate-dashboard-view";
+import { useDashboardInterviewsSync } from "./hooks/use-dashboard-interviews-sync";
+import {
+  CONFIRM_MODAL_DANGER_FOCUS_RING,
+  CONFIRM_MODAL_FOCUS_RING,
+  CONFIRM_MODAL_HIDDEN_FOCUS_RING,
+  resolveInitialFocus,
+  shouldHideInitialFocusRing,
+  type ConfirmInitialFocus,
+} from "./domain/confirm-modal-focus";
+import {
+  NEW_INTERVIEW_BLOCKED_MESSAGE,
+  buildResumePlan,
+  mergeInProgressEntries,
+  resolveNewInterviewGate,
+  resolveDashboardInterviewAccess,
+} from "./domain/interview-resume";
+import { SavedNotice } from "./domain/evaluator-save-notice";
 import {
   PROFESSIONAL_AREAS,
   type ProfessionalAreaId,
@@ -141,18 +254,6 @@ import {
   type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
-import { DEFAULT_EVALUATOR, findEvaluatorIdByEmail } from "./mocks/interviews";
-import {
-  completeAiEvaluation,
-  getAvailableCandidateReports,
-  getAverageScore,
-  getCandidateInterviews,
-  getEvaluationByInterviewId,
-  getInterviewById,
-  getReportByInterviewId,
-  statusLabelFromInterview,
-  submitInterview,
-} from "./services/interviews-service";
 import {
   clearRememberedLoginEmail,
   getRememberedLoginEmail,
@@ -233,7 +334,7 @@ const AUTH_SCREENS: Screen[] = [
   "eval-dashboard","eval-queue","eval-active","eval-screen","eval-review","eval-done","eval-history","eval-criteria","eval-settings",
   "admin-dashboard","admin-candidates","admin-candidate-detail","admin-evaluators","admin-evaluator-form",
   "admin-interviews","admin-assign",
-  "admin-questions","admin-question-form","admin-roles","admin-criteria","admin-consent","admin-audit","admin-settings",
+  "admin-roles","admin-consent","admin-audit","admin-settings",
 ];
 
 const DASHBOARD_BY_ROLE: Record<MockUserRole, string> = {
@@ -266,33 +367,6 @@ function getCandidateIdentity(session: MockAuthSession) {
   return UNAUTHENTICATED_CANDIDATE_IDENTITY;
 }
 
-// Ponte de compatibilidade TEMPORÁRIA entre a sessão real (Auth/Prompt 03 —
-// `session.user.id` vem do `user_id` do Prisma) e o domínio mock de
-// Avaliações, que continua 100% localStorage e usa ids estáveis tipo
-// "evaluator-carlos-andrade" (gravados pelo Admin em `assignInterview`).
-// Sem essa ponte, o id real nunca bate com o `assignedEvaluatorId` mock, e a
-// tela do Avaliador não encontra as atribuições feitas pelo Admin.
-//
-// Regra: se o avaliador autenticado tiver um e-mail conhecido no diretório
-// mock (`EVALUATOR_DIRECTORY`), usamos o id mock estável correspondente —
-// preservando `name` da sessão real. Para avaliadores reais sem
-// correspondência mock conhecida, caímos no `user.id` real (fallback), que
-// simplesmente não vai casar com nenhuma atribuição mock existente — não é
-// uma correção estrutural, só evita quebrar o caso demo do Carlos Andrade.
-function getEvaluatorIdentity(session: MockAuthSession) {
-  const user = session.user;
-  if (session.authenticated && user?.role === "EVALUATOR") {
-    const normalizedEmail = user.email.trim().toLowerCase();
-    const mockEvaluatorId = findEvaluatorIdByEmail(normalizedEmail);
-    return {
-      id: mockEvaluatorId ?? user.id,
-      name: user.name,
-    };
-  }
-
-  return { id: DEFAULT_EVALUATOR.id, name: DEFAULT_EVALUATOR.name };
-}
-
 function getEntryPathForSession(session: MockAuthSession) {
   if (!session.authenticated || !session.user) return "/login";
   return session.user.onboardingCompleted ? DASHBOARD_BY_ROLE[session.user.role] : ONBOARDING_BY_ROLE[session.user.role];
@@ -309,13 +383,25 @@ function isOnboardingPathForRole(pathname: string, role: MockUserRole) {
 // também importável por `eval-screens.tsx`/`admin-screens.tsx`, sem criar
 // dependência circular com este arquivo. Ver comentário completo lá.
 
+// Pergunta exibida no wizard: vem SEMPRE da API (id = UUID persistido).
+type InterviewQuestion = Pick<RealInterviewQuestion, "id" | "type" | "text">;
+
+// ATENÇÃO (Fase 2B): este rascunho em localStorage é SOMENTE progresso
+// temporário de UX (retomar a tela/pergunta). A fonte da verdade da entrevista
+// (id, perguntas, respostas, modalidade, status, envio) é o Back/PostgreSQL:
+// `interviewId` e `questions[].id` são os da API e as respostas são
+// regravadas/relidas do Back (ver InterviewScreen).
 type InterviewDraft = {
   interviewId?: string;
   context: JobInterviewContext | null;
   questions: InterviewQuestion[];
-  answers: Record<number, string>;
+  answers: Record<string, string>;
   evaluationMode: EvaluationMode | null;
 };
+
+type ResumeInterviewResult =
+  | { ok: true }
+  | { ok: false; reason: "not_in_progress" | "not_found" | "error"; message: string };
 
 type InterviewDraftScreen =
   | "interview-setup"
@@ -329,6 +415,8 @@ type InterviewDraftScreen =
 type InterviewDraftProgress = {
   currentScreen: InterviewDraftScreen;
   currentQuestionIndex: number;
+  // Maior pergunta já alcançada (UX/navegação local; o Back não guarda isso).
+  highestQuestionIndex?: number;
 };
 
 type StoredInterviewDraftEntry = {
@@ -349,10 +437,6 @@ const DEFAULT_INTERVIEW_DRAFT_PROGRESS: InterviewDraftProgress = {
 };
 
 const ANSWER_MAX_CHARS = 1000;
-
-function normalizeInterviewAnswer(value: string) {
-  return value.replace(/\s*\r?\n+\s*/g, " ");
-}
 
 function isValidInterviewAnswer(value?: string) {
   return Boolean(value?.trim());
@@ -407,6 +491,9 @@ function normalizeInterviewDraftProgress(value?: Partial<InterviewDraftProgress>
     currentQuestionIndex: Number.isInteger(value?.currentQuestionIndex) && value!.currentQuestionIndex! >= 0
       ? value!.currentQuestionIndex!
       : DEFAULT_INTERVIEW_DRAFT_PROGRESS.currentQuestionIndex,
+    ...(Number.isInteger(value?.highestQuestionIndex) && value!.highestQuestionIndex! >= 0
+      ? { highestQuestionIndex: value!.highestQuestionIndex! }
+      : {}),
   };
 }
 
@@ -421,10 +508,23 @@ function normalizeStoredInterviewDraftEntry(value: unknown): StoredInterviewDraf
     context: draft.context ?? null,
     questions: Array.isArray(draft.questions) ? draft.questions : [],
     answers: draft.answers && typeof draft.answers === "object" && !Array.isArray(draft.answers)
-      ? draft.answers as Record<number, string>
+      ? draft.answers as Record<string, string>
       : {},
     evaluationMode: draft.evaluationMode === "AI" || draft.evaluationMode === "HUMAN" ? draft.evaluationMode : null,
   };
+
+  // Rascunho legado (ids numéricos 1..5 / sem Interview real) não é mais
+  // aproveitado: perguntas só são válidas se vieram da API (UUID) e ligadas a
+  // um interviewId real.
+  if (normalizedDraft.interviewId && !isUuid(normalizedDraft.interviewId)) {
+    normalizedDraft.interviewId = undefined;
+  }
+  if (
+    normalizedDraft.questions.length > 0 &&
+    (!normalizedDraft.interviewId || normalizedDraft.questions.some((question) => !isUuid(question?.id)))
+  ) {
+    return null;
+  }
 
   if (!hasActiveInterviewDraft(normalizedDraft)) return null;
 
@@ -532,8 +632,9 @@ declare global {
 // ─── Shared UI Components ─────────────────────────────────────────────────────
 
 function Btn({
-  variant = "primary", size = "md", children, onClick, disabled = false, className = "",
+  variant = "primary", size = "md", children, onClick, disabled = false, className = "", type,
 }: {
+  type?: "button" | "submit";
   variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   children: React.ReactNode;
@@ -551,6 +652,7 @@ function Btn({
       className={buttonClassName}
       onClick={onClick}
       disabled={disabled}
+      type={type}
     >
       {children}
     </UIButton>
@@ -628,21 +730,25 @@ type FieldProps = {
   hint?: string;
 } & React.InputHTMLAttributes<HTMLInputElement>;
 
-function Field({ label, type = "text", placeholder, hint, required, ...props }: FieldProps) {
+function Field({ label, type = "text", placeholder, hint, required, id, labelClassName, ...props }: FieldProps & { labelClassName?: string }) {
   const isPassword = type === "password";
+  const generatedId = useId();
+  const fieldId = id ?? generatedId;
   return (
     <div>
-      <label className="block text-sm font-semibold text-foreground mb-1.5">
+      <label htmlFor={fieldId} className={labelClassName ?? "block text-sm font-semibold text-foreground mb-1.5"}>
         {label}{required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
       {isPassword ? (
         <PasswordInput
+          id={fieldId}
           placeholder={placeholder}
           required={required}
           {...props}
         />
       ) : (
         <Input
+          id={fieldId}
           type={type}
           placeholder={placeholder}
           required={required}
@@ -762,6 +868,12 @@ function LandingScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 
 // ─── Screen 2: Auth ───────────────────────────────────────────────────────────
 
+// Tipografia compartilhada por Login e Cadastro (mesmos tokens para elementos equivalentes).
+// Atenção: <label>/<button> têm tamanho-base próprio no tema (16px); por isso o tamanho é explícito.
+const AUTH_LABEL_CLASS = "block text-sm font-medium text-foreground mb-1.5";
+const AUTH_FIELD_PROPS = { labelClassName: AUTH_LABEL_CLASS, className: "text-sm font-normal" } as const;
+const AUTH_SMALL_TEXT_CLASS = "text-[13px] leading-relaxed";
+
 function AuthScreen({
   onNavigate,
   onLoginWithCredentials,
@@ -810,7 +922,11 @@ function AuthScreen({
     authNavigate(nextTab === "login" ? "/login" : "/register");
   };
 
+  const loginSubmittingRef = useRef(false);
   const handleLoginSubmit = async () => {
+    // Enter e o botão passam pelo mesmo caminho; sem double submit enquanto carrega.
+    if (loginSubmittingRef.current) return;
+    loginSubmittingRef.current = true;
     setLoginError("");
 
     setIsLoginSubmitting(true);
@@ -827,6 +943,7 @@ function AuthScreen({
         clearRememberedLoginEmail();
       }
     } finally {
+      loginSubmittingRef.current = false;
       setIsLoginSubmitting(false);
     }
   };
@@ -898,7 +1015,7 @@ function AuthScreen({
                 key={t}
                 onClick={() => selectAuthTab(t)}
                 aria-pressed={tab === t}
-                className={`py-4 text-sm font-semibold transition-all ${tab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
+                className={`py-4 text-sm font-medium transition-all ${tab === t ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {t === "login" ? "Entrar" : "Criar conta"}
               </button>
@@ -907,10 +1024,21 @@ function AuthScreen({
 
           <div className="p-5 sm:p-7">
             {tab === "login" ? (
-              <div className="space-y-4">
+              // Formulário semântico: Enter nos campos e o botão "Entrar na plataforma" disparam o mesmo submit.
+              // noValidate mantém a validação atual (feita pelo login), sem balões nativos do navegador.
+              <form
+                className="space-y-4"
+                noValidate
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleLoginSubmit();
+                }}
+              >
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="E-mail"
                   type="email"
+                  autoComplete="username"
                   placeholder="seuemail@gmail.com"
                   value={loginEmail}
                   onChange={(event) => {
@@ -920,18 +1048,15 @@ function AuthScreen({
                   required
                 />
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="Senha"
                   type="password"
+                  autoComplete="current-password"
                   placeholder="Sua senha"
                   value={loginPassword}
                   onChange={(event) => {
                     setLoginPassword(event.target.value);
                     setLoginError("");
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      handleLoginSubmit();
-                    }
                   }}
                   required
                 />
@@ -953,19 +1078,20 @@ function AuthScreen({
                         }
                       }}
                     />
-                    <label htmlFor="remember-access" className="text-muted-foreground cursor-pointer">
+                    <label htmlFor="remember-access" className="text-sm font-normal text-muted-foreground cursor-pointer">
                       Lembrar acesso
                     </label>
                   </div>
-                  <button onClick={() => onNavigate("forgot-password")} className="text-primary font-semibold hover:underline text-sm">Esqueci minha senha</button>
+                  <button type="button" onClick={() => onNavigate("forgot-password")} className="text-primary font-medium hover:underline text-sm">Esqueci minha senha</button>
                 </div>
-                <Btn variant="primary" className="w-full !py-3" onClick={handleLoginSubmit} disabled={isLoginSubmitting}>
+                <Btn variant="primary" type="submit" className="w-full !py-3" disabled={isLoginSubmitting}>
                   {isLoginSubmitting ? "Entrando..." : "Entrar na plataforma"}
                 </Btn>
-              </div>
+              </form>
             ) : (
               <div className="space-y-4">
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="Nome completo"
                   placeholder="João da Silva Lima"
                   value={registerName}
@@ -976,6 +1102,7 @@ function AuthScreen({
                   required
                 />
                 <Field
+                  {...AUTH_FIELD_PROPS}
                   label="E-mail"
                   type="email"
                   placeholder="nome@gmail.com"
@@ -988,6 +1115,7 @@ function AuthScreen({
                 />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field
+                    {...AUTH_FIELD_PROPS}
                     label="Senha"
                     type="password"
                     placeholder="Mínimo 8 caracteres"
@@ -999,6 +1127,7 @@ function AuthScreen({
                     required
                   />
                   <Field
+                    {...AUTH_FIELD_PROPS}
                     label="Confirmar senha"
                     type="password"
                     placeholder="Repita a senha"
@@ -1015,7 +1144,7 @@ function AuthScreen({
                     required
                   />
                 </div>
-                <div className="bg-accent rounded-xl p-4">
+                <div className="bg-accent rounded-xl px-4 py-3.5">
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
@@ -1026,8 +1155,8 @@ function AuthScreen({
                         setRegisterError("");
                       }}
                     />
-                    <span className="text-xs text-foreground leading-relaxed">
-                      Li e aceito os <button onClick={() => onNavigate("terms")} className="text-primary font-semibold hover:underline">Termos de uso</button> e a <button onClick={() => onNavigate("privacy")} className="text-primary font-semibold hover:underline">Política de privacidade</button>. <span className="text-red-500">*</span>
+                    <span className={`${AUTH_SMALL_TEXT_CLASS} font-normal text-foreground`}>
+                      Li e aceito os <button onClick={() => onNavigate("terms")} className="text-[13px] leading-relaxed text-primary font-medium whitespace-nowrap hover:underline">Termos de uso</button> e a <button onClick={() => onNavigate("privacy")} className="text-[13px] leading-relaxed text-primary font-medium whitespace-nowrap hover:underline">Política de privacidade</button>. <span className="text-red-500">*</span>
                     </span>
                   </label>
                 </div>
@@ -1042,9 +1171,9 @@ function AuthScreen({
               </div>
             )}
 
-            <p className="text-center text-xs text-muted-foreground mt-5">
+            <p className={`text-center ${AUTH_SMALL_TEXT_CLASS} font-normal text-muted-foreground mt-5`}>
               {tab === "login" ? "Não tem uma conta? " : "Já tem uma conta? "}
-              <button onClick={() => selectAuthTab(tab === "login" ? "register" : "login")} className="text-primary font-semibold hover:underline">
+              <button onClick={() => selectAuthTab(tab === "login" ? "register" : "login")} className="text-[13px] leading-relaxed text-primary font-medium hover:underline">
                 {tab === "login" ? "Criar conta" : "Entrar"}
               </button>
             </p>
@@ -1058,18 +1187,106 @@ function AuthScreen({
 
 // ─── Screen 3: Dashboard ──────────────────────────────────────────────────────
 
+/**
+ * Casca ÚNICA de um card de "Entrevistas recentes". O item real e o skeleton usam esta mesma estrutura
+ * (mesmas classes, mesmos tamanhos de texto), então a altura do loading acompanha a do conteúdo.
+ */
+function RecentInterviewShell({ title, subtitle, badges, action }: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  badges: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
+          <Briefcase className="w-4 h-4 text-muted-foreground" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground truncate">{title}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            {badges}
+            {action}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Blocos neutros (texto invisível sobre fundo) que ocupam o mesmo espaço do texto real. */
+const skeletonBlock = "rounded bg-muted text-transparent select-none";
+
+/** Loading inicial de "Entrevistas recentes": até 3 cards com a mesma casca dos reais (reserva a altura, sem layout shift). */
+function RecentInterviewsSkeleton() {
+  return (
+    <div role="status" aria-busy="true" data-testid="recent-interviews-skeleton">
+      <span className="sr-only">Carregando suas entrevistas...</span>
+      <div className="space-y-3" aria-hidden="true">
+        {[0, 1, 2].map((index) => (
+          <div key={index} className={index > 0 ? "hidden lg:block" : ""}>
+            <RecentInterviewShell
+              title={<span className={`${skeletonBlock} inline-block max-w-full`}>Título da vaga carregando</span>}
+              subtitle={<span className={`${skeletonBlock} inline-block max-w-full`}>Empresa · 00/00/0000 00:00</span>}
+              badges={
+                <>
+                  <span className={`${skeletonBlock} rounded-full px-2 py-0.5 text-[11px] border border-transparent`}>Avaliação humana</span>
+                  <span className={`${skeletonBlock} rounded-full px-2.5 py-0.5 text-xs leading-[1.5] border border-transparent`}>Aguardando avaliação</span>
+                </>
+              }
+              action={<span className={`${skeletonBlock} rounded-lg px-3 py-1.5 text-xs font-semibold`}>Acompanhar</span>}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DashboardScreen({
   onNavigate,
   session,
   activeDraftEntry,
   onContinueDraft,
+  onResumeInterview,
 }: {
   onNavigate: (s: Screen) => void;
   session: MockAuthSession;
   activeDraftEntry?: StoredInterviewDraftEntry | null;
   onContinueDraft?: () => void;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
 }) {
   const routerNavigate = useNavigate();
+  const inProgress = useInProgressInterviews();
+  const reloadInProgress = inProgress.reload;
+  // Entrevistas reais (GET /interviews): métricas e "Entrevistas recentes". CANCELLED fica fora (6A.4/6A.5).
+  const interviewsHistory = useCandidateInterviewHistory({ autoSync: false });
+  const refreshInterviewsHistory = interviewsHistory.refresh;
+  // Dashboard reativo entre dispositivos (focus/visible/online + polling de 15 s), só enquanto montado.
+  // UM único ciclo atualiza as duas fontes reais (in-progress e GET /interviews), em silêncio.
+  useDashboardInterviewsSync(async () => {
+    const [progress, history] = await Promise.all([inProgress.refresh(), refreshInterviewsHistory()]);
+    if (history === "stop") return "stop"; // 401/403: não insistir
+    return progress === "error" || history === "error" ? "error" : "ok";
+  });
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeMessage, setResumeMessage] = useState<string | null>(null);
+  const resumeInterview = async (interviewId: string) => {
+    if (!onResumeInterview || resumingId) return;
+    setResumingId(interviewId);
+    setResumeMessage(null);
+    const result = await onResumeInterview(interviewId);
+    setResumingId(null);
+    if (result.ok) return;
+    setResumeMessage(result.message);
+    // Enviada/encerrada entre a listagem e o clique: atualiza a lista do Dashboard.
+    if (result.reason === "not_in_progress" || result.reason === "not_found") {
+      void reloadInProgress();
+      void refreshInterviewsHistory();
+    }
+  };
   const candidateUser = session.user;
   const candidateIdentity = getCandidateIdentity(session);
   const candidateId = candidateIdentity.id;
@@ -1077,50 +1294,34 @@ function DashboardScreen({
   const firstName = (candidateUser?.name ?? CANDIDATE_ACCOUNT.name).trim().split(/\s+/)[0] ?? "candidato";
   const { status: profileStatus, profile: candidateProfile, reload: reloadProfile } = useCandidateProfile();
   const profileCompleteness = candidateProfile ? getProfileCompletionPercent(candidateProfile) : 0;
-  const candidateInterviews = getCandidateInterviews(candidateId);
-  const availableReports = getAvailableCandidateReports(candidateId);
-  const pendingCount = candidateInterviews.filter((item) => item.status !== "EVALUATED").length;
-  const bestScore = availableReports
-    .map((item) => getAverageScore(item.evaluation?.scores))
-    .filter((score): score is number => score !== null)
-    .sort((a, b) => b - a)[0];
-  type RecentInterviewItem = {
-    vaga: string;
-    empresa: string;
-    data: string;
-    status: string;
-    badge: "success" | "warning" | "default" | "info";
-    interviewId?: string;
-    draft?: boolean;
-    evaluationMode?: EvaluationMode | null;
+  const historyReady = interviewsHistory.state.status === "ready" ? interviewsHistory.state.history.interviews : null;
+  const dashboardSummary = historyReady ? buildDashboardSummary(historyReady) : null;
+  const recentItems = historyReady ? buildDashboardRecent(historyReady) : [];
+  // Back autoritativo (por interviewId, sem duplicar); o rascunho local só aparece
+  // como fallback enquanto a lista carrega/falha.
+  const inProgressEntries = mergeInProgressEntries({
+    server: inProgress.items,
+    localInterviewId: activeDraftEntry?.draft.interviewId,
+    localActive: Boolean(activeDraftEntry?.draft.context),
+  });
+  // UX preventiva da regra V1 (uma IN_PROGRESS por candidato); o Back segue como barreira.
+  const newInterviewGate = resolveNewInterviewGate(inProgressEntries);
+  // Os dois acessos do Dashboard (card principal e atalho) acompanham a lista real de IN_PROGRESS.
+  const interviewAccess = resolveDashboardInterviewAccess(newInterviewGate);
+  const continueExistingInterview = () => {
+    if (!newInterviewGate.blocked) return;
+    if (newInterviewGate.resume.source === "server") void resumeInterview(newInterviewGate.resume.interviewId);
+    else onContinueDraft?.();
   };
-  const activeDraftRecentItem: RecentInterviewItem[] = activeDraftEntry?.draft.context
-    ? [{
-      vaga: activeDraftEntry.draft.context.title,
-      empresa: activeDraftEntry.draft.context.company,
-      data: formatInterviewDateTime(activeDraftEntry.updatedAt),
-      status: "Em andamento",
-      badge: "info",
-      draft: true,
-      evaluationMode: activeDraftEntry.draft.evaluationMode,
-    }]
-    : [];
-  const recentItems: RecentInterviewItem[] = [
-    ...activeDraftRecentItem,
-    ...candidateInterviews.slice(0, 3).map((interview) => {
-      const report = getReportByInterviewId(interview.id);
-      const interviewTimestamp = interview.submittedAt ?? interview.createdAt;
-      return {
-        vaga: interview.context.title,
-        empresa: interview.context.company,
-        data: formatInterviewDateTime(interviewTimestamp),
-        status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
-        badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
-        interviewId: interview.id,
-        evaluationMode: interview.evaluationMode,
-      };
-    }),
-  ].slice(0, 3);
+  const startNewInterview = () => {
+    // Defesa: com IN_PROGRESS nunca abre outro wizard; continua a existente.
+    if (newInterviewGate.blocked) {
+      continueExistingInterview();
+      return;
+    }
+    onNavigate("interview-setup");
+  };
+  const openInterviewAccess = interviewAccess.action === "continue" ? continueExistingInterview : startNewInterview;
 
   return (
     <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
@@ -1164,10 +1365,10 @@ function DashboardScreen({
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value={candidateInterviews.length} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-        <StatCard value={pendingCount} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
-        <StatCard value={availableReports.length} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
-        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
+        <StatCard value={dashboardSummary ? dashboardSummary.total : "—"} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+        <StatCard value={dashboardSummary ? dashboardSummary.waiting : "—"} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
+        <StatCard value={dashboardSummary ? dashboardSummary.resultsAvailable : "—"} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
+        <StatCard value={formatDashboardScore(dashboardSummary ? dashboardSummary.bestScore : null)} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
 
       {/* Agenda (entrevistas reais/externas) — não confundir com "Entrevistas recentes" (simuladas) */}
@@ -1177,19 +1378,19 @@ function DashboardScreen({
         onAddInterview={() => routerNavigate(`${getPathForScreen("agenda")}?new=1`)}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-        {/* CTA principal */}
-        <div>
-          <div className="rounded-2xl p-5 sm:p-6 text-white h-full flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6 items-stretch">
+        {/* CTA principal (acompanha a altura da coluna "Entrevistas recentes" no desktop; no mobile fica na altura natural) */}
+        <div className="flex flex-col" data-testid="new-interview-card">
+          <div className="flex-1 rounded-2xl p-5 sm:p-6 text-white flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
             <div>
               <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center mb-4">
                 <MessageSquare className="w-5 h-5 text-white" />
               </div>
-              <h3 className="text-lg font-bold mb-2">Nova entrevista</h3>
-              <p className="text-blue-200 text-sm leading-relaxed mb-4">Cole a URL da vaga e pratique com perguntas contextualizadas.</p>
+              <h3 className="text-lg font-bold mb-2">{interviewAccess.main.title}</h3>
+              <p className="text-blue-200 text-sm leading-relaxed mb-4">{interviewAccess.main.description}</p>
             </div>
-            <Btn size="md" onClick={() => onNavigate("interview-setup")} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold w-full">
-              Praticar <ArrowRight className="w-4 h-4" />
+            <Btn size="md" onClick={openInterviewAccess} disabled={interviewAccess.action === "continue" && resumingId !== null} className="!bg-white !text-blue-700 hover:!bg-blue-50 font-bold w-full">
+              {interviewAccess.main.cta} <ArrowRight className="w-4 h-4" />
             </Btn>
           </div>
         </div>
@@ -1204,39 +1405,61 @@ function DashboardScreen({
               </button>
             </div>
             <div className="space-y-3">
-              {recentItems.length ? (
+              {resumeMessage && (
+                <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{resumeMessage}</div>
+              )}
+              {interviewsHistory.state.status === "loading" ? (
+                <RecentInterviewsSkeleton />
+              ) : interviewsHistory.state.status === "error" ? (
+                (() => {
+                  const failure = describeDashboardInterviewsFailure(interviewsHistory.state.reason, interviewsHistory.state.message);
+                  return (
+                    <EmptyState
+                      icon={AlertCircle}
+                      title={failure.title}
+                      description={failure.description}
+                      className="border-none bg-muted/40 p-6"
+                      action={failure.canRetry ? <Btn size="sm" variant="outline" onClick={() => interviewsHistory.reload()}>Tentar novamente</Btn> : undefined}
+                    />
+                  );
+                })()
+              ) : recentItems.length ? (
                 recentItems.map((item) => (
-                  <div key={item.interviewId ?? `${item.vaga}-${item.data}`} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
-                        <Briefcase className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <EvaluationModeBadge mode={item.evaluationMode} />
-                          <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
-                          {item.badge === "success" && (
-                            <Btn size="sm" variant="primary" onClick={() => item.interviewId ? routerNavigate(`/candidate/reports/${item.interviewId}`) : onNavigate("report")}>
-                              Ver relatório
-                            </Btn>
-                          )}
-                          {item.draft && (
-                            <Btn size="sm" variant="primary" onClick={onContinueDraft}>
-                              Continuar entrevista
-                            </Btn>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <RecentInterviewShell
+                    key={item.id}
+                    title={item.title}
+                    subtitle={[item.company, item.dateText].filter(Boolean).join(" · ")}
+                    badges={
+                      <>
+                        <EvaluationModeBadge mode={item.evaluationMode} />
+                        <StatusBadge tone={item.tone}><span className="truncate max-w-[140px] sm:max-w-none">{item.statusLabel}</span></StatusBadge>
+                      </>
+                    }
+                    action={item.action && (
+                      <Btn
+                        size="sm"
+                        variant={item.action.kind === "track" ? "outline" : "primary"}
+                        disabled={item.action.kind === "resume" && resumingId !== null}
+                        onClick={() => {
+                          if (!item.action) return;
+                          if (item.action.kind === "resume") {
+                            void resumeInterview(item.id);
+                            return;
+                          }
+                          const path = dashboardActionPath(item.action, item.id);
+                          if (path) routerNavigate(path);
+                        }}
+                      >
+                        {item.action.kind === "resume" && resumingId === item.id ? "Carregando..." : item.action.label}
+                      </Btn>
+                    )}
+                  />
                 ))
               ) : (
                 <EmptyState
                   icon={MessageSquare}
-                  title="Nenhuma entrevista enviada ainda"
-                  description="Quando você concluir uma entrevista, ela aparecerá aqui com o status da avaliação."
+                  title={DASHBOARD_RECENT_EMPTY.title}
+                  description={DASHBOARD_RECENT_EMPTY.description}
                   className="border-none bg-muted/40 p-6"
                 />
               )}
@@ -1249,10 +1472,10 @@ function DashboardScreen({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { icon: User,      label: "Completar perfil",    desc: "Formação, experiência e habilidades",      screen: "profile" as Screen, color: "text-blue-600 bg-blue-50" },
-          { icon: MessageSquare, label: "Nova entrevista", desc: "Use o link da vaga para contextualizar sua prática", screen: "interview-setup" as Screen, color: "text-green-600 bg-green-50" },
+          { icon: MessageSquare, label: interviewAccess.quick.title, desc: interviewAccess.quick.description, screen: "interview-setup" as Screen, color: "text-green-600 bg-green-50" },
           { icon: BookOpen,  label: "Materiais de apoio",  desc: "Dicas e conteúdos de preparação",          screen: "materials" as Screen, color: "text-purple-600 bg-purple-50" },
         ].map(q => (
-          <button key={q.label} onClick={() => q.screen && onNavigate(q.screen)} className="text-left w-full">
+          <button key={q.label} onClick={() => q.screen === "interview-setup" ? openInterviewAccess() : q.screen && onNavigate(q.screen)} className="text-left w-full">
             <Card className="p-5 hover:shadow-md transition-all cursor-pointer">
               <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${q.color}`}>
                 <q.icon className="w-4 h-4" />
@@ -2452,8 +2675,7 @@ function PrepScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; dr
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Btn variant="outline" onClick={() => onNavigate("evaluation-mode")}>Voltar</Btn>
           <Btn variant="primary" size="lg" onClick={() => onNavigate("interview")}>
-            <span className="hidden sm:inline">Iniciar perguntas</span>
-            <span className="sm:hidden">Perguntas</span>
+            Iniciar perguntas
             <ChevronRight className="w-5 h-5" />
           </Btn>
         </div>
@@ -2472,31 +2694,112 @@ function getQuestionIndexFromSearchParam(value: string | null, questionCount: nu
   return questionNumber - 1;
 }
 
+// Entrevista enviada/encerrada em outro dispositivo: aviso claro + volta ao Dashboard (sem redirecionar sozinho).
+function StaleInterviewNotice({ message, status, onBack }: { message: string; status?: string | null; onBack: () => void }) {
+  // Cancelada é terminal/destrutiva: identidade própria em vermelho. Enviada em outro
+  // dispositivo e demais avisos seguem em âmbar.
+  const tone = staleNoticeTone(status);
+  const cancelled = tone === "error";
+  return (
+    <Alert variant={tone} role="alert" data-tone={tone} className="mb-4 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <AlertCircle className={`mt-0.5 h-4 w-4 shrink-0 ${cancelled ? "text-red-600" : "text-amber-600"}`} />
+        <p className={`text-sm font-medium ${cancelled ? "text-red-800" : "text-amber-800"}`}>{message}</p>
+      </div>
+      <Btn variant="outline" size="sm" onClick={onBack}>Voltar ao Dashboard</Btn>
+    </Alert>
+  );
+}
+
 function InterviewScreen({
   onNavigate,
   draft,
   setDraft,
   onQuestionIndexChange,
+  candidateId,
+  restoredQuestionIndex,
+  restoredHighestIndex,
+  registerLeaveFlush,
+  registerStopActivity,
+  onStaleExit,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
-  onQuestionIndexChange?: (index: number) => void;
+  // Cancelamento real: o App raiz manda parar autosave e ditado antes de limpar o estado local.
+  registerStopActivity?: (stop: (() => void) | null) => void;
+  onQuestionIndexChange?: (index: number, highestReached: number) => void;
+  // "Sair e continuar depois": o App raiz chama isto para tentar enviar o rascunho pendente ao Back.
+  registerLeaveFlush?: (flush: (() => Promise<void>) | null) => void;
+  // Entrevista já enviada em outro dispositivo: descarta o estado local do wizard e volta ao Dashboard.
+  onStaleExit?: () => void;
+  // Namespace local dos rascunhos de resposta (UX); o dono real vem do JWT no Back.
+  candidateId: string;
+  // Pergunta salva quando a página é recarregada DENTRO desta etapa (undefined ao chegar de outra tela).
+  restoredQuestionIndex?: number;
+  // Maior pergunta já alcançada antes do reload (só UX; define o que o painel mantém clicável).
+  restoredHighestIndex?: number;
 }) {
   const [searchParams] = useSearchParams();
   const questions = draft.questions;
   const targetQuestionIndex = getQuestionIndexFromSearchParam(searchParams.get("question"), questions.length);
-  const [qIdx, setQIdx] = useState(targetQuestionIndex);
+  const [qIdx, setQIdx] = useState(() =>
+    resolveInitialQuestionIndex({ restoredIndex: restoredQuestionIndex, urlIndex: targetQuestionIndex, questionCount: questions.length }),
+  );
+  // Maior pergunta já alcançada (só cresce). O estado de cada item do painel deriva disto + da resposta.
+  const [storedHighest, setStoredHighest] = useState<number | undefined>(restoredHighestIndex);
+  // Pergunta cujo rascunho local já foi conferido (ver efeito de restauração).
+  const [draftCheckedFor, setDraftCheckedFor] = useState<string | null>(null);
   const [speechError, setSpeechError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
   const [dictating, setDictating] = useState(false);
   const advancingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [syncState, setSyncState] = useState<"loading" | "ready" | "error">(draft.interviewId ? "loading" : "ready");
+  const [syncError, setSyncError] = useState("");
+  // Última resposta CONFIRMADA pelo Back, por pergunta (evita PUT desnecessário).
+  const persistedAnswersRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
+  // Rascunho do Back por pergunta (NÃO é resposta). `draft.answers` guarda SÓ a
+  // resposta OFICIAL confirmada; o texto em edição vive em `workingText`.
+  const remoteDraftsRef = useRef<Record<string, RemoteDraft>>({});
+  const workingRef = useRef<Record<string, string>>({});
+  const [workingText, setWorkingText] = useState<Record<string, string>>({});
+  const controllerRef = useRef<AnswerDraftAutosave | null>(null);
+  const [autosaveSnap, setAutosaveSnap] = useState<AnswerAutosaveSnapshot | null>(null);
+  const [savedNoticeVisible, setSavedNoticeVisible] = useState(false);
+  const savedNoticeRef = useRef<SavedNotice | null>(null);
   const question = questions[qIdx];
-  const answer = question ? draft.answers[question.id] ?? "" : "";
+  const answer = question ? workingText[question.id] ?? draft.answers[question.id] ?? "" : "";
   const answerLength = answer.length;
+  const highestReached = deriveHighestReachedIndex({
+    storedHighest,
+    currentIndex: qIdx,
+    answeredIndexes: questions.flatMap((item, index) => (isValidInterviewAnswer(draft.answers[item.id]) ? [index] : [])),
+    // Rascunho do Back (de qualquer dispositivo) prova que a pergunta já foi aberta; NÃO conta como resposta.
+    draftedIndexes: questions.flatMap((item, index) => (remoteDraftsRef.current[item.id]?.text?.trim() ? [index] : [])),
+    questionCount: questions.length,
+  });
   const progress = questions.length ? ((qIdx + 1) / questions.length) * 100 : 0;
   const supportsSpeech = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  // Sessão em mais de um dispositivo: revalida o status (focus / aba visível). Se a
+  // entrevista deixou de ser IN_PROGRESS, o autosave é travado e a edição bloqueada;
+  // o texto local NÃO é apagado.
+  const sessionGuard = useInterviewSessionGuard({
+    interviewId: draft.interviewId,
+    enabled: syncState === "ready",
+    // O polling abaixo já sincroniza ao voltar foco/visibilidade: sem revalidação duplicada.
+    revalidateOnFocus: false,
+    onStale: () => {
+      controllerRef.current?.lock();
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setDictating(false);
+    },
+  });
+  const stale = sessionGuard.stale;
 
   useEffect(() => {
     return () => {
@@ -2505,13 +2808,382 @@ function InterviewScreen({
     };
   }, []);
 
+  // "Sair e continuar depois" precisa conseguir enviar o rascunho que ainda está no debounce.
   useEffect(() => {
-    setQIdx((current) => current === targetQuestionIndex ? current : targetQuestionIndex);
-  }, [targetQuestionIndex]);
+    if (!registerLeaveFlush) return undefined;
+    registerLeaveFlush(async () => {
+      // "Sair e continuar depois": este dispositivo para de sincronizar antes de enviar o rascunho.
+      syncPausedRef.current = true;
+      try {
+        await controllerRef.current?.flush();
+      } finally {
+        // Se o usuário desistir de sair, o polling volta; ao sair de fato o wizard desmonta e o limpa.
+        syncPausedRef.current = false;
+      }
+    });
+    return () => registerLeaveFlush(null);
+  }, [registerLeaveFlush]);
 
   useEffect(() => {
-    onQuestionIndexChange?.(qIdx);
-  }, [onQuestionIndexChange, qIdx]);
+    if (!registerStopActivity) return undefined;
+    registerStopActivity(() => {
+      syncPausedRef.current = true;
+      controllerRef.current?.lock();
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setDictating(false);
+    });
+    return () => registerStopActivity(null);
+  }, [registerStopActivity]);
+
+  // `?question=` só move a pergunta quando MUDA depois da montagem; na montagem o
+  // índice inicial já foi resolvido acima (inclusive o restaurado após F5).
+  const seenQuestionParamRef = useRef(searchParams.get("question"));
+  useEffect(() => {
+    const param = searchParams.get("question");
+    if (seenQuestionParamRef.current === param) return;
+    seenQuestionParamRef.current = param;
+    setQIdx((current) => current === targetQuestionIndex ? current : targetQuestionIndex);
+  }, [searchParams, targetQuestionIndex]);
+
+  // Ao entrar na etapa: relê perguntas/respostas CONFIRMADAS do Back (fonte da
+  // verdade). Nada do localStorage é enviado ao Back aqui; falha bloqueia a tela
+  // com opção de tentar de novo.
+  const interviewIdForSync = draft.interviewId;
+  const syncWithServer = useCallback(async () => {
+    if (!interviewIdForSync) return;
+    setSyncState("loading");
+    setSyncError("");
+    const loaded = await getRealQuestionsState(interviewIdForSync);
+    if (!loaded.ok) {
+      if (loaded.reason === "not_in_progress") sessionGuard.markStale(loaded.interviewStatus);
+      setSyncError(loaded.message);
+      setSyncState("error");
+      return;
+    }
+    // Entrar numa entrevista que outro dispositivo já enviou: abre bloqueada (somente leitura).
+    if (!isInterviewEditable(loaded.data.interviewStatus)) {
+      sessionGuard.markStale(loaded.data.interviewStatus ?? undefined);
+    }
+    const serverAnswers: Record<string, string> = {};
+    loaded.data.questions.forEach((item) => {
+      persistedAnswersRef.current[item.id] = item.answer ?? "";
+      remoteDraftsRef.current[item.id] = {
+        text: item.draftText,
+        version: item.draftVersion,
+        updatedAt: item.draftUpdatedAt,
+      };
+      if (item.answer) serverAnswers[item.id] = item.answer;
+    });
+    // Nova leitura do Back: o texto em edição é resolvido de novo (ver restauração).
+    controllerRef.current?.destroy();
+    controllerRef.current = null;
+    workingRef.current = {};
+    setWorkingText({});
+    setDraftCheckedFor(null);
+    setDraft((current) => ({
+      ...current,
+      questions: loaded.data.questions.map(({ id, type, text }) => ({ id, type, text })),
+      answers: serverAnswers,
+    }));
+    setSyncState("ready");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interviewIdForSync, setDraft]);
+
+  useEffect(() => {
+    void syncWithServer();
+  }, [syncWithServer]);
+
+  const answerDraftScope = (questionId: string) => ({
+    candidateId,
+    interviewId: draft.interviewId ?? "",
+    questionId,
+  });
+
+  // RESTAURAÇÃO ao abrir uma pergunta (rascunho ≠ resposta). Precedência
+  // (ver `resolveRestoredAnswer`): resposta oficial do Back é a base; o rascunho
+  // local só vale se nasceu dessa mesma resposta e não é mais velho que o do Back;
+  // senão vale o rascunho do Back (o que atravessa dispositivos); senão a oficial.
+  // Nada disso marca a pergunta como respondida.
+  useEffect(() => {
+    if (syncState !== "ready" || !question || !draft.interviewId) return;
+    if (draftCheckedFor === question.id) return;
+    const interviewId = draft.interviewId;
+    const questionId = question.id;
+    const scope = answerDraftScope(questionId);
+    const official = persistedAnswersRef.current[questionId] ?? "";
+    const remote = remoteDraftsRef.current[questionId] ?? { text: null, version: 0, updatedAt: null };
+    const resolved = resolveRestoredAnswer({ official, remote, local: getAnswerDraft(scope) });
+    if (resolved.discardLocal) clearAnswerDraft(scope);
+
+    controllerRef.current?.destroy();
+    const controller: AnswerDraftAutosave = new AnswerDraftAutosave({
+      scope,
+      storage: safeLocalStorage(),
+      save: async (text, version) => {
+        const result = await saveRealAnswerDraft(interviewId, questionId, text, version);
+        if (result.ok) {
+          return {
+            ok: true,
+            data: { text: result.data.draftText, version: result.data.draftVersion, updatedAt: result.data.draftUpdatedAt },
+          };
+        }
+        if (result.reason === "conflict" && result.conflict) {
+          return {
+            ok: false,
+            reason: "conflict",
+            message: result.message,
+            conflict: {
+              text: result.conflict.draftText,
+              version: result.conflict.draftVersion,
+              updatedAt: result.conflict.draftUpdatedAt,
+            },
+          };
+        }
+        if (result.reason === "not_in_progress") sessionGuard.markStale(result.interviewStatus);
+        return { ok: false, reason: result.reason, message: result.message };
+      },
+      onChange: (snapshot) => {
+        if (controllerRef.current !== controller) return;
+        // Houve gravação deste dispositivo: uma leitura do polling iniciada antes pode estar velha.
+        if (snapshot.saving || snapshot.remoteVersion !== remoteDraftsRef.current[snapshot.questionId]?.version) {
+          localWriteEpochRef.current += 1;
+        }
+        remoteDraftsRef.current[snapshot.questionId] = controller.getRemote();
+        setAutosaveSnap(snapshot);
+      },
+    });
+    controllerRef.current = controller;
+    workingRef.current = { ...workingRef.current, [questionId]: resolved.text };
+    setWorkingText(workingRef.current);
+    controller.load({ official, text: resolved.text, remote });
+    // Sessão já stale (entrevista enviada em outro dispositivo): nenhuma gravação nasce.
+    if (sessionGuard.stale) controller.lock();
+    setDraftCheckedFor(questionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncState, question?.id, draftCheckedFor]);
+
+  useEffect(() => {
+    const notice = new SavedNotice(setSavedNoticeVisible);
+    savedNoticeRef.current = notice;
+    return () => {
+      notice.destroy();
+      savedNoticeRef.current = null;
+      controllerRef.current?.destroy();
+      controllerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    savedNoticeRef.current?.update(autosaveSnap?.status === "saved" ? "saved" : "dirty");
+  }, [autosaveSnap]);
+
+  // Texto em edição: estado local + (se a pergunta tem controlador) cópia local
+  // imediata e autosave do rascunho. Nunca grava a resposta oficial.
+  const setWorking = (questionId: string, value: string) => {
+    workingRef.current = { ...workingRef.current, [questionId]: value };
+    setWorkingText(workingRef.current);
+    const controller = controllerRef.current;
+    if (controller && controller.questionId === questionId) controller.edit(value);
+  };
+
+  // O outro dispositivo alterou o rascunho: relê o Back e recomeça a partir dele.
+  const useRemoteVersion = async () => {
+    if (!question || !draft.interviewId) return;
+    const loaded = await getRealQuestions(draft.interviewId);
+    if (!loaded.ok) {
+      toast.error(loaded.message);
+      return;
+    }
+    const item = loaded.data.find((entry) => entry.id === question.id);
+    if (!item) return;
+    persistedAnswersRef.current[item.id] = item.answer ?? "";
+    remoteDraftsRef.current[item.id] = { text: item.draftText, version: item.draftVersion, updatedAt: item.draftUpdatedAt };
+    setDraft((current) => ({ ...current, answers: withOfficialAnswer(current.answers, item.id, item.answer ?? "") }));
+    clearAnswerDraft(answerDraftScope(item.id));
+    const rest = { ...workingRef.current };
+    delete rest[item.id];
+    workingRef.current = rest;
+    setWorkingText(rest);
+    setDraftCheckedFor(null);
+  };
+
+  // SINCRONIZAÇÃO ENTRE DISPOSITIVOS (polling leve, sem UI): relê entrevista/perguntas do Back
+  // e reconcilia com o estado local. Back manda em status, resposta oficial e versão do rascunho;
+  // o local protege texto não sincronizado (ver `AnswerDraftAutosave.receiveRemote`).
+  const syncPausedRef = useRef(false);
+  const localWriteEpochRef = useRef(0);
+  const [, bumpSyncTick] = useState(0);
+  const pollRemoteState = async (): Promise<InterviewSyncResult> => {
+    const interviewId = draft.interviewId;
+    if (!interviewId || syncPausedRef.current || sessionGuard.stale) return "ok";
+    // Operação do usuário em curso (confirmar/avançar): a leitura chegaria velha; o próximo ciclo reavalia.
+    if (advancingRef.current) return "ok";
+    const epochAtStart = localWriteEpochRef.current;
+    const loaded = await getRealQuestionsState(interviewId);
+    if (!loaded.ok) {
+      if (loaded.reason === "not_in_progress") {
+        sessionGuard.markStale(loaded.interviewStatus);
+        return "stop";
+      }
+      // Rede/servidor: silencioso, estado local intacto, tenta no próximo ciclo (com intervalo maior).
+      return "error";
+    }
+    if (syncPausedRef.current || advancingRef.current) return "ok";
+    if (!isInterviewEditable(loaded.data.interviewStatus)) {
+      sessionGuard.markStale(loaded.data.interviewStatus ?? undefined);
+      return "stop";
+    }
+    // Este dispositivo gravou durante a leitura: ela pode estar velha; o próximo ciclo reavalia.
+    if (localWriteEpochRef.current !== epochAtStart) return "ok";
+    const emptyDraft: RemoteDraft = { text: null, version: 0, updatedAt: null };
+    const changes = diffServerState(loaded.data.questions, (id) => ({
+      answer: persistedAnswersRef.current[id] ?? "",
+      draft: remoteDraftsRef.current[id] ?? emptyDraft,
+    }));
+    if (changes.length === 0) return "ok";
+
+    const officialUpdates: Record<string, string> = {};
+    let touched = false;
+    for (const change of changes) {
+      const controller = controllerRef.current;
+      if (controller && controller.questionId === change.id) {
+        // Pergunta aberta: adota em silêncio SÓ sem edição local; com edição, abre o conflito já existente.
+        const outcome = controller.receiveRemote({ answer: change.answer, draft: change.draft });
+        if (outcome === "deferred" || outcome === "unchanged") continue;
+        persistedAnswersRef.current[change.id] = change.answer;
+        remoteDraftsRef.current[change.id] = change.draft;
+        officialUpdates[change.id] = change.answer;
+        if (outcome === "adopted") {
+          workingRef.current = { ...workingRef.current, [change.id]: controller.getText() };
+          setWorkingText(workingRef.current);
+        }
+        touched = true;
+        continue;
+      }
+      // Pergunta fechada com texto local ainda não sincronizado: não troca a base (a restauração
+      // e o optimistic locking decidem ao abrir). Nunca sobrescreve em silêncio.
+      const local = getAnswerDraft(answerDraftScope(change.id));
+      if (local && local.text.trim() !== change.answer.trim()) continue;
+      persistedAnswersRef.current[change.id] = change.answer;
+      remoteDraftsRef.current[change.id] = change.draft;
+      officialUpdates[change.id] = change.answer;
+      touched = true;
+    }
+    if (touched) {
+      setDraft((current) => {
+        let answers = current.answers;
+        for (const [id, value] of Object.entries(officialUpdates)) {
+          if ((answers[id] ?? "") !== value) answers = withOfficialAnswer(answers, id, value);
+        }
+        return answers === current.answers ? current : { ...current, answers };
+      });
+      bumpSyncTick((tick) => tick + 1);
+    }
+    return "ok";
+  };
+  useInterviewSyncPolling({
+    enabled: syncState === "ready" && !sessionGuard.stale && Boolean(draft.interviewId),
+    sync: pollRemoteState,
+  });
+
+  // CONFIRMA a resposta OFICIAL da pergunta no Back (única ação que muda
+  // answer_text). Antes, o autosave do rascunho é quietado para não concorrer
+  // com este PUT. Só retorna true quando o Back confirmou (ou já estava igual):
+  // em erro NÃO avança, mantém rascunho local/Back e mostra a mensagem.
+  const persistAnswer = async (target: InterviewQuestion, value: string): Promise<boolean> => {
+    const interviewId = draft.interviewId;
+    if (!interviewId) {
+      setSaveError("Entrevista não encontrada. Volte ao início e tente novamente.");
+      return false;
+    }
+    if (sessionGuard.stale) {
+      setSaveError(describeStaleInterview(sessionGuard.staleStatus));
+      return false;
+    }
+    const controller = controllerRef.current?.questionId === target.id ? controllerRef.current : null;
+    if (controller?.getSnapshot().status === "conflict") {
+      const message = "Resolva o conflito desta pergunta (manter seu texto ou usar a versão do outro dispositivo) antes de avançar.";
+      setSaveError(message);
+      toast.error(message);
+      return false;
+    }
+    const outcome = await confirmOfficialAnswer({
+      value,
+      persisted: persistedAnswersRef.current[target.id] ?? "",
+      controller,
+      knownVersion: () => remoteDraftsRef.current[target.id]?.version ?? 0,
+      hasRemoteDraft: () => (remoteDraftsRef.current[target.id]?.text ?? "").trim() !== "",
+      saveAnswer: async (normalized, draftVersion) => {
+        const result = await saveRealAnswer(interviewId, target.id, normalized, draftVersion);
+        if (result.ok) return { ok: true, data: { answer: result.data.answer, draftVersion: result.data.draftVersion } };
+        if (result.reason === "conflict" && result.conflict) {
+          return { ok: false, reason: "conflict", message: result.message, conflict: result.conflict };
+        }
+        if (result.reason === "not_in_progress") {
+          return { ok: false, reason: "not_in_progress", message: result.message, interviewStatus: result.interviewStatus };
+        }
+        return { ok: false, message: result.message };
+      },
+      clearLocalDraft: () => clearAnswerDraft(answerDraftScope(target.id)),
+    });
+    if (!outcome.ok) {
+      if (outcome.reason === "not_in_progress") {
+        // Enviada em outro dispositivo: bloqueia a edição; o texto local fica intacto.
+        sessionGuard.markStale(outcome.interviewStatus as RealInterviewStatus | undefined);
+        return false;
+      }
+      if (outcome.reason === "conflict") {
+        // Conflito real: a resposta vigente no Back vira a oficial conhecida; o texto
+        // local permanece e o usuário decide (nada foi sobrescrito).
+        const { conflict } = outcome;
+        persistedAnswersRef.current[target.id] = conflict.answer ?? "";
+        remoteDraftsRef.current[target.id] = { text: conflict.draftText, version: conflict.draftVersion, updatedAt: conflict.draftUpdatedAt };
+        setDraft((current) => ({ ...current, answers: withOfficialAnswer(current.answers, target.id, conflict.answer ?? "") }));
+        setSaveError("");
+        toast.error("Esta resposta foi alterada em outro dispositivo. Escolha qual versão manter.");
+        return false;
+      }
+      setSaveError(outcome.message);
+      toast.error(outcome.message);
+      return false;
+    }
+    // Back confirmou: ele é a resposta oficial (e já limpou o rascunho dela).
+    localWriteEpochRef.current += 1;
+    persistedAnswersRef.current[target.id] = outcome.answer;
+    if (outcome.draftVersion !== null) {
+      // Rascunho resolvido no Back: a versão devolvida é a nova base (nada reaparece).
+      remoteDraftsRef.current[target.id] = { text: null, version: outcome.draftVersion, updatedAt: null };
+    }
+    setDraft((current) => ({
+      ...current,
+      answers: withOfficialAnswer(current.answers, target.id, outcome.answer),
+    }));
+    setSaveError("");
+    return true;
+  };
+
+  // Executa uma ação que sai da pergunta atual só depois de salvá-la.
+  const withSavedAnswer = async (action: () => void) => {
+    if (advancingRef.current || !question || sessionGuard.stale) return;
+    advancingRef.current = true;
+    setSaving(true);
+    stopDictation();
+    try {
+      if (await persistAnswer(question, answer)) action();
+    } finally {
+      advancingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    onQuestionIndexChange?.(qIdx, highestReached);
+  }, [onQuestionIndexChange, qIdx, highestReached]);
+
+  useEffect(() => {
+    setStoredHighest((current) => (current !== undefined && current >= highestReached ? current : highestReached));
+  }, [highestReached]);
 
   // Entrada na etapa e troca de pergunta: volta ao topo da tela.
   useEffect(() => {
@@ -2521,11 +3193,9 @@ function InterviewScreen({
   const updateAnswer = (value: string) => {
     if (!question) return;
     const normalizedValue = normalizeInterviewAnswer(value);
-    setDraft((current) => ({
-      ...current,
-      answers: { ...current.answers, [question.id]: normalizedValue },
-    }));
+    setWorking(question.id, normalizedValue);
     if (isValidInterviewAnswer(normalizedValue)) setValidationMessage("");
+    setSaveError("");
   };
 
   const stopDictation = () => {
@@ -2571,12 +3241,10 @@ function InterviewScreen({
       const { transcript, processed } = getNewTranscript(event.results, processedResults);
       processedResults = processed;
       if (!transcript) return;
-      setDraft((current) => {
-        const base = current.answers[dictationQuestionId] ?? "";
-        const next = normalizeInterviewAnswer(appendDictation(base, transcript, ANSWER_MAX_CHARS));
-        if (next === base) return current;
-        return { ...current, answers: { ...current.answers, [dictationQuestionId]: next } };
-      });
+      const base = workingRef.current[dictationQuestionId] ?? persistedAnswersRef.current[dictationQuestionId] ?? "";
+      const next = normalizeInterviewAnswer(appendDictation(base, transcript, ANSWER_MAX_CHARS));
+      if (next === base) return;
+      setWorking(dictationQuestionId, next);
       setValidationMessage("");
     };
     // Erro e fim sempre devolvem o estado ao normal. Eventos de uma instância
@@ -2605,34 +3273,37 @@ function InterviewScreen({
     }
   };
 
-  const goNext = () => {
+  // Avançar = salvar a resposta atual no Back e só então mudar de pergunta.
+  const goNext = async () => {
     if (advancingRef.current) return;
     if (!isValidInterviewAnswer(answer)) {
       setValidationMessage("Responda a pergunta atual antes de avançar.");
       toast.error("Responda a pergunta atual antes de avançar.");
       return;
     }
-    advancingRef.current = true;
-    stopDictation();
-    if (qIdx < questions.length - 1) {
-      setQIdx(qIdx + 1);
-      setValidationMessage("");
-    } else {
-      const pendingIndex = getFirstPendingQuestionIndex(draft);
-      if (pendingIndex >= 0) {
-        setQIdx(pendingIndex);
-        setValidationMessage("Responda todas as perguntas antes de revisar.");
-        toast.error("Responda todas as perguntas antes de revisar.");
+    await withSavedAnswer(() => {
+      if (qIdx < questions.length - 1) {
+        setQIdx(qIdx + 1);
+        setValidationMessage("");
       } else {
-        onNavigate("review");
+        // A pergunta atual acabou de ser confirmada; as demais valem pela resposta OFICIAL.
+        const confirmedAnswers = withOfficialAnswer(draft.answers, question.id, normalizeInterviewAnswer(answer).trim());
+        const pendingIndex = questions.findIndex((item) => !isValidInterviewAnswer(confirmedAnswers[item.id]));
+        if (pendingIndex >= 0) {
+          setQIdx(pendingIndex);
+          setValidationMessage("Responda todas as perguntas antes de revisar.");
+          toast.error("Responda todas as perguntas antes de revisar.");
+        } else {
+          // Revalida o status antes de ir para a revisão (outro dispositivo pode ter enviado).
+          void sessionGuard.revalidateNow().then((editable) => {
+            if (editable) onNavigate("review");
+          });
+        }
       }
-    }
-    window.setTimeout(() => {
-      advancingRef.current = false;
-    }, 250);
+    });
   };
 
-  if (!draft.context || !question) {
+  if (!draft.context || !question || !draft.interviewId) {
     return <DraftWizardGuard current="interview" onNavigate={onNavigate} />;
   }
 
@@ -2651,14 +3322,48 @@ function InterviewScreen({
     );
   }
 
+  if (syncState !== "ready") {
+    return (
+      <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
+        <Card className="w-full max-w-2xl p-6 text-center">
+          {syncState === "loading" ? (
+            <>
+              <Spinner />
+              <p className="text-sm text-muted-foreground mt-3">Carregando sua entrevista...</p>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+              <h3 className="font-bold text-foreground mb-2">Não foi possível carregar sua entrevista</h3>
+              <p className="text-sm text-muted-foreground mb-5">{syncError}</p>
+              <Btn variant="primary" onClick={() => void syncWithServer()}>Tentar novamente</Btn>
+            </>
+          )}
+        </Card>
+      </AuthLayout>
+    );
+  }
+
   // Navegação entre perguntas: regra única, usada pelo painel detalhado (sm+) e pelo compacto (mobile).
-  const canOpenQuestionAt = (item: (typeof questions)[number], index: number) =>
-    index === qIdx || isValidInterviewAnswer(draft.answers[item.id]);
+  // "Respondida/Pendente" (resposta) é separado de "Bloqueada" (nunca alcançada): só esta última não abre.
+  const navStateAt = (item: (typeof questions)[number], index: number) =>
+    getQuestionNavState({
+      index,
+      currentIndex: qIdx,
+      highestReached,
+      answered: isValidInterviewAnswer(draft.answers[item.id]),
+    });
   const openQuestion = (index: number) => {
-    stopDictation();
-    setQIdx(index);
+    void withSavedAnswer(() => setQIdx(index));
   };
+  // Cancelada em outro dispositivo: SÓ visual (a pergunta aberta vira "foto" somente leitura).
+  const cancelled = stale && isCancelledSession(sessionGuard.staleStatus);
+  // Contador/indicadores: SÓ a resposta OFICIAL (draft.answers) conta como respondida.
   const answeredCount = questions.filter((item) => isValidInterviewAnswer(draft.answers[item.id])).length;
+  const syncSnap = autosaveSnap && autosaveSnap.questionId === question.id ? autosaveSnap : null;
+  const syncLabel = syncSnap
+    ? describeAnswerSync({ status: syncSnap.status === "saved" && !savedNoticeVisible ? "clean" : syncSnap.status })
+    : null;
 
   return (
     <AuthLayout current="interview" onNavigate={onNavigate} title="Responder Perguntas" subtitle={`${draft.context.title} · ${draft.context.company}`}>
@@ -2681,29 +3386,63 @@ function InterviewScreen({
               <span className="text-xs text-muted-foreground">Pergunta {qIdx + 1} de {questions.length}</span>
             </div>
             <h3 className="text-lg font-bold text-foreground leading-relaxed mb-5">{question.text}</h3>
+            {stale && (
+              <StaleInterviewNotice message={describeStaleInterview(sessionGuard.staleStatus)} status={sessionGuard.staleStatus} onBack={() => onStaleExit?.()} />
+            )}
             <Textarea
               value={answer}
               onChange={(event) => updateAnswer(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (!event.repeat) goNext();
-                }
-              }}
+              readOnly={stale}
+              aria-readonly={stale || undefined}
+              data-cancelled={cancelled || undefined}
               maxLength={ANSWER_MAX_CHARS}
               placeholder="Digite sua resposta. Se preferir, use o ditado por voz para preencher este campo."
-              className="min-h-44 sm:min-h-56"
+              className={`min-h-44 sm:min-h-56 max-h-72 overflow-y-auto ${cancelled ? CANCELLED_TEXTAREA_CLASS : ""}`}
             />
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
               <div className={`text-xs ${answerLength >= ANSWER_MAX_CHARS ? "text-amber-700 font-semibold" : "text-muted-foreground"}`}>
                 {answerLength} / {ANSWER_MAX_CHARS} caracteres
+                {syncLabel && (
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    data-sync={syncSnap?.status}
+                    className={`ml-3 font-medium ${ANSWER_SYNC_TONE_CLASS[describeAnswerSyncTone(syncSnap?.status ?? "clean")]}`}
+                  >
+                    {syncLabel}
+                  </span>
+                )}
               </div>
-              <Btn variant={dictating ? "secondary" : "outline"} size="sm" onClick={toggleDictation}>
-                <Mic className="w-4 h-4" /> {dictating ? "Parar ditado" : "Ditado por voz"}
-              </Btn>
+              {!cancelled && (
+                <Btn variant={dictating ? "secondary" : "outline"} size="sm" onClick={toggleDictation} disabled={stale}>
+                  <Mic className="w-4 h-4" /> {dictating ? "Parar ditado" : "Ditado por voz"}
+                </Btn>
+              )}
             </div>
+            {syncSnap?.status === "conflict" && !stale && (
+              <Alert variant="warning" role="alert" className="mt-4 rounded-2xl p-4">
+                <p className="text-xs text-amber-700">
+                  {syncSnap.conflictKind === "answer"
+                    ? "A resposta desta pergunta foi alterada em outro dispositivo. Seu texto continua salvo neste dispositivo e nada foi sobrescrito. Escolha qual versão manter e, depois, avance novamente."
+                    : "Este rascunho foi alterado em outro dispositivo. Seu texto continua salvo neste dispositivo e nada foi sobrescrito."}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Btn variant="outline" size="sm" onClick={() => void controllerRef.current?.keepMine()}>
+                    Manter meu texto
+                  </Btn>
+                  <Btn variant="outline" size="sm" onClick={() => void useRemoteVersion()}>
+                    Usar a versão do outro dispositivo
+                  </Btn>
+                </div>
+              </Alert>
+            )}
             {validationMessage && (
               <p className="text-xs text-destructive mt-3 font-medium">{validationMessage}</p>
+            )}
+            {saveError && (
+              <p role="alert" className="text-xs text-destructive mt-3 font-medium">
+                {saveError} Sua resposta ainda não foi salva; clique em avançar para tentar novamente.
+              </p>
             )}
             {speechError && (
               <Alert variant="warning" className="mt-4 flex gap-3 rounded-2xl p-4">
@@ -2711,9 +3450,11 @@ function InterviewScreen({
                 <p className="text-xs text-amber-700">{speechError}</p>
               </Alert>
             )}
-            <p className="text-xs text-muted-foreground mt-3">
-              O ditado usa o recurso do navegador para inserir texto no campo. O RH Connect não cria, envia ou armazena arquivo de áudio nesta etapa.
-            </p>
+            {!cancelled && (
+              <p className="text-xs text-muted-foreground mt-3">
+                O ditado usa o recurso do navegador para inserir texto no campo. O RH Connect não cria, envia ou armazena arquivo de áudio nesta etapa.
+              </p>
+            )}
           </Card>
         </div>
 
@@ -2724,31 +3465,35 @@ function InterviewScreen({
             </p>
             <div className="flex flex-wrap gap-2">
               {questions.map((item, index) => {
-                const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const current = index === qIdx;
-                const canOpenQuestion = canOpenQuestionAt(item, index);
+                const navState = navStateAt(item, index);
+                const canOpenQuestion = isQuestionNavigable(navState);
+                const visual = resolveProgressVisual(navState, cancelled);
+                const stateLabel = { CURRENT: "atual", READONLY: "somente leitura", ANSWERED: "respondida", VISITED_PENDING: "pendente", LOCKED: "bloqueada" }[visual];
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    disabled={!canOpenQuestion}
-                    aria-current={current ? "step" : undefined}
-                    aria-label={`Pergunta ${index + 1}: ${answered ? "respondida" : "pendente"}${current ? ", atual" : ""}`}
+                    disabled={!canOpenQuestion || stale}
+                    aria-current={visual === "CURRENT" ? "step" : undefined}
+                    aria-label={`Pergunta ${index + 1}: ${stateLabel}`}
                     onClick={() => {
                       if (!canOpenQuestion) return;
                       openQuestion(index);
                     }}
                     className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-bold transition-colors outline-none focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)] ${
-                      current
+                      visual === "CURRENT"
                         ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : answered
+                        : visual === "READONLY"
+                          ? "cursor-default border-border bg-muted text-muted-foreground"
+                          : navState === "ANSWERED"
                           ? "border-green-200 bg-green-50 text-green-700"
-                          : canOpenQuestion
-                            ? "border-border bg-muted text-muted-foreground"
+                          : navState === "VISITED_PENDING"
+                            ? "border-amber-200 bg-amber-50 text-amber-700"
                             : "cursor-not-allowed border-border bg-muted text-muted-foreground opacity-60"
                     }`}
                   >
-                    {answered && <span aria-hidden="true">✓</span>}
+                    {navState === "ANSWERED" && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                    {navState === "LOCKED" && <Lock className="h-3.5 w-3.5" aria-hidden="true" />}
                     <span>{index + 1}</span>
                   </button>
                 );
@@ -2760,29 +3505,45 @@ function InterviewScreen({
             <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">Progresso</p>
             <div className="space-y-2">
               {questions.map((item, index) => {
-                const answered = isValidInterviewAnswer(draft.answers[item.id]);
-                const canOpenQuestion = canOpenQuestionAt(item, index);
+                const navState = navStateAt(item, index);
+                const canOpenQuestion = isQuestionNavigable(navState);
+                const visual = resolveProgressVisual(navState, cancelled);
                 return (
                   <button
                     key={item.id}
                     type="button"
-                    disabled={!canOpenQuestion}
+                    disabled={!canOpenQuestion || stale}
                     onClick={() => {
                       if (!canOpenQuestion) return;
                       openQuestion(index);
                     }}
                     className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
-                      index === qIdx
+                      visual === "CURRENT"
                         ? "bg-blue-50 text-blue-700"
-                        : canOpenQuestion
+                        : visual === "READONLY"
+                          ? "cursor-default bg-muted/50 text-muted-foreground"
+                          : canOpenQuestion
                           ? "hover:bg-muted"
                           : "cursor-not-allowed opacity-60"
                     }`}
                   >
-                    <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${answered ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}>
-                      {index + 1}
+                    <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${
+                      visual === "CURRENT"
+                        ? "bg-blue-100 text-blue-700"
+                        : visual === "READONLY"
+                          ? "bg-muted text-muted-foreground"
+                          : navState === "ANSWERED"
+                          ? "bg-green-100 text-green-700"
+                          : navState === "VISITED_PENDING"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-muted text-muted-foreground"
+                    }`}>
+                      {navState === "LOCKED" ? <Lock className="h-3 w-3" aria-hidden="true" /> : index + 1}
                     </span>
-                    <span className="text-xs font-medium truncate">{answered ? "Respondida" : "Pendente"}</span>
+                    <span className={`flex items-center gap-1 text-xs font-medium truncate ${navState === "VISITED_PENDING" ? "text-amber-700" : ""}`}>
+                      {navState === "ANSWERED" && <Check className="h-3 w-3 text-green-700" aria-hidden="true" />}
+                      {PROGRESS_LABELS[visual]}
+                    </span>
                   </button>
                 );
               })}
@@ -2790,11 +3551,11 @@ function InterviewScreen({
           </Card>
 
           <div className="flex gap-3">
-            <Btn variant="outline" onClick={() => { stopDictation(); setQIdx(Math.max(0, qIdx - 1)); }} disabled={qIdx === 0}>
+            <Btn variant="outline" onClick={() => { const previous = Math.max(0, qIdx - 1); void withSavedAnswer(() => setQIdx(previous)); }} disabled={qIdx === 0 || saving || stale}>
               Anterior
             </Btn>
-            <Btn variant="primary" className="flex-1" onClick={goNext}>
-              {qIdx < questions.length - 1 ? "Próxima" : "Revisar"} <ArrowRight className="w-4 h-4" />
+            <Btn variant="primary" className="flex-1" onClick={() => void goNext()} disabled={saving || stale}>
+              {saving ? <><Spinner /> Salvando...</> : <>{qIdx < questions.length - 1 ? "Próxima" : "Revisar"} <ArrowRight className="w-4 h-4" /></>}
             </Btn>
           </div>
         </div>
@@ -2805,10 +3566,12 @@ function InterviewScreen({
 
 // ─── Screen 9: Revisão e Envio ────────────────────────────────────────────────
 
-function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; draft: InterviewDraft }) {
+function ReviewScreen({ onNavigate, draft, onStaleExit }: { onNavigate: (s: Screen) => void; draft: InterviewDraft; onStaleExit?: () => void }) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  // Outro dispositivo pode ter enviado a entrevista enquanto esta tela estava aberta.
+  const { stale, staleStatus } = useInterviewSessionGuard({ interviewId: draft.interviewId, pollStatus: true });
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
   const editQuestion = (index: number) => {
@@ -2820,6 +3583,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   }
 
   const handleSend = () => {
+    if (stale) return;
     if (!allAnswersReady) {
       toast.error("Responda todas as perguntas antes de revisar.");
       return;
@@ -2831,6 +3595,7 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   return (
     <AuthLayout current="review" onNavigate={onNavigate} title="Revisão das Respostas" subtitle="Confira perguntas e respostas antes de escolher a modalidade de avaliação">
       <div className="w-full">
+        {stale && <StaleInterviewNotice message={describeStaleInterview(staleStatus)} status={staleStatus} onBack={() => onStaleExit?.()} />}
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
           <Card className="p-3 sm:p-4 text-center">
             <p className="text-lg sm:text-2xl font-bold text-green-600 leading-tight">{answeredCount}</p>
@@ -2875,9 +3640,9 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
                     <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-0.5">Pergunta {i + 1}</p>
                     <p className="text-sm text-foreground line-clamp-2 sm:truncate">{q.text}</p>
                     <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1">Resposta:</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 whitespace-pre-line break-words">{draft.answers[q.id] || "Resposta ainda não preenchida."}</p>
                   </div>
-                  <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} className="shrink-0">
+                  <Btn variant="outline" size="sm" onClick={() => editQuestion(i)} disabled={stale} className="shrink-0">
                     <Edit2 className="w-4 h-4" /> Editar
                   </Btn>
                 </div>
@@ -2904,10 +3669,10 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Btn variant="outline" onClick={() => editQuestion(0)}>
+          <Btn variant="outline" onClick={() => editQuestion(0)} disabled={stale}>
             <Edit2 className="w-4 h-4" /> Editar respostas
           </Btn>
-          <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady} onClick={handleSend}>
+          <Btn variant="primary" size="lg" disabled={!confirm || sending || !allAnswersReady || stale} onClick={handleSend}>
             {sending ? (
               <><Spinner />Preparando...</>
             ) : (
@@ -2920,146 +3685,222 @@ function ReviewScreen({ onNavigate, draft }: { onNavigate: (s: Screen) => void; 
   );
 }
 
-// ─── Screen 10: Avaliação Pendente ────────────────────────────────────────────
+// ─── Screen 10: Acompanhamento da entrevista (real, 6A.2) ─────────────────────
+// Fonte da verdade: GET /interviews/:id (Interview persistida). Sem mock e sem localStorage de
+// domínio. O resultado NÃO é carregado aqui: só há um CTA para /candidate/reports/:id.
 
-function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+type TrackingLoadState =
+  | { status: "loading" }
+  | { status: "error"; reason: string; message: string }
+  | { status: "ready"; interview: RealInterview };
+
+const TRACKING_TONE_CLASSES: Record<"warning" | "info" | "success" | "neutral", string> = {
+  warning: "bg-amber-50 border-amber-200 text-amber-500",
+  info: "bg-blue-50 border-blue-200 text-blue-600",
+  success: "bg-green-50 border-green-200 text-green-600",
+  neutral: "bg-muted border-border text-muted-foreground",
+};
+
+const TRACKING_ABOUT: Record<"HUMAN" | "AI", { q: string; a: string }[]> = {
+  HUMAN: [
+    { q: "Quem avalia?", a: "Um avaliador humano autorizado, com critérios padronizados de RH." },
+    { q: "O que você vai receber?", a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
+    { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
+  ],
+  AI: [
+    { q: "Quem avalia?", a: "A IA Avaliadora do RH Connect analisa suas respostas considerando o contexto da vaga." },
+    { q: "O que você vai receber?", a: "Pontos fortes, pontos de atenção e recomendações para evoluir." },
+    { q: "Quem vê minhas respostas?", a: "Apenas perfis autorizados envolvidos no funcionamento da plataforma." },
+  ],
+};
+
+function PendingScreen({
+  onNavigate,
+  onResumeInterview,
+}: {
+  onNavigate: (s: Screen) => void;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
+}) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
-  const interview = getInterviewById(id);
-  const report = getReportByInterviewId(id);
-  const candidateIdentity = getCandidateIdentity(session);
-  const evaluationMode = interview?.evaluationMode ?? "HUMAN";
-  const pendingDescription = evaluationMode === "AI"
-    ? "Sua entrevista foi recebida com sucesso e será analisada pela IA Avaliadora do RH Connect."
-    : "Sua entrevista foi recebida com sucesso e está sendo analisada por um avaliador humano autorizado. O resultado ficará disponível em até 72 horas.";
-  const pendingStatusLabel = evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação";
-  const evaluationInfo = evaluationMode === "AI"
-    ? [
-        { q: "Quem avalia?",             a: "A IA Avaliadora do RH Connect analisa suas respostas considerando o contexto da vaga." },
-        { q: "Quando sai o resultado?",  a: "O relatório será disponibilizado após o processamento da avaliação." },
-        { q: "O que você vai receber?",  a: "Pontos fortes, pontos de atenção e recomendações para evoluir." },
-        { q: "Quem vê minhas respostas?", a: "Apenas perfis autorizados envolvidos no funcionamento da plataforma." },
-      ]
-    : [
-        { q: "Quem avalia?",             a: "Um avaliador humano autorizado com critérios padronizados de RH." },
-        { q: "Quanto tempo leva?",        a: "O resultado ficará disponível em até 72 horas após o envio." },
-        { q: "O que você vai receber?",   a: "Nota por critério, pontos fortes, oportunidades e recomendações." },
-        { q: "Quem vê minhas respostas?", a: "Apenas o avaliador atribuído e o administrador da plataforma." },
-      ];
-  const formatTimelineDate = (value?: string) => (value ? new Date(value).toLocaleDateString("pt-BR") : "—");
-  const reportAvailable = report?.status === "AVAILABLE";
-  const timelineSteps = interview
-    ? [
-        { label: "Entrevista realizada", date: formatTimelineDate(interview.createdAt), done: true },
-        { label: "Respostas enviadas", date: formatTimelineDate(interview.submittedAt), done: Boolean(interview.submittedAt) },
-        ...(evaluationMode === "HUMAN"
-          ? [{ label: "Atribuída ao avaliador", date: "—", done: Boolean(interview.assignedEvaluatorId) }]
-          : []),
-        { label: "Em avaliação", date: "—", done: reportAvailable },
-        { label: "Relatório disponível", date: formatTimelineDate(report?.generatedAt), done: reportAvailable },
-      ]
-    : [];
-  const firstPendingStep = timelineSteps.findIndex((step) => !step.done);
-  const TIMELINE: { label: string; date: string; done: boolean; active?: boolean }[] = timelineSteps.map((step, index) => ({
-    ...step,
-    active: index === firstPendingStep,
-  }));
+  const validId = Boolean(id && isUuid(id));
+  // GET /interviews/:id com sincronização leve (15 s + focus/visible/online) SÓ enquanto o estado
+  // não é terminal (COMPLETED/CANCELLED). Refresh silencioso: sem spinner e sem redirecionar.
+  const live = useCandidateLiveResource<RealInterview>({
+    resourceKey: `tracking:${id ?? ""}`,
+    fetch: () =>
+      id && isUuid(id)
+        ? getRealInterview(id)
+        : Promise.resolve({ ok: false as const, reason: "not_found", message: "" }),
+    isTerminal: (interview) => isTrackingTerminal(interview.status),
+    sync: validId
+      ? { intervalMs: CANDIDATE_TRACKING_SYNC_INTERVAL_MS, maxBackoffMs: CANDIDATE_TRACKING_SYNC_MAX_BACKOFF_MS }
+      : undefined,
+  });
+  const loadState: TrackingLoadState =
+    live.state.status === "ready" ? { status: "ready", interview: live.state.value } : live.state;
+  const [resuming, setResuming] = useState(false);
+  const [resumeMessage, setResumeMessage] = useState<string | null>(null);
 
-  if (!interview || interview.candidateId !== candidateIdentity.id) {
+  if (loadState.status === "loading") {
     return (
-      <AuthLayout current="pending" onNavigate={onNavigate} title="Entrevista indisponível" subtitle="Acompanhamento da entrevista">
-        <Card className="w-full max-w-2xl p-6 text-center">
-          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">Não encontramos esta entrevista na sua conta</h3>
-          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para acompanhar entrevistas vinculadas ao seu perfil.</p>
-          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+      <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista">
+        <Card className="w-full max-w-xl p-10 text-center">
+          <Spinner />
+          <p className="text-sm text-muted-foreground mt-3">Carregando o acompanhamento da entrevista...</p>
         </Card>
       </AuthLayout>
     );
   }
 
+  if (loadState.status === "error") {
+    const failure = describeTrackingFailure(loadState.reason, loadState.message);
+    return (
+      <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista">
+        <EmptyState
+          icon={AlertCircle}
+          title={failure.title}
+          description={failure.description}
+          className="w-full max-w-xl p-10"
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {failure.canRetry && (
+                <Btn variant="primary" onClick={() => live.reload()}>Tentar novamente</Btn>
+              )}
+              <Btn variant={failure.canRetry ? "outline" : "primary"} onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
+            </div>
+          }
+        />
+      </AuthLayout>
+    );
+  }
+
+  const interview = loadState.interview;
+  const view = buildTrackingView(interview);
+  const aboutMode = interview.evaluationMode === "HUMAN" || interview.evaluationMode === "AI" ? interview.evaluationMode : null;
+  const showAbout = aboutMode !== null && ["pending-assignment", "assigned", "completed", "pending-ai"].includes(view.kind);
+  const showWaiting = ["pending-assignment", "assigned", "pending-ai"].includes(view.kind);
+  const HeroIcon = view.kind === "completed" ? Check : view.kind === "cancelled" || view.kind === "unsupported" ? AlertCircle : Clock;
+
+  const handlePrimary = async () => {
+    if (view.primaryCta === "view-result") {
+      routerNavigate(`/candidate/reports/${interview.id}`);
+      return;
+    }
+    if (view.primaryCta === "resume-interview") {
+      if (!onResumeInterview || resuming) return;
+      setResuming(true);
+      setResumeMessage(null);
+      const result = await onResumeInterview(interview.id);
+      setResuming(false);
+      if (!result.ok) setResumeMessage(result.message);
+      return;
+    }
+    onNavigate("interview-history");
+  };
+
   return (
-    <AuthLayout current="pending" onNavigate={onNavigate} title="Acompanhamento da Entrevista" subtitle={`${interview.context.title} · ${interview.context.company}`}>
+    <AuthLayout
+      current="pending"
+      onNavigate={onNavigate}
+      title="Acompanhamento da Entrevista"
+      subtitle={interview.company ? `${interview.title} · ${interview.company}` : interview.title}
+    >
       <div className="w-full">
-        {/* Status hero */}
+        {/* Status principal */}
         <Card className="p-6 sm:p-8 mb-6 text-center">
-          <div className="w-16 h-16 bg-amber-50 border-2 border-amber-200 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Clock className="w-8 h-8 text-amber-500" />
+          <div className={`w-16 h-16 border-2 rounded-2xl flex items-center justify-center mx-auto mb-4 ${TRACKING_TONE_CLASSES[view.badgeTone]}`}>
+            <HeroIcon className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-bold text-foreground mb-2">Entrevista em avaliação</h2>
-          <p className="text-muted-foreground text-sm max-w-md mx-auto mb-5">
-            {pendingDescription}
-          </p>
+          <h2 className="text-xl font-bold text-foreground mb-2">{view.title}</h2>
+          <p className={`text-muted-foreground text-sm max-w-md mx-auto ${view.deadlineNotice ? "mb-2" : "mb-5"}`}>{view.description}</p>
+          {view.deadlineNotice && (
+            <p className="text-muted-foreground text-sm max-w-md mx-auto mb-5">{view.deadlineNotice}</p>
+          )}
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <StatusBadge tone="warning">
-              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />
-              {pendingStatusLabel}
+            <StatusBadge tone={view.badgeTone}>
+              {view.badgeLive && <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse mr-1" />}
+              {view.badgeLabel}
             </StatusBadge>
             <span className="text-xs text-muted-foreground">· Protocolo {interview.id}</span>
           </div>
         </Card>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {/* Timeline */}
-          <Card className="p-5">
-            <h3 className="font-bold text-foreground mb-5 text-sm">Histórico da entrevista</h3>
-            {TIMELINE.map((step, i) => (
-              <div key={step.label} className="flex gap-3">
-                <div className="flex flex-col items-center">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${step.done ? "bg-green-100 border-2 border-green-500" : (step as any).active ? "bg-amber-100 border-2 border-amber-400" : "bg-muted border-2 border-border"}`}>
-                    {step.done
-                      ? <Check className="w-3.5 h-3.5 text-green-600" />
-                      : (step as any).active
-                      ? <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-                      : <div className="w-2 h-2 bg-muted-foreground/30 rounded-full" />}
+          {view.steps.length > 0 && (
+            <Card className="p-5">
+              <h3 className="font-bold text-foreground mb-5 text-sm">Histórico da entrevista</h3>
+              {view.steps.map((timelineStep, i) => (
+                <div key={timelineStep.key} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${timelineStep.state === "done" ? "bg-green-100 border-2 border-green-500" : timelineStep.state === "current" ? "bg-amber-100 border-2 border-amber-400" : "bg-muted border-2 border-border"}`}>
+                      {timelineStep.state === "done"
+                        ? <Check className="w-3.5 h-3.5 text-green-600" />
+                        : timelineStep.state === "current"
+                        ? <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                        : <div className="w-2 h-2 bg-muted-foreground/30 rounded-full" />}
+                    </div>
+                    {i < view.steps.length - 1 && (
+                      <div className={`w-px h-7 ${timelineStep.state === "done" ? "bg-green-300" : "bg-border"}`} />
+                    )}
                   </div>
-                  {i < TIMELINE.length - 1 && (
-                    <div className={`w-px h-7 ${step.done ? "bg-green-300" : "bg-border"}`} />
-                  )}
-                </div>
-                <div className="pb-4">
-                  <p className={`text-sm font-semibold ${step.done || (step as any).active ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</p>
-                  <p className="text-xs text-muted-foreground">{step.date}</p>
-                </div>
-              </div>
-            ))}
-          </Card>
-
-          {/* Info panel */}
-          <Card className="p-5">
-            <h3 className="font-bold text-foreground mb-4 text-sm flex items-center gap-2">
-              <Info className="w-4 h-4 text-blue-600" /> Sobre a avaliação
-            </h3>
-            <div className="space-y-3">
-              {evaluationInfo.map(({ q, a }) => (
-                <div key={q} className="p-3 bg-muted/40 rounded-xl">
-                  <p className="text-xs font-bold text-foreground mb-1">{q}</p>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{a}</p>
+                  <div className="pb-4">
+                    <p className={`text-sm font-semibold ${timelineStep.state === "upcoming" ? "text-muted-foreground" : "text-foreground"}`}>{timelineStep.label}</p>
+                    {timelineStep.date && <p className="text-xs text-muted-foreground">{timelineStep.date}</p>}
+                  </div>
                 </div>
               ))}
-            </div>
-          </Card>
-
-          {/* Enquanto aguarda + CTA */}
-          <div className="space-y-4 xl:col-start-3">
-            <Card className="p-5 bg-blue-50 border-blue-100">
-              <p className="text-sm font-bold text-foreground mb-3">Enquanto aguarda...</p>
-              <ul className="space-y-2">
-                {["Revise materiais de preparação","Complete seu perfil profissional","Analise outra URL de vaga","Pratique uma nova entrevista"].map(s => (
-                  <li key={s} className="flex items-center gap-2 text-xs text-foreground">
-                    <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0" /> {s}
-                  </li>
-                ))}
-              </ul>
             </Card>
+          )}
+
+          {showAbout && aboutMode && (
+            <Card className="p-5">
+              <h3 className="font-bold text-foreground mb-4 text-sm flex items-center gap-2">
+                <Info className="w-4 h-4 text-blue-600" /> Sobre a avaliação
+              </h3>
+              <div className="space-y-3">
+                {TRACKING_ABOUT[aboutMode].map(({ q, a }) => (
+                  <div key={q} className="p-3 bg-muted/40 rounded-xl">
+                    <p className="text-xs font-bold text-foreground mb-1">{q}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{a}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <div className="space-y-4 xl:col-start-3">
+            {showWaiting && (
+              <Card className="p-5 bg-blue-50 border-blue-100">
+                <p className="text-sm font-bold text-foreground mb-3">Enquanto aguarda...</p>
+                <ul className="space-y-2">
+                  {["Revise materiais de preparação", "Complete seu perfil profissional", "Analise outra URL de vaga", "Pratique uma nova entrevista"].map((s) => (
+                    <li key={s} className="flex items-center gap-2 text-xs text-foreground">
+                      <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0" /> {s}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+            {resumeMessage && (
+              <Alert variant="warning" className="flex gap-3 rounded-2xl p-4">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">{resumeMessage}</p>
+              </Alert>
+            )}
             <Btn
-              variant={report?.status === "AVAILABLE" ? "primary" : "outline"}
+              variant={view.primaryCta === "back-to-history" ? "outline" : "primary"}
               className="w-full"
-              disabled={report?.status !== "AVAILABLE"}
-              onClick={() => id && routerNavigate(`/candidate/reports/${id}`)}
+              disabled={resuming}
+              onClick={() => void handlePrimary()}
             >
-              {report?.status === "AVAILABLE" ? "Ver resultado disponível" : "Resultado ainda indisponível"} <ArrowRight className="w-4 h-4" />
+              {resuming ? <><Spinner />Abrindo...</> : <>{view.primaryCtaLabel} <ArrowRight className="w-4 h-4" /></>}
             </Btn>
+            {view.primaryCta !== "back-to-history" && (
+              <Btn variant="outline" className="w-full" onClick={() => onNavigate("interview-history")}>
+                Voltar ao histórico
+              </Btn>
+            )}
           </div>
         </div>
       </div>
@@ -3067,183 +3908,122 @@ function PendingScreen({ onNavigate, session }: { onNavigate: (s: Screen) => voi
   );
 }
 
-// ─── Screen 11: Resultado e Relatório ─────────────────────────────────────────
+// ─── Screen 11: Resultado e Relatório (real, 6A.3) ────────────────────────────
+// Fonte da verdade: GET /interviews/:id/result (avaliação HUMANA concluída). Sem mock, sem
+// localStorage de resultado e sem recalcular a nota. IA continua fora desta fase.
 
-function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+type ReportLoadState =
+  | { status: "loading" }
+  | { status: "error"; reason: string; message: string }
+  | { status: "ready"; result: RealInterviewResult };
+
+function reportScoreState(score: number) {
+  if (score >= 9) return { label: "Excelente", color: "#16A34A", bg: "bg-green-50", text: "text-green-700", border: "border-green-200" };
+  if (score >= 7) return { label: "Bom", color: "#1D4ED8", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" };
+  return { label: "Atenção", color: "#D97706", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" };
+}
+
+const formatReportScore = (score: number) => score.toFixed(1).replace(".", ",");
+
+function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
   const { id } = useParams();
-  const interview = getInterviewById(id);
-  const evaluation = getEvaluationByInterviewId(id);
-  const report = getReportByInterviewId(id);
-  const candidateIdentity = getCandidateIdentity(session);
-  const [resultView, setResultView] = useState<"Atual" | "Anterior" | "Melhor resultado">("Atual");
-  const [isReportFading, setIsReportFading] = useState(false);
+  const [loadState, setLoadState] = useState<ReportLoadState>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!id || !isUuid(id)) {
+      setLoadState({ status: "error", reason: "not_found", message: "" });
+      return;
+    }
+    setLoadState({ status: "loading" });
+    void getRealInterviewResult(id).then((result) => {
+      if (cancelled) return;
+      setLoadState(
+        result.ok
+          ? { status: "ready", result: result.data }
+          : { status: "error", reason: result.reason, message: result.message },
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, reloadKey]);
+
+  const renderFailure = (failure: ReportFailureView) => {
+    const run = (action: ReportFailureAction) => {
+      if (action === "retry") setReloadKey((key) => key + 1);
+      else if (action === "back-to-status" && id) routerNavigate(`/candidate/interviews/${id}/status`);
+      else onNavigate("interview-history");
+    };
+    const labels: Record<ReportFailureAction, string> = {
+      retry: "Tentar novamente",
+      "back-to-status": "Voltar ao acompanhamento",
+      "back-to-history": "Voltar ao histórico",
+    };
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado e Relatório" subtitle="Relatório da entrevista">
+        <EmptyState
+          icon={failure.primary === "back-to-status" ? Clock : AlertCircle}
+          title={failure.title}
+          description={failure.description}
+          className="w-full max-w-xl p-10"
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Btn variant="primary" onClick={() => run(failure.primary)}>{labels[failure.primary]}</Btn>
+              {failure.secondary && <Btn variant="outline" onClick={() => run(failure.secondary!)}>{labels[failure.secondary]}</Btn>}
+            </div>
+          }
+        />
+      </AuthLayout>
+    );
+  };
+
+  if (loadState.status === "loading") {
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado e Relatório" subtitle="Relatório da entrevista">
+        <Card className="w-full max-w-xl p-10 text-center">
+          <Spinner />
+          <p className="text-sm text-muted-foreground mt-3">Carregando o relatório da entrevista...</p>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  if (loadState.status === "error") {
+    return renderFailure(describeReportFailure(loadState.reason, loadState.message));
+  }
+
+  if (!isSupportedReportResult(loadState.result)) {
+    return renderFailure(UNSUPPORTED_REPORT_VIEW);
+  }
+
+  return <ReportContent result={loadState.result} onNavigate={onNavigate} />;
+}
+
+function ReportContent({ result, onNavigate }: { result: RealInterviewResult; onNavigate: (s: Screen) => void }) {
   const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
-
-  if (!interview || interview.candidateId !== candidateIdentity.id) {
-    return (
-      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle="Relatório da entrevista">
-        <Card className="w-full max-w-2xl p-6 text-center">
-          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">{interview ? "Este relatório não pertence à sua conta" : "Relatório não encontrado"}</h3>
-          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para consultar relatórios vinculados ao seu perfil.</p>
-          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
-        </Card>
-      </AuthLayout>
-    );
-  }
-
-  if (!report || report.status !== "AVAILABLE") {
-    const pendingReportMessage = interview.evaluationMode === "AI"
-      ? "O relatório ficará disponível após o processamento da avaliação por IA."
-      : "O relatório fica disponível após a conclusão da avaliação humana.";
-    return (
-      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview.context.title}>
-        <Card className="w-full max-w-2xl p-6 text-center">
-          <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
-          <p className="text-sm text-muted-foreground mb-5">{pendingReportMessage}</p>
-          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
-        </Card>
-      </AuthLayout>
-    );
-  }
-
-  const normalizeEvaluationCriteria = (scores?: Record<string, number>) =>
-    scores
-      ? Object.entries(scores).map(([name, score]) => ({
-        name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
-        score,
-      }))
-      : [];
-  const resolveEvaluationScore = (candidateEvaluation?: typeof evaluation) =>
-    candidateEvaluation?.overallScore ?? getAverageScore(candidateEvaluation?.scores);
-  const resolveComparisonTimestamp = (item: {
-    report?: { generatedAt?: string; updatedAt: string; createdAt: string };
-    interview?: { submittedAt?: string; updatedAt: string; createdAt: string };
-    evaluation?: { completedAt?: string; updatedAt: string; createdAt: string };
-  }) => {
-    const raw =
-      item.evaluation?.completedAt ??
-      item.report?.generatedAt ??
-      item.interview?.submittedAt ??
-      item.evaluation?.updatedAt ??
-      item.report?.updatedAt ??
-      item.interview?.updatedAt ??
-      item.evaluation?.createdAt ??
-      item.report?.createdAt ??
-      item.interview?.createdAt;
-    const timestamp = raw ? new Date(raw).getTime() : Number.NaN;
-    return Number.isFinite(timestamp) ? timestamp : 0;
-  };
-  const availableReportEntries = getAvailableCandidateReports(candidateIdentity.id)
-    .filter((entry) => entry.evaluation)
-    .map((entry) => ({
-      ...entry,
-      key: entry.evaluation!.id,
-      score: resolveEvaluationScore(entry.evaluation),
-      timestamp: resolveComparisonTimestamp(entry),
-    }))
-    .filter((entry) => entry.score != null)
-    .sort((a, b) => b.timestamp - a.timestamp);
-  const currentEntry = availableReportEntries.find((entry) =>
-    entry.interview.id === interview?.id ||
-    entry.report.id === report?.id ||
-    entry.evaluation?.id === evaluation?.id
-  );
-  const currentKey = currentEntry?.key ?? evaluation?.id ?? id ?? "current";
-  const currentTimestamp = currentEntry?.timestamp ?? resolveComparisonTimestamp({ report: report ?? undefined, interview: interview ?? undefined, evaluation: evaluation ?? undefined });
-  const previousEntry = availableReportEntries
-    .filter((entry) => entry.key !== currentKey && entry.timestamp < currentTimestamp)
-    .sort((a, b) => b.timestamp - a.timestamp)[0];
-  const bestAvailableEntry = [...availableReportEntries]
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.timestamp - a.timestamp)[0];
-  const bestEntry = bestAvailableEntry &&
-    bestAvailableEntry.key !== currentKey &&
-    bestAvailableEntry.key !== previousEntry?.key
-      ? bestAvailableEntry
-      : undefined;
-  type ReportResultOption = "Atual" | "Anterior" | "Melhor resultado";
-  type ReportResult = {
-    evaluation: typeof evaluation;
-    summary: string;
-    criteria: { name: string; score: number }[];
-    overallScore?: number | null;
-    evaluationMode?: EvaluationMode | null;
-  };
-  const reportResults: Record<ReportResultOption, ReportResult | undefined> = {
-    Atual: {
-      evaluation,
-      summary:
-        evaluation?.summary || evaluation?.comment || "Resumo não informado para esta avaliação.",
-      criteria: normalizeEvaluationCriteria(evaluation?.scores),
-      overallScore: resolveEvaluationScore(evaluation),
-      evaluationMode: interview?.evaluationMode,
-    },
-    Anterior: previousEntry?.evaluation ? {
-        evaluation: previousEntry.evaluation,
-        summary: previousEntry.evaluation.summary || previousEntry.evaluation.comment || "Resumo não informado para esta avaliação.",
-        criteria: normalizeEvaluationCriteria(previousEntry.evaluation.scores),
-        overallScore: previousEntry.score,
-        evaluationMode: previousEntry.interview.evaluationMode,
-      } : undefined,
-    "Melhor resultado": bestEntry?.evaluation ? {
-        evaluation: bestEntry.evaluation,
-        summary: bestEntry.evaluation.summary || bestEntry.evaluation.comment || "Resumo não informado para esta avaliação.",
-        criteria: normalizeEvaluationCriteria(bestEntry.evaluation.scores),
-        overallScore: bestEntry.score,
-        evaluationMode: bestEntry.interview.evaluationMode,
-      } : undefined,
-  };
-  const resultOptions = (["Atual", "Anterior", "Melhor resultado"] as const)
-    .filter((option) => Boolean(reportResults[option]));
-  const currentReport = reportResults[resultView] ?? reportResults.Atual!;
-  const radarData = currentReport.criteria;
-  const computedAverageScore = radarData.length ? radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length : 0;
-  const averageScoreValue = currentReport.overallScore ?? computedAverageScore;
-  const averageScore = averageScoreValue.toFixed(1);
-
-  const scoreState = (score: number) => {
-    if (score >= 9) return { label: "Excelente", color: "#16A34A", bg: "bg-green-50", text: "text-green-700", border: "border-green-200", badge: "success" as const };
-    if (score >= 7) return { label: "Bom", color: "#1D4ED8", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", badge: "info" as const };
-    return { label: "Atenção", color: "#D97706", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", badge: "warning" as const };
-  };
-
-  const formatScore = (score: number) => score.toFixed(1).replace(".", ",");
-  const generalState = scoreState(averageScoreValue);
-  const reportStrengths = currentReport.evaluation?.strengths?.filter(Boolean) ?? [];
-  const reportImprovements = currentReport.evaluation?.improvements?.filter(Boolean) ?? [];
-  const reportRecommendations = currentReport.evaluation?.recommendations?.filter(Boolean) ?? [];
-
-  const selectResultView = (option: typeof resultOptions[number]) => {
-    if (option === resultView) return;
-    setIsReportFading(true);
-    window.setTimeout(() => {
-      setResultView(option);
-      setIsReportFading(false);
-    }, 180);
-  };
+  const view = buildReportView(result);
+  const radarData = view.criteria.map((criterion) => ({ name: criterion.chartLabel, label: criterion.label, score: criterion.score }));
+  const generalState = reportScoreState(view.overallScore);
+  const subtitle = view.company ? `${view.title} · ${view.company}` : view.title;
 
   const renderRadarTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
     const item = payload[0].payload;
-    const state = scoreState(item.score);
+    const state = reportScoreState(item.score);
     return (
       <div className="rounded-xl border border-border bg-white px-3 py-2 shadow-lg">
-        <p className="text-xs font-bold text-foreground">{item.name}</p>
-        <p className="text-lg font-extrabold leading-tight" style={{ color: state.color }}>{formatScore(item.score)}</p>
+        <p className="text-xs font-bold text-foreground">{item.label}</p>
+        <p className="text-lg font-extrabold leading-tight" style={{ color: state.color }}>{formatReportScore(item.score)}</p>
         <p className={`text-[11px] font-semibold ${state.text}`}>{state.label}</p>
       </div>
     );
   };
 
   return (
-    <AuthLayout
-      current="report"
-      onNavigate={onNavigate}
-      title="Resultado e Relatório"
-      subtitle={`${interview.context.title} · ${interview.context.company}${report.generatedAt ? ` · ${new Date(report.generatedAt).toLocaleDateString("pt-BR")}` : ""}`}
-      actions={<Btn variant="outline" size="sm" onClick={() => toast.success("PDF gerado! O download iniciará em instantes.")}><Upload className="w-3.5 h-3.5" /> Exportar PDF</Btn>}
-    >
+    <AuthLayout current="report" onNavigate={onNavigate} title="Resultado e Relatório" subtitle={subtitle}>
       <div className="w-full">
         {/* Score hero — two-panel */}
         <Card className="mb-6 overflow-hidden">
@@ -3253,27 +4033,21 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
               <p className="text-[11px] font-bold uppercase tracking-widest text-blue-700 mb-5 flex items-center gap-2">
                 <TrendingUp className="w-3.5 h-3.5" /> Desempenho Geral
               </p>
-              <div style={{ opacity: isReportFading ? 0 : 1, transition: "opacity 180ms ease" }}>
-                <div className="flex items-end gap-2 mb-4">
-                  <span className="text-[72px] sm:text-[80px] font-extrabold text-foreground leading-none">{averageScore}</span>
-                  <span className="text-2xl font-bold text-muted-foreground mb-3">/ 10</span>
-                </div>
-                <div className="mb-5">
-                  <span className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 ${generalState.bg} ${generalState.text} text-sm font-bold rounded-full border ${generalState.border}`}>
-                    <CheckCircle className="w-3.5 h-3.5" /> {generalState.label}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed mb-6">
-                  {currentReport.summary}
-                </p>
+              <div className="flex items-end gap-2 mb-4">
+                <span className="text-[72px] sm:text-[80px] font-extrabold text-foreground leading-none">{formatReportScore(view.overallScore)}</span>
+                <span className="text-2xl font-bold text-muted-foreground mb-3">/ 10</span>
               </div>
-              <div className="flex items-start gap-3 p-4 bg-white/70 rounded-xl border border-blue-100">
-                <Target className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-bold text-foreground">Continue evoluindo!</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Cada prática aproxima você da sua oportunidade ideal.</p>
-                </div>
+              <div className="mb-5">
+                <span className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 ${generalState.bg} ${generalState.text} text-sm font-bold rounded-full border ${generalState.border}`}>
+                  <CheckCircle className="w-3.5 h-3.5" /> {generalState.label}
+                </span>
               </div>
+              {view.summary && (
+                <>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-blue-700 mb-1.5">Parecer do avaliador</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line break-words">{view.summary}</p>
+                </>
+              )}
             </div>
 
             {/* Right: Radar chart */}
@@ -3287,23 +4061,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#D97706" }} /><span className="text-[11px] text-muted-foreground">Atenção (&lt; 7)</span></div>
                   </div>
                 </div>
-                <div className="flex w-fit max-w-full flex-wrap gap-0.5 rounded-lg border border-blue-100 bg-white/70 p-0.5 shadow-sm sm:flex-nowrap">
-                  {resultOptions.map(option => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => selectResultView(option)}
-                      className={`min-w-0 rounded-md px-2 py-1 text-[10px] font-bold leading-tight transition-all duration-150 sm:px-3 sm:text-xs ${
-                        resultView === option
-                          ? "bg-blue-600 text-white shadow-sm"
-                          : "text-blue-700/60 hover:text-blue-700"
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-                <EvaluationModeBadge mode={currentReport.evaluationMode} />
+                <EvaluationModeBadge mode={result.interview.evaluationMode} />
               </div>
               <ResponsiveContainer width="100%" height={268}>
                 <RadarChart data={radarData} outerRadius="68%" margin={{ top: 14, right: 34, bottom: 14, left: 34 }}>
@@ -3318,15 +4076,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                       const labelX = x + (dx / distance) * labelOffset;
                       const labelY = y + (dy / distance) * labelOffset + (dy > 0 ? 4 : -2);
                       return (
-                        <text
-                          x={labelX}
-                          y={labelY}
-                          textAnchor={textAnchor}
-                          fontSize={10}
-                          fontWeight={600}
-                          fill="#0F1B2D"
-                          {...rest}
-                        >
+                        <text x={labelX} y={labelY} textAnchor={textAnchor} fontSize={10} fontWeight={600} fill="#0F1B2D" {...rest}>
                           {payload.value}
                         </text>
                       );
@@ -3351,7 +4101,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                       if (cx == null || cy == null) return <circle key={key} cx={0} cy={0} r={0} fill="transparent" />;
                       const score = payload?.score ?? payload?.payload?.score ?? props.value ?? 0;
                       const name = payload?.name ?? payload?.payload?.name ?? "";
-                      const state = scoreState(score);
+                      const state = reportScoreState(score);
                       const isHovered = hoveredCriterion === name;
                       return (
                         <g
@@ -3361,7 +4111,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                           style={{ cursor: "pointer" }}
                         >
                           <g
-                            key={`${resultView}-${name}`}
+                            key={name}
                             style={{
                               transformBox: "fill-box",
                               transformOrigin: "center",
@@ -3379,22 +4129,15 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                   />
                 </RadarChart>
               </ResponsiveContainer>
-              <div
-                key={resultView}
-                className="mt-3 grid grid-cols-1 gap-x-3 gap-y-1.5 border-t border-border pt-3 sm:grid-cols-2"
-                style={{ animation: "reportCriteriaIn 350ms ease-out" }}
-              >
-                {radarData.map(item => {
-                  const state = scoreState(item.score);
-                  const isHovered = hoveredCriterion === item.name;
+              <div className="mt-3 grid grid-cols-1 gap-x-3 gap-y-1.5 border-t border-border pt-3 sm:grid-cols-2" style={{ animation: "reportCriteriaIn 350ms ease-out" }}>
+                {view.criteria.map((item) => {
+                  const state = reportScoreState(item.score);
+                  const isHovered = hoveredCriterion === item.chartLabel;
                   return (
-                    <div
-                      key={item.name}
-                      className={`flex items-center justify-between gap-2 rounded-md px-1 py-1 transition-colors ${isHovered ? "bg-blue-50" : ""}`}
-                    >
-                      <span className="min-w-0 truncate text-xs font-medium text-foreground">{item.name}</span>
+                    <div key={item.key} className={`flex items-center justify-between gap-2 rounded-md px-1 py-1 transition-colors ${isHovered ? "bg-blue-50" : ""}`}>
+                      <span className="min-w-0 truncate text-xs font-medium text-foreground">{item.label}</span>
                       <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${state.bg} ${state.text}`}>
-                        {formatScore(item.score)} · {state.label}
+                        {formatReportScore(item.score)} · {state.label}
                       </span>
                     </div>
                   );
@@ -3404,81 +4147,43 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
           </div>
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-          {/* Strengths */}
-          <Card className="p-5 sm:p-6">
+        {/* Dados da entrevista (só o que existe) */}
+        {view.details.length > 0 && (
+          <Card className="p-5 sm:p-6 mb-5">
             <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-              <Award className="w-5 h-5 text-green-600" /> Pontos fortes
+              <Briefcase className="w-5 h-5 text-blue-600" /> Sobre a entrevista
             </h3>
-            <div className="space-y-3">
-              {reportStrengths.length > 0 ? reportStrengths.map((strength, index) => (
-                <div key={`${strength}-${index}`} className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
-                  <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">{strength}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {view.details.map((detail) => (
+                <div key={detail.label} className="min-w-0">
+                  <p className="text-[11px] text-muted-foreground mb-0.5">{detail.label}</p>
+                  <p className="text-sm font-semibold text-foreground break-words">{detail.value}</p>
                 </div>
-              )) : (
-                <div className="flex gap-3 p-3 bg-muted rounded-xl border border-border">
-                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Esta avaliação não possui pontos fortes estruturados registrados.
-                  </p>
-                </div>
-              )}
+              ))}
             </div>
           </Card>
+        )}
 
-          {/* Improvements */}
-          <Card className="p-5 sm:p-6">
-            <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-amber-500" /> Oportunidades de melhoria
+        {/* Perguntas e respostas (sem nota por pergunta: não existe na avaliação humana) */}
+        <Card className="mb-5">
+          <div className="p-5 sm:p-6 border-b border-border">
+            <h3 className="font-bold text-foreground flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-blue-600" /> Perguntas e respostas
             </h3>
-            <div className="space-y-3">
-              {reportImprovements.length > 0 ? reportImprovements.map((improvement, index) => (
-                <div key={`${improvement}-${index}`} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">{improvement}</p>
-                </div>
-              )) : (
-                <div className="flex gap-3 p-3 bg-muted rounded-xl border border-border">
-                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Esta avaliação não possui oportunidades de melhoria estruturadas registradas.
-                  </p>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Recommendations */}
-        <Card className="p-5 sm:p-6 mb-5">
-          <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-            <Lightbulb className="w-5 h-5 text-blue-600" /> Recomendações de desenvolvimento
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            {reportRecommendations.length > 0
-              ? reportRecommendations.map((recommendation, index) => {
-                const RecommendationIcon = [BookOpen, MessageSquare, Target, Lightbulb][index % 4];
-                return (
-                  <div key={`${recommendation}-${index}`} className="flex gap-3">
-                    <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-                      <RecommendationIcon className="w-4 h-4 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-foreground mb-1">{`Recomendação ${index + 1}`}</p>
-                      <p className="text-xs text-muted-foreground leading-relaxed">{recommendation}</p>
-                    </div>
-                  </div>
-                );
-              })
-              : (
-                <div className="flex gap-3 rounded-xl border border-border bg-muted p-3 sm:col-span-2 xl:col-span-4">
-                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Esta avaliação não possui recomendações estruturadas registradas.
-                  </p>
-                </div>
-              )}
+          </div>
+          <div className="divide-y divide-border">
+            {view.questions.map((question) => (
+              <div key={question.id} className="p-5 sm:p-6">
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">
+                  Pergunta {question.position} · {question.typeLabel}
+                </p>
+                <p className="text-sm font-semibold text-foreground mb-3 break-words">{question.text}</p>
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Sua resposta</p>
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line break-words">
+                  {question.answer ?? "Resposta não registrada."}
+                </p>
+              </div>
+            ))}
           </div>
         </Card>
 
@@ -3518,78 +4223,128 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
 
 function InterviewHistoryScreen({
   onNavigate,
-  session,
-  activeDraftEntry,
-  onContinueDraft,
+  onResumeInterview,
 }: {
   onNavigate: (s: Screen) => void;
-  session: MockAuthSession;
-  activeDraftEntry?: StoredInterviewDraftEntry | null;
-  onContinueDraft?: () => void;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
 }) {
   const routerNavigate = useNavigate();
-  const candidateIdentity = getCandidateIdentity(session);
-  const candidateInterviews = getCandidateInterviews(candidateIdentity.id);
-  type CandidateHistoryItem = {
-    id: string;
-    vaga: string;
-    empresa: string;
-    data: string;
-    hora?: string;
-    perguntas: number;
-    status: string;
-    nota: string | null;
-    badge: "success" | "warning" | "default" | "info";
-    realId?: string;
-    draft?: boolean;
-    evaluationMode?: EvaluationMode | null;
-  };
-  const realHistory = candidateInterviews.map((interview) => {
-    const report = getReportByInterviewId(interview.id);
-    const evaluation = getEvaluationByInterviewId(interview.id);
-    const average = getAverageScore(evaluation?.scores);
-    const interviewTimestamp = interview.submittedAt ?? interview.createdAt;
-    const interviewDate = new Date(interviewTimestamp);
-    return {
-      id: interview.id,
-      vaga: interview.context.title,
-      empresa: interview.context.company,
-      data: interviewDate.toLocaleDateString("pt-BR"),
-      hora: interviewDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      perguntas: interview.answers.length,
-      status: report?.status === "AVAILABLE" ? "Concluída" : statusLabelFromInterview(interview.status),
-      nota: average ? average.toFixed(1) : null,
-      badge: report?.status === "AVAILABLE" ? "success" as const : "warning" as const,
-      realId: interview.id,
-      evaluationMode: interview.evaluationMode,
-    };
-  });
-  const draftHistoryItem: CandidateHistoryItem[] = activeDraftEntry?.draft.context
-    ? [{
-      id: "active-interview-draft",
-      vaga: activeDraftEntry.draft.context.title,
-      empresa: activeDraftEntry.draft.context.company,
-      data: new Date(activeDraftEntry.updatedAt).toLocaleDateString("pt-BR"),
-      hora: new Date(activeDraftEntry.updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-      perguntas: activeDraftEntry.draft.questions.length,
-      status: "Em andamento",
-      nota: null,
-      badge: "info" as const,
-      draft: true,
-      evaluationMode: activeDraftEntry.draft.evaluationMode,
-    }]
-    : [];
-  const historyItems = [...draftHistoryItem, ...realHistory];
-  const inProgressCount = historyItems.filter((item) => item.status === "Em andamento").length;
+  // GET /interviews com sincronização leve (30 s + focus/visible/online). Refresh silencioso: sem
+  // spinner, sem piscar, filtro e scroll preservados (o estado do filtro vive só nesta tela).
+  const { state: loadState, reload } = useCandidateInterviewHistory({ autoSync: true });
+  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeMessage, setResumeMessage] = useState<string | null>(null);
 
-  const [filtro, setFiltro] = useState("Todos");
-  const filtered = historyItems.filter(h => {
-    if (filtro === "Todos") return true;
-    if (filtro === "Concluídas") return h.status === "Concluída";
-    if (filtro === "Aguardando") return h.status.includes("Aguardando");
-    if (filtro === "Em andamento") return h.status === "Em andamento";
-    return true;
-  });
+  const handleAction = async (kind: HistoryActionKind, id: string) => {
+    if (kind === "resume") {
+      if (!onResumeInterview || resumingId) return;
+      setResumingId(id);
+      setResumeMessage(null);
+      const result = await onResumeInterview(id);
+      setResumingId(null);
+      if (!result.ok) setResumeMessage(result.message);
+      return;
+    }
+    const path = historyActionPath(kind, id);
+    if (path) routerNavigate(path);
+  };
+
+  let content: ReactNode;
+  if (loadState.status === "loading") {
+    content = (
+      <Card className="p-10 text-center">
+        <Spinner />
+        <p className="text-sm text-muted-foreground mt-3">Carregando o seu histórico de entrevistas...</p>
+      </Card>
+    );
+  } else if (loadState.status === "error") {
+    const failure = describeHistoryFailure(loadState.reason, loadState.message);
+    content = (
+      <EmptyState
+        icon={AlertCircle}
+        title={failure.title}
+        description={failure.description}
+        className="p-10"
+        action={failure.canRetry ? <Btn variant="primary" onClick={() => reload()}>Tentar novamente</Btn> : undefined}
+      />
+    );
+  } else if (visibleHistoryItems(loadState.history.interviews).length === 0) {
+    content = (
+      <EmptyState
+        icon={History}
+        title={HISTORY_EMPTY_VIEW.title}
+        description={HISTORY_EMPTY_VIEW.description}
+        className="p-10"
+        action={<Btn variant="primary" onClick={() => onNavigate("interview-setup")}>{HISTORY_EMPTY_VIEW.cta}</Btn>}
+      />
+    );
+  } else {
+    const all = visibleHistoryItems(loadState.history.interviews);
+    const counts = countByFilter(all);
+    const filtered = filterHistory(all, filter);
+    content = (
+      <>
+        <Card className="p-4 sm:p-5">
+          <div className="flex flex-wrap gap-3 items-center">
+            <span className="text-sm font-semibold text-foreground shrink-0">Filtrar por:</span>
+            {HISTORY_FILTERS.map((option) => (
+              <FilterChip key={option.key} onClick={() => setFilter(option.key)} selected={option.key === filter}>
+                {option.key === "all" ? option.label : `${option.label} (${counts[option.key]})`}
+              </FilterChip>
+            ))}
+          </div>
+        </Card>
+
+        {resumeMessage && (
+          <p role="alert" className="text-sm text-red-600">{resumeMessage}</p>
+        )}
+
+        <div className="space-y-3">
+          {filtered.length === 0 && (
+            <EmptyState
+              className="p-8"
+              title={<span className="text-sm font-normal text-muted-foreground">{HISTORY_FILTER_EMPTY_MESSAGE}</span>}
+            />
+          )}
+          {filtered.map((item) => {
+            const h = buildHistoryItemView(item);
+            return (
+              <Card key={h.id} className="p-4 sm:p-5 hover:shadow-md transition-all">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <p className="font-bold text-foreground text-sm">{h.title}</p>
+                      <StatusBadge tone={h.tone}>{h.statusLabel}</StatusBadge>
+                      <EvaluationModeBadge mode={h.evaluationMode} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{h.meta.join(" · ")}</p>
+                    {h.dateText && <p className="text-xs text-muted-foreground mt-0.5">{h.dateText}</p>}
+                    {h.score && (
+                      <p className="text-xs font-semibold text-green-700 mt-1.5">Nota: {h.score} / 10</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    {h.actions.map((action) => (
+                      <Btn
+                        key={action.kind}
+                        variant={action.variant}
+                        size="sm"
+                        disabled={action.kind === "resume" && resumingId !== null}
+                        onClick={() => void handleAction(action.kind, h.id)}
+                      >
+                        {action.kind === "resume" && resumingId === h.id ? "Abrindo..." : action.label}
+                      </Btn>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
 
   return (
     <AuthLayout
@@ -3598,70 +4353,7 @@ function InterviewHistoryScreen({
       title="Histórico de Entrevistas"
       subtitle="Todas as suas entrevistas simuladas"
     >
-      <div className="w-full space-y-4">
-        {/* Filtros */}
-        <Card className="p-4 sm:p-5">
-          <div className="flex flex-wrap gap-3 items-center">
-            <span className="text-sm font-semibold text-foreground shrink-0">Filtrar por:</span>
-            {["Todos", "Concluídas", "Aguardando", "Em andamento"].map(f => (
-              <FilterChip key={f} onClick={() => setFiltro(f)} selected={f === filtro}>
-                {f === "Em andamento" ? `Em andamento (${inProgressCount})` : f}
-              </FilterChip>
-            ))}
-          </div>
-        </Card>
-
-        {/* Lista */}
-        <div className="space-y-3">
-          {filtered.length === 0 && (
-            <EmptyState
-              className="p-8"
-              title={<span className="text-sm font-normal text-muted-foreground">Nenhuma entrevista encontrada para este filtro.</span>}
-            />
-          )}
-          {filtered.map((h) => (
-            <Card key={h.id} className="p-4 sm:p-5 hover:shadow-md transition-all">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <p className="font-bold text-foreground text-sm">{h.vaga}</p>
-                    <StatusBadge tone={statusToneFromBadge(h.badge)}>{h.status}</StatusBadge>
-                    <EvaluationModeBadge mode={h.evaluationMode} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {h.empresa} · {h.perguntas} perguntas · {h.data}{h.hora ? ` · ${h.hora}` : ""}
-                  </p>
-                  {h.nota && (
-                    <p className="text-xs font-semibold text-green-700 mt-1.5">Nota: {h.nota} / 10</p>
-                  )}
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  {h.draft && (
-                    <Btn variant="primary" size="sm" onClick={onContinueDraft}>
-                      Continuar entrevista
-                    </Btn>
-                  )}
-                  {h.nota && (
-                    <Btn variant="primary" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/reports/${h.realId}`) : onNavigate("report")}>
-                      Ver relatório
-                    </Btn>
-                  )}
-                  {h.badge === "warning" && (
-                    <Btn variant="outline" size="sm" onClick={() => h.realId ? routerNavigate(`/candidate/interviews/${h.realId}/status`) : onNavigate("pending")}>
-                      Acompanhar
-                    </Btn>
-                  )}
-                  {!h.draft && (
-                    <Btn variant="secondary" size="sm" onClick={() => onNavigate("interview-setup")}>
-                      Praticar novamente
-                    </Btn>
-                  )}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
+      <div className="w-full space-y-4">{content}</div>
     </AuthLayout>
   );
 }
@@ -3701,26 +4393,34 @@ function InterviewSetupScreen({
   session,
   savedDraftAvailable,
   onContinueSavedDraft,
-  onDiscardSavedDraft,
   onCancelInterview,
   onCancelPreparation,
+  onResumeInterview,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
   session: MockAuthSession;
+  onResumeInterview?: (interviewId: string) => Promise<ResumeInterviewResult>;
   savedDraftAvailable?: boolean;
   onContinueSavedDraft?: () => void;
-  onDiscardSavedDraft?: () => void;
   onCancelInterview?: () => void;
   onCancelPreparation?: () => void;
 }) {
-  const [url, setUrl] = useState(draft.context?.sourceUrl ?? "");
+  // Prefill (UX): URL de uma vaga sugerida já copiada neste navegador. Só lê; nunca analisa nem cria nada.
+  const [url, setUrl] = useState(() => draft.context?.sourceUrl ?? peekInterviewUrlPrefill() ?? "");
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">(draft.context ? "success" : "idle");
   const [error, setError] = useState("");
   const [confirmed, setConfirmed] = useState(Boolean(draft.context));
   const [generating, setGenerating] = useState(false);
-  const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
+  // URL preenchida pelo clique em "Copiar link" de uma vaga sugerida (nunca por digitação/colagem).
+  const [copiedLinkUrl, setCopiedLinkUrl] = useState<string | null>(null);
+  const continuingRef = useRef(false);
+  // 409 INTERVIEW_ALREADY_IN_PROGRESS: id da entrevista existente (só exibe a oferta; não grava nada).
+  const [existingInProgress, setExistingInProgress] = useState<{ id: string | null } | null>(null);
+  const [resumingExisting, setResumingExisting] = useState(false);
+  const [resumeExistingError, setResumeExistingError] = useState<string | null>(null);
+  const keepUrlOnContextClearRef = useRef(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const hadContextRef = useRef(Boolean(draft.context));
   const contextCardRef = useRef<HTMLDivElement>(null);
@@ -3745,46 +4445,85 @@ function InterviewSetupScreen({
   const descriptionIsLong = jobDescription.length > 320;
 
   const handleAnalyze = async () => {
+    setCopiedLinkUrl(null);
     setStatus("loading");
     setError("");
     setConfirmed(false);
     setDescriptionExpanded(false);
     try {
       const context = await analyzeJobUrl(url);
-      setDraft((current) => ({ ...current, context, questions: [], answers: {}, evaluationMode: null }));
+      // Novo contexto => nova entrevista real (o interviewId anterior é descartado,
+      // junto com os rascunhos locais de resposta dela).
+      clearAnswerDraftsForInterview(getCandidateIdentity(session).id, draft.interviewId);
+      setDraft((current) => ({
+        ...current,
+        interviewId: undefined,
+        context,
+        questions: [],
+        answers: {},
+        evaluationMode: null,
+      }));
       scrollToContextRef.current = true;
       setStatus("success");
     } catch (err) {
       scrollToContextRef.current = false;
       setStatus("error");
-      setError(err instanceof Error ? err.message : "Não foi possível analisar a URL informada.");
+      setError(friendlyErrorMessage(err, "Não foi possível analisar a vaga. Verifique o link e tente novamente."));
     }
   };
 
+  // Contexto confirmado: cria a Interview REAL (POST /interviews) UMA vez e gera
+  // as perguntas persistidas (idempotente). O id nunca nasce no navegador e o
+  // candidato vem do JWT. `continuingRef` bloqueia clique duplo; se o
+  // interviewId já existe (voltar/avançar), ele é reaproveitado.
   const handleContinue = async () => {
+    if (continuingRef.current) return;
     if (!draft.context || !confirmed) {
       toast.error("Confirme o contexto da vaga antes de continuar.");
       return;
     }
+    continuingRef.current = true;
     setGenerating(true);
     try {
-      const questions = await generateInterviewQuestions(draft.context);
-      setDraft((current) => ({ ...current, questions, answers: {}, evaluationMode: null }));
+      const outcome = await startInterviewForContext({
+        context: draft.context,
+        currentInterviewId: draft.interviewId,
+        create: createRealInterview,
+        generate: generateRealQuestions,
+        onCreated: (createdId) => setDraft((current) => ({ ...current, interviewId: createdId })),
+        onObsolete: (staleId) => clearAnswerDraftsForInterview(getCandidateIdentity(session).id, staleId),
+      });
+      if (!outcome.ok) {
+        if (outcome.kind === "already_in_progress") {
+          // Sem erro genérico, sem wizard novo e sem alterar o rascunho salvo.
+          setExistingInProgress({ id: outcome.existingInterviewId ?? null });
+          setResumeExistingError(null);
+        } else {
+          toast.error(outcome.message);
+        }
+        return;
+      }
+      const interviewId = outcome.interviewId;
+      const generated = { data: outcome.questions };
+      const readyInterviewId = interviewId;
+      const questions: InterviewQuestion[] = generated.data.map(({ id, type, text }) => ({ id, type, text }));
+      const answers: Record<string, string> = {};
+      generated.data.forEach((question) => {
+        if (question.answer) answers[question.id] = question.answer;
+      });
+      setDraft((current) => ({ ...current, interviewId: readyInterviewId, questions, answers, evaluationMode: null }));
       onNavigate("consent");
-    } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : "Não foi possível gerar as perguntas da entrevista. Tente novamente.",
-      );
     } finally {
+      continuingRef.current = false;
       setGenerating(false);
     }
   };
 
   useEffect(() => {
     if (hadContextRef.current && !draft.context) {
-      setUrl("");
+      // Troca de vaga por "Copiar link": a nova URL já está no campo e deve permanecer.
+      if (!keepUrlOnContextClearRef.current) setUrl("");
+      keepUrlOnContextClearRef.current = false;
       setStatus("idle");
       setError("");
       setConfirmed(false);
@@ -3793,13 +4532,36 @@ function InterviewSetupScreen({
     hadContextRef.current = Boolean(draft.context);
   }, [draft.context]);
 
+  // O prefill vale para esta abertura da tela; consumido, não reaparece depois.
+  useEffect(() => {
+    clearInterviewUrlPrefill();
+  }, []);
+
   useEffect(() => () => {
     if (urlHighlightTimerRef.current !== null) window.clearTimeout(urlHighlightTimerRef.current);
   }, []);
 
   // Após copiar um link sugerido: rola até o campo de URL e o destaca por instantes.
   // Só foca o input com mouse/ponteiro preciso (no celular abriria o teclado).
-  const handleSuggestedLinkCopied = () => {
+  const handleSuggestedLinkCopied = (copiedUrl: string) => {
+    // Guarda a URL conhecida no clique (sem ler o clipboard e sem requisição) e SEMPRE
+    // a coloca no campo, substituindo a de outra vaga. Não analisa e não cria Interview.
+    storeInterviewUrlPrefill(copiedUrl);
+    const linkEffect = resolveLinkCopyEffect(copiedUrl, draft.context?.sourceUrl);
+    if (linkEffect.invalidateContext) {
+      // O contexto extraído era de OUTRA vaga: sai da tela e exige nova análise. A
+      // Interview já criada no Back não é apagada; só deixa de ser a do fluxo atual
+      // (o próximo "Analisar" já descarta o interviewId, como antes).
+      clearAnswerDraftsForInterview(getCandidateIdentity(session).id, draft.interviewId);
+      keepUrlOnContextClearRef.current = true;
+      setDraft((current) => ({ ...current, interviewId: undefined, context: null, questions: [], answers: {}, evaluationMode: null }));
+      setStatus("idle");
+      setError("");
+      setConfirmed(false);
+      setDescriptionExpanded(false);
+    }
+    setUrl(linkEffect.nextUrl);
+    setCopiedLinkUrl(linkEffect.nextUrl);
     const field = urlFieldRef.current;
     if (!field) return;
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -3834,7 +4596,7 @@ function InterviewSetupScreen({
         current="interview-setup"
         onNavigate={onNavigate}
         title="Nova entrevista"
-        subtitle="Retome ou descarte o progresso salvo"
+        subtitle="Retome ou cancele a entrevista em andamento"
       >
         <div className="w-full max-w-2xl space-y-5">
           <Card className="p-5 sm:p-6 border-blue-100 bg-blue-50">
@@ -3845,44 +4607,52 @@ function InterviewSetupScreen({
               <div className="min-w-0 flex-1">
                 <h3 className="font-bold text-foreground">Você possui uma entrevista em andamento.</h3>
                 <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  Continue de onde parou em {draft.context.title} ou descarte o progresso salvo para iniciar uma nova entrevista.
+                  Continue de onde parou em {draft.context.title} ou cancele a entrevista para iniciar uma nova.
                 </p>
                 <div className="mt-5 flex flex-col gap-3 sm:flex-row">
                   <Btn variant="primary" onClick={onContinueSavedDraft}>
                     Continuar entrevista
                   </Btn>
-                  <Btn variant="outline" onClick={() => setConfirmDiscardDraft(true)}>
-                    Descartar e iniciar nova
+                  <Btn variant="outline" onClick={() => onCancelInterview?.()}>
+                    Cancelar entrevista
                   </Btn>
                 </div>
               </div>
             </div>
           </Card>
         </div>
-        {confirmDiscardDraft && (
-          <ConfirmModal
-            title="Descartar entrevista em andamento?"
-            message="O progresso salvo desta entrevista será removido."
-            confirmLabel="Descartar e iniciar nova"
-            danger
-            onConfirm={() => {
-              setConfirmDiscardDraft(false);
-              onDiscardSavedDraft?.();
-            }}
-            onCancel={() => setConfirmDiscardDraft(false)}
-          />
-        )}
       </AuthLayout>
     );
   }
 
   // Ações da tela; renderizadas em um único ponto por vez (dentro do bloco de contexto ou ao final).
+  const continueExistingFromSetup = async () => {
+    if (!existingInProgress?.id || !onResumeInterview || resumingExisting) return;
+    setResumingExisting(true);
+    setResumeExistingError(null);
+    const result = await onResumeInterview(existingInProgress.id);
+    setResumingExisting(false);
+    if (!result.ok) setResumeExistingError(result.message);
+  };
   const setupActions = (
+    <div className="flex flex-col gap-3">
+      {existingInProgress && (
+        <Alert variant="warning" role="alert" className="rounded-2xl p-4" data-testid="already-in-progress">
+          <p className="text-sm font-semibold text-amber-800">{NEW_INTERVIEW_BLOCKED_MESSAGE}</p>
+          {resumeExistingError && <p className="text-xs text-amber-700 mt-1">{resumeExistingError}</p>}
+          {existingInProgress.id && onResumeInterview && (
+            <Btn variant="primary" size="sm" className="mt-3" onClick={() => void continueExistingFromSetup()} disabled={resumingExisting}>
+              {resumingExisting ? "Carregando..." : "Continuar entrevista"}
+            </Btn>
+          )}
+        </Alert>
+      )}
     <div className="flex gap-3">
       <Btn variant="outline" className="min-w-28 sm:min-w-32" onClick={() => isInterviewDraftInProgress(draft) ? onCancelInterview?.() : onCancelPreparation?.()}>Cancelar</Btn>
       <Btn variant="primary" onClick={handleContinue} disabled={!draft.context || !confirmed || generating} className="flex-1">
         {generating ? <><Spinner /> Gerando perguntas</> : <>Continuar <ArrowRight className="w-4 h-4" /></>}
       </Btn>
+    </div>
     </div>
   );
 
@@ -3918,7 +4688,10 @@ function InterviewSetupScreen({
           <div ref={urlFieldRef} className="flex flex-col sm:flex-row gap-3">
             <Input
               value={url}
-              onChange={(event) => setUrl(event.target.value)}
+              onChange={(event) => {
+                setCopiedLinkUrl(null);
+                setUrl(event.target.value);
+              }}
               placeholder="https://www.empregare.com/pt-br/vaga/..."
               aria-label="URL da vaga"
               className={urlHighlighted ? "border-[#2563EB] shadow-[0_0_0_4px_rgba(37,99,235,0.2)]" : undefined}
@@ -3926,6 +4699,11 @@ function InterviewSetupScreen({
             <Btn variant="primary" onClick={handleAnalyze} disabled={status === "loading" || !url.trim()}>
               {status === "loading" ? <><Spinner /> Analisando</> : <>Analisar</>}
             </Btn>
+          </div>
+          <div role="status" aria-live="polite">
+            {status !== "loading" && shouldShowCopiedLinkNotice(copiedLinkUrl, url) && (
+              <p className="mt-3 text-sm font-medium text-blue-700">Link preenchido. Agora toque em Analisar.</p>
+            )}
           </div>
           {status === "error" && (
             <Alert variant="error" className="mt-4 flex gap-3 rounded-2xl p-4">
@@ -4138,13 +4916,34 @@ function EvaluationModeScreen({
   setDraft: Dispatch<SetStateAction<InterviewDraft>>;
 }) {
   const evaluationMode = draft.evaluationMode;
+  const [savingMode, setSavingMode] = useState(false);
+  const savingModeRef = useRef(false);
 
-  if (!draft.context || draft.questions.length === 0) {
+  if (!draft.context || draft.questions.length === 0 || !draft.interviewId) {
     return <DraftWizardGuard current="evaluation-mode" onNavigate={onNavigate} />;
   }
 
   const selectEvaluationMode = (mode: EvaluationMode) => {
     setDraft((current) => ({ ...current, evaluationMode: mode }));
+  };
+
+  // A escolha só vale depois de gravada no Back (PATCH evaluation-mode); a cópia
+  // no React é apenas para a UI. Em erro não avança.
+  const handleContinueToPrep = async () => {
+    if (!evaluationMode || savingModeRef.current || !draft.interviewId) return;
+    savingModeRef.current = true;
+    setSavingMode(true);
+    try {
+      const saved = await saveRealEvaluationMode(draft.interviewId, evaluationMode);
+      if (!saved.ok) {
+        toast.error(saved.message);
+        return;
+      }
+      onNavigate("prep");
+    } finally {
+      savingModeRef.current = false;
+      setSavingMode(false);
+    }
   };
 
   return (
@@ -4214,11 +5013,11 @@ function EvaluationModeScreen({
           <Btn variant="outline" onClick={() => onNavigate("consent")}>Voltar</Btn>
           <Btn
             variant="primary"
-            disabled={!evaluationMode}
-            onClick={() => onNavigate("prep")}
+            disabled={!evaluationMode || savingMode}
+            onClick={() => void handleContinueToPrep()}
             className="flex-1"
           >
-            Continuar para orientações <ArrowRight className="w-4 h-4" />
+            {savingMode ? <><Spinner /> Salvando...</> : <>Continuar para orientações <ArrowRight className="w-4 h-4" /></>}
           </Btn>
         </div>
       </div>
@@ -4231,28 +5030,31 @@ function EvaluationModeScreen({
 function InterviewConfirmScreen({
   onNavigate,
   draft,
-  session,
   onDraftCompleted,
+  onStaleExit,
 }: {
   onNavigate: (s: Screen) => void;
   draft: InterviewDraft;
-  session: MockAuthSession;
+  session?: MockAuthSession;
   onDraftCompleted?: () => void;
+  onStaleExit?: () => void;
 }) {
   const routerNavigate = useNavigate();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
+  // Outro dispositivo pode ter enviado/encerrado a entrevista (descoberto no foco ou no envio).
+  const sessionGuard = useInterviewSessionGuard({ interviewId: draft.interviewId, pollStatus: true });
+  const stale = sessionGuard.stale;
   const answeredCount = draft.questions.filter((question) => isValidInterviewAnswer(draft.answers[question.id])).length;
   const allAnswersReady = hasAllRequiredInterviewAnswers(draft);
-  const candidateIdentity = getCandidateIdentity(session);
   const evaluationMode = draft.evaluationMode;
 
-  if (!draft.context || draft.questions.length === 0) {
+  if (!draft.context || draft.questions.length === 0 || !draft.interviewId) {
     return <DraftWizardGuard current="interview-confirm" onNavigate={onNavigate} />;
   }
 
   const handleSend = async () => {
-    if (sendingRef.current) {
+    if (sendingRef.current || stale) {
       return;
     }
     if (!allAnswersReady) {
@@ -4265,42 +5067,32 @@ function InterviewConfirmScreen({
     }
     sendingRef.current = true;
     setSending(true);
-    const answers = draft.questions.map((question) => ({
-      questionId: question.id,
-      questionText: question.text,
-      questionType: question.type,
-      answer: draft.answers[question.id]?.trim() ?? "",
-    }));
 
-    try {
-      const aiEvaluation = evaluationMode === "AI"
-        ? await evaluateInterviewWithAi(draft.context!, answers)
-        : null;
-
-      const interview = submitInterview({
-        candidateId: candidateIdentity.id,
-        candidateName: candidateIdentity.name,
-        candidateEmail: candidateIdentity.email,
-        context: draft.context!,
-        evaluationMode,
-        answers,
-      });
-
-      if (aiEvaluation) {
-        completeAiEvaluation(interview.id, aiEvaluation);
+    // Envio REAL: POST /interviews/:id/submit. HUMAN => PENDING_ASSIGNMENT (fila do
+    // Admin); AI => PENDING_AI_EVALUATION. Nenhuma avaliação por IA é executada aqui
+    // (Fase 3 pausada) e nada é gravado em localStorage como entrevista oficial.
+    const result = await submitRealInterview(draft.interviewId!, evaluationMode);
+    sendingRef.current = false;
+    setSending(false);
+    if (!result.ok) {
+      if (result.reason === "not_in_progress") {
+        // Já enviada em outro dispositivo (com outra modalidade): bloqueia, sem voltar à edição.
+        sessionGuard.markStale(result.interviewStatus);
+        return;
       }
-
-      onDraftCompleted?.();
-      sendingRef.current = false;
-      setSending(false);
-      routerNavigate(evaluationMode === "AI"
-        ? `/candidate/reports/${interview.id}`
-        : `/candidate/interviews/${interview.id}/success`);
-    } catch (error) {
-      sendingRef.current = false;
-      setSending(false);
-      toast.error(error instanceof Error ? error.message : "Não foi possível enviar a entrevista. Tente novamente.");
+      toast.error(result.message);
+      return;
     }
+    // Envio concluído aqui OU já enviado antes (idempotente, mesma modalidade): o rascunho
+    // local é descartado e nada é recriado.
+    onDraftCompleted?.();
+    // HUMAN confirmado pelo backend vai direto ao acompanhamento real (sem tela intermediária
+    // nem clique em "Acompanhar"). AI mantém a tela de envio existente (Fase 3 pausada).
+    routerNavigate(
+      resolveSubmitDestination(result.data) === "status"
+        ? `/candidate/interviews/${result.data.id}/status`
+        : `/candidate/interviews/${result.data.id}/success`,
+    );
   };
 
   return (
@@ -4311,6 +5103,7 @@ function InterviewConfirmScreen({
       subtitle="Revise antes de enviar suas respostas"
     >
       <div className="w-full max-w-2xl space-y-5">
+        {stale && <StaleInterviewNotice message={describeStaleInterview(sessionGuard.staleStatus)} status={sessionGuard.staleStatus} onBack={() => onStaleExit?.()} />}
         {/* Aviso */}
         <Alert variant="warning" className="flex items-start gap-3 rounded-2xl p-4">
           <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
@@ -4391,11 +5184,11 @@ function InterviewConfirmScreen({
         </Card>
 
         <div className="flex gap-3">
-          <Btn variant="outline" onClick={() => onNavigate("review")}>Revisar novamente</Btn>
+          <Btn variant="outline" onClick={() => onNavigate("review")} disabled={stale}>Revisar novamente</Btn>
           <Btn
             variant="primary"
             onClick={handleSend}
-            disabled={sending || !allAnswersReady || !evaluationMode}
+            disabled={sending || !allAnswersReady || !evaluationMode || stale}
             className="flex-1"
           >
             {sending ? (
@@ -4415,8 +5208,52 @@ function InterviewConfirmScreen({
 function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const routerNavigate = useNavigate();
   const { id } = useParams();
-  const interview = getInterviewById(id);
-  if (!interview) {
+  const [loadState, setLoadState] = useState<{ status: "loading" } | { status: "error"; message: string } | { status: "ready"; interview: RealInterview }>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    if (!id) {
+      setLoadState({ status: "error", message: "Entrevista não encontrada." });
+      return;
+    }
+    setLoadState({ status: "loading" });
+    void getRealInterview(id).then((result) => {
+      if (cancelled) return;
+      setLoadState(result.ok ? { status: "ready", interview: result.data } : { status: "error", message: result.message });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, reloadKey]);
+  if (loadState.status === "loading") {
+    return (
+      <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
+        <Card className="w-full max-w-xl p-10 text-center">
+          <Spinner />
+          <p className="text-sm text-muted-foreground mt-3">Carregando os dados do envio...</p>
+        </Card>
+      </AuthLayout>
+    );
+  }
+  if (loadState.status === "error") {
+    return (
+      <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
+        <EmptyState
+          icon={MessageSquare}
+          title="Não foi possível carregar o envio"
+          description={loadState.message}
+          className="w-full max-w-xl p-10"
+          action={<Btn variant="primary" onClick={() => setReloadKey((key) => key + 1)}>Tentar novamente</Btn>}
+        />
+      </AuthLayout>
+    );
+  }
+  const interview = loadState.interview;
+  // HUMAN nunca fica nesta tela legada (nem por link/reload): o acompanhamento real a substitui.
+  if (resolveSubmitDestination(interview) === "status") {
+    return <Navigate to={`/candidate/interviews/${interview.id}/status`} replace />;
+  }
+  if (interview.status === "IN_PROGRESS") {
     return (
       <AuthLayout current="interview-done" onNavigate={onNavigate} title="Entrevista Concluída">
         <EmptyState
@@ -4464,22 +5301,23 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
           {/* Protocolo */}
           <div className="bg-muted rounded-xl p-4 mb-6 text-left">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
+            {/* Mobile: uma coluna (nada espremido); a partir de sm volta às duas colunas. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Protocolo</p>
-                <p className="text-sm font-bold text-foreground">{interview.id}</p>
+                <p className="text-sm font-bold text-foreground break-words">{interview.id}</p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">{interview.context.title}</p>
+                <p className="text-sm font-semibold text-foreground break-words">{interview.title}</p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>
                 <p className="text-sm font-semibold text-foreground">{interview.submittedAt ? new Date(interview.submittedAt).toLocaleString("pt-BR") : "—"}</p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Status</p>
-                <StatusBadge tone="warning">{interview.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
+                <StatusBadge tone="warning" className="w-fit max-w-full whitespace-normal">{interview.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
               </div>
             </div>
           </div>
@@ -4766,27 +5604,22 @@ const Download = ({ className }: { className?: string }) => (
 
 type SettingsTab = "conta" | "senha" | "notif" | "privacidade" | "consentimentos" | "dados" | "excluir";
 
-function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      role="switch"
-      aria-checked={on}
-      className={`w-11 h-6 rounded-full relative transition-colors shrink-0 ${on ? "bg-primary" : "bg-slate-200"}`}
-    >
-      <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow ${on ? "right-1" : "left-1"}`} />
-    </button>
-  );
+function Toggle({ on, onToggle, label }: { on: boolean; onToggle: () => void; label?: string }) {
+  return <Switch checked={on} onCheckedChange={() => onToggle()} aria-label={label} />;
 }
 
 function ConfirmModal({
-  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, showCancel = true, onConfirm, onCancel, onClose, children,
+  title, message, confirmLabel, cancelLabel = "Cancelar", danger = false, showCloseButton = false, showCancel = true, initialFocus, dismissOnBackdrop = false, onConfirm, onCancel, onClose, children,
 }: {
   title: string; message: string; confirmLabel: string;
   cancelLabel?: string;
   showCloseButton?: boolean;
   // Informativa: false oculta a ação secundária e deixa só a ação principal.
   showCancel?: boolean;
+  /** Ação segura que recebe o foco ao abrir (padrão: a secundária). Nunca use uma ação destrutiva. */
+  initialFocus?: ConfirmInitialFocus;
+  /** Clique na área escura fora do modal = mesmo dismiss do X/Esc (nunca confirma nem cancela nada). Opt-in. */
+  dismissOnBackdrop?: boolean;
   /** @deprecated Sem efeito: as ações sempre têm larguras iguais no desktop. */
   equalActionWidths?: boolean;
   danger?: boolean; onConfirm: () => void; onCancel: () => void;
@@ -4797,6 +5630,10 @@ function ConfirmModal({
   const confirmRef = useRef<HTMLButtonElement>(null);
   // Esc (e o X) usam o mesmo caminho de fechamento que já existia: onClose ?? onCancel.
   const dismiss = onClose ?? onCancel;
+  // Toque: o foco programático inicial não deve parecer "seleção"; teclado (Tab) volta a mostrar o ring.
+  const [keyboardUsed, setKeyboardUsed] = useState(false);
+  const coarsePointer = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  const focusRing = shouldHideInitialFocusRing({ coarsePointer, keyboardUsed }) ? CONFIRM_MODAL_HIDDEN_FOCUS_RING : null;
   // Mobile: empilhadas, w-full. Desktop: as ações dividem a largura igualmente (sm:flex-1).
   const actionClass = "min-h-11 w-full whitespace-normal sm:min-h-10 sm:flex-1";
 
@@ -4804,11 +5641,14 @@ function ConfirmModal({
     <AlertDialog open onOpenChange={(open) => { if (!open) dismiss(); }}>
       <AlertDialogContent
         className="max-h-[90dvh] overflow-y-auto overscroll-contain sm:max-w-md"
+        onOverlayClick={dismissOnBackdrop ? dismiss : undefined}
+        onKeyDownCapture={(event) => { if (event.key === "Tab") setKeyboardUsed(true); }}
         onOpenAutoFocus={(event) => {
-          // Foco inicial seguro: ação secundária; na informativa, a única ação.
+          // Foco inicial seguro (nunca a ação destrutiva); na informativa, a única ação.
           event.preventDefault();
+          const target = resolveInitialFocus({ showCancel, initialFocus }) === "confirm" ? confirmRef : cancelRef;
           // preventScroll: sem isso o navegador rola a página para "revelar" o botão focalizado.
-          (showCancel ? cancelRef : confirmRef).current?.focus({ preventScroll: true });
+          target.current?.focus({ preventScroll: true });
         }}
       >
         {showCloseButton && (
@@ -4832,11 +5672,11 @@ function ConfirmModal({
         {children && <div>{children}</div>}
         <AlertDialogFooter className="gap-3">
           {showCancel && (
-            <button ref={cancelRef} type="button" onClick={onCancel} className={cn(buttonVariants({ variant: "outline" }), actionClass)}>
+            <button ref={cancelRef} type="button" onClick={onCancel} className={cn(buttonVariants({ variant: "outline" }), actionClass, CONFIRM_MODAL_FOCUS_RING, focusRing)}>
               {cancelLabel}
             </button>
           )}
-          <button ref={confirmRef} type="button" onClick={onConfirm} className={cn(buttonVariants({ variant: danger ? "destructive" : "primary" }), actionClass)}>
+          <button ref={confirmRef} type="button" onClick={onConfirm} className={cn(buttonVariants({ variant: danger ? "destructive" : "primary" }), actionClass, danger ? CONFIRM_MODAL_DANGER_FOCUS_RING : CONFIRM_MODAL_FOCUS_RING, focusRing)}>
             {confirmLabel}
           </button>
         </AlertDialogFooter>
@@ -5000,7 +5840,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                         <p className="text-sm font-semibold text-foreground">{n.label}</p>
                         <p className="text-xs text-muted-foreground">{n.desc}</p>
                       </div>
-                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} />
+                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} label={n.label} />
                     </div>
                   ))}
                 </div>
@@ -5017,7 +5857,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                         <p className="text-sm font-semibold text-foreground">{n.label}</p>
                         <p className="text-xs text-muted-foreground">{n.desc}</p>
                       </div>
-                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} />
+                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} label={n.label} />
                     </div>
                   ))}
                 </div>
@@ -6255,6 +7095,27 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const [pendingNavigationScreen, setPendingNavigationScreen] = useState<Screen | null>(null);
   const [pendingBrowserNavigation, setPendingBrowserNavigation] = useState(false);
   const [confirmCancelInterview, setConfirmCancelInterview] = useState(false);
+  // "Sair e continuar depois": tenta enviar o rascunho pendente ao Back antes de sair.
+  const leaveFlushRef = useRef<(() => Promise<void>) | null>(null);
+  const registerLeaveFlush = useCallback((flush: (() => Promise<void>) | null) => {
+    leaveFlushRef.current = flush;
+  }, []);
+  // Sessão do wizard já terminal (cancelada/enviada em outro dispositivo): sem proteção de saída.
+  const [terminalSession, setTerminalSession] = useState<{ interviewId: string; status: string | null } | null>(null);
+  const reportInterviewTerminal = useCallback((interviewId: string, status: string | null) => {
+    setTerminalSession((current) => (current?.interviewId === interviewId && current.status === status ? current : { interviewId, status }));
+  }, []);
+  // Cancelamento REAL (global): estado do pedido ao servidor. Nada local é limpo antes do sucesso.
+  const [cancelState, setCancelState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const cancelBusyRef = useRef(false);
+  const stopActivityRef = useRef<(() => void) | null>(null);
+  const registerStopActivity = useCallback((stop: (() => void) | null) => {
+    stopActivityRef.current = stop;
+  }, []);
+  const leavingRef = useRef(false);
+  // O usuário desistiu de sair (fechou ou escolheu descartar) enquanto o flush corria.
+  const leaveAbortedRef = useRef(false);
+  const [leavingSaving, setLeavingSaving] = useState(false);
   const browserNavigationAllowedRef = useRef(false);
   const protectedHistoryUrlRef = useRef("");
   const candidateIdentity = getCandidateIdentity(session);
@@ -6283,11 +7144,12 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     candidateDraftActive &&
     !resumePromptDismissed &&
     location.pathname === getPathForScreen("interview-setup");
-  const shouldProtectInterviewExit = Boolean(
-    candidateDraftActive &&
-    currentInterviewDraftScreen &&
-    !shouldShowResumePrompt,
-  );
+  const terminalStatusForDraft =
+    terminalSession && terminalSession.interviewId === interviewDraft.interviewId ? terminalSession.status ?? "TERMINAL" : null;
+  const shouldProtectInterviewExit = isExitProtectionActive({
+    draftProtected: Boolean(candidateDraftActive && currentInterviewDraftScreen && !shouldShowResumePrompt),
+    terminalStatus: terminalStatusForDraft,
+  });
 
   const executeNavigation = (screen: Screen) => {
     // Logout real só deve disparar para uma navegação que É o "Sair"
@@ -6343,34 +7205,137 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     routerNavigate(targetPath);
   };
 
+  // Retomada pelo Dashboard (continuidade entre dispositivos): o Back é a fonte da
+  // verdade. Falhas NUNCA gravam no localStorage nem abrem o wizard.
+  const resumeInterviewFromServer = async (interviewId: string): Promise<ResumeInterviewResult> => {
+    const interviewResult = await getRealInterview(interviewId);
+    if (!interviewResult.ok) {
+      const reason = interviewResult.reason === "not_found" ? "not_found" : interviewResult.reason === "not_in_progress" ? "not_in_progress" : "error";
+      return { ok: false, reason, message: interviewResult.message };
+    }
+    if (interviewResult.data.status !== "IN_PROGRESS") {
+      return { ok: false, reason: "not_in_progress", message: "Esta entrevista não está mais em andamento." };
+    }
+    const questionsResult = await getRealQuestionsStateForResume(interviewId);
+    if (!questionsResult.ok) {
+      const reason = questionsResult.reason === "not_in_progress" ? "not_in_progress" : questionsResult.reason === "not_found" ? "not_found" : "error";
+      return { ok: false, reason, message: questionsResult.message };
+    }
+    const interview = interviewResult.data;
+    const plan = buildResumePlan({
+      interview: { id: interview.id, status: interview.status, evaluationMode: interview.evaluationMode },
+      questions: questionsResult.data.questions,
+      questionsInterviewStatus: questionsResult.data.interviewStatus,
+    });
+    if (!plan.ok) {
+      return { ok: false, reason: "not_in_progress", message: "Esta entrevista não está mais em andamento." };
+    }
+    // Mesma entrevista já aberta neste dispositivo, na etapa de perguntas: preserva a posição local.
+    const sameLocalInterview = interviewDraft.interviewId === interviewId && draftProgress.currentScreen === "interview";
+    const useLocalPosition = sameLocalInterview && plan.target.screen === "interview";
+    const nextProgress: InterviewDraftProgress = useLocalPosition
+      ? {
+        currentScreen: "interview",
+        currentQuestionIndex: Math.min(draftProgress.currentQuestionIndex, plan.questions.length - 1),
+        highestQuestionIndex: Math.max(draftProgress.highestQuestionIndex ?? 0, plan.target.highestQuestionIndex),
+      }
+      : {
+        currentScreen: plan.target.screen,
+        currentQuestionIndex: plan.target.currentQuestionIndex,
+        highestQuestionIndex: plan.target.highestQuestionIndex,
+      };
+    setInterviewDraft({
+      interviewId: plan.interviewId,
+      context: interview.context,
+      questions: plan.questions.map((question) => ({ id: question.id, type: question.type, text: question.text })),
+      answers: plan.answers,
+      evaluationMode: plan.evaluationMode,
+    });
+    setTerminalSession(null);
+    navigateToStoredDraftProgress(nextProgress);
+    return { ok: true };
+  };
+
   const discardSavedDraft = () => {
+    clearAnswerDraftsForInterview(candidateIdentity.id, interviewDraft.interviewId);
     clearStoredInterviewDraft(candidateIdentity.id);
     setInterviewDraft(createEmptyInterviewDraft());
     setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
+    setTerminalSession(null);
     setResumeDraftProgress(null);
     setResumePromptDismissed(true);
   };
 
+  // "Cancelar" na preparação: sem entrevista criada no servidor só há análise local a limpar;
+  // com entrevista já criada (IN_PROGRESS) o cancelamento é REAL, pelo mesmo modal.
   const cancelInterviewPreparation = () => {
+    if (interviewDraft.interviewId) {
+      openCancelInterview();
+      return;
+    }
     discardSavedDraft();
     routerNavigate(getPathForScreen("dashboard"));
   };
 
-  const cancelActiveInterviewDraft = () => {
-    discardSavedDraft();
+  const openCancelInterview = () => {
+    setCancelState({ busy: false, error: null });
+    setConfirmCancelInterview(true);
+  };
+
+  // CANCELAMENTO REAL: encerra a entrevista no servidor (todos os dispositivos). Só depois
+  // do sucesso para autosave/ditado, limpa o estado local e volta ao Dashboard (que relê as
+  // IN_PROGRESS). Falha/offline: nada local é apagado e o usuário pode tentar de novo.
+  const cancelActiveInterview = async () => {
+    if (cancelBusyRef.current) return;
+    cancelBusyRef.current = true;
+    setCancelState({ busy: true, error: null });
+    try {
+      const interviewId = interviewDraft.interviewId;
+      if (interviewId) {
+        const result = await cancelRealInterview(interviewId);
+        if (!result.ok) {
+          setCancelState({ busy: false, error: result.message });
+          return;
+        }
+      }
+      stopActivityRef.current?.();
+      discardSavedDraft();
+      setPendingNavigationScreen(null);
+      setPendingBrowserNavigation(false);
+      setConfirmCancelInterview(false);
+      setCancelState({ busy: false, error: null });
+      routerNavigate(getPathForScreen("dashboard"));
+    } finally {
+      cancelBusyRef.current = false;
+    }
+  };
+
+  // Entrevista enviada/encerrada em outro dispositivo: o estado local do wizard não tem mais
+  // o que retomar. Só acontece por clique em "Voltar ao Dashboard" (nunca em silêncio).
+  const leaveStaleInterview = () => {
+    completeCurrentDraft();
     setPendingNavigationScreen(null);
     setPendingBrowserNavigation(false);
     setConfirmCancelInterview(false);
-    routerNavigate(getPathForScreen("interview-history"));
+    routerNavigate(getPathForScreen("dashboard"));
   };
 
   const completeCurrentDraft = () => {
+    clearAnswerDraftsForInterview(candidateIdentity.id, interviewDraft.interviewId);
     clearStoredInterviewDraft(candidateIdentity.id);
     setInterviewDraft(createEmptyInterviewDraft());
     setDraftProgress(DEFAULT_INTERVIEW_DRAFT_PROGRESS);
     setResumeDraftProgress(null);
+    setTerminalSession(null);
     setResumePromptDismissed(true);
   };
+
+  // Saiu da sessão terminal (CANCELLED/enviada em outro dispositivo) sem usar o botão do aviso:
+  // o interviewId e o contexto da entrevista antiga não podem sobreviver a uma nova prática.
+  useEffect(() => {
+    if (!shouldDiscardTerminalDraft({ terminalStatus: terminalStatusForDraft, screen: currentInterviewDraftScreen })) return;
+    completeCurrentDraft();
+  }, [terminalStatusForDraft, currentInterviewDraftScreen]);
 
   useEffect(() => {
     const storedDraft = getStoredInterviewDraft(candidateIdentity.id);
@@ -6392,13 +7357,22 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
     if (shouldShowResumePrompt) return;
     if (!currentInterviewDraftScreen) return;
     setDraftProgress((current) => {
-      const currentQuestionIndex = currentInterviewDraftScreen === "interview"
-        ? getQuestionIndexFromSearchParam(new URLSearchParams(location.search).get("question"), interviewDraft.questions.length)
+      // Só vale `?question=` ao CHEGAR de outra tela (revisão/retomar). Se o progresso
+      // já estava na etapa de respostas (ex.: F5), a pergunta salva é preservada.
+      const questionParam = new URLSearchParams(location.search).get("question");
+      const currentQuestionIndex = currentInterviewDraftScreen === "interview" && current.currentScreen !== "interview"
+        ? getQuestionIndexFromSearchParam(questionParam, interviewDraft.questions.length)
         : current.currentQuestionIndex;
       if (current.currentScreen === currentInterviewDraftScreen && current.currentQuestionIndex === currentQuestionIndex) {
         return current;
       }
-      return { currentScreen: currentInterviewDraftScreen, currentQuestionIndex };
+      // "Alcançadas" valem para a Interview em andamento: voltam a zero ao reiniciar pela análise da vaga.
+      const highestQuestionIndex = currentInterviewDraftScreen === "interview-setup" ? undefined : current.highestQuestionIndex;
+      return {
+        currentScreen: currentInterviewDraftScreen,
+        currentQuestionIndex,
+        ...(highestQuestionIndex === undefined ? {} : { highestQuestionIndex }),
+      };
     });
   }, [currentInterviewDraftScreen, interviewDraft.questions.length, location.search, shouldShowResumePrompt]);
 
@@ -6410,13 +7384,8 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
 
   useEffect(() => {
     if (!shouldProtectInterviewExit) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    // Sessão terminal: shouldProtectInterviewExit vira false e o cleanup abaixo remove o listener.
+    return attachExitProtection(window, () => saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress));
   }, [candidateIdentity.id, draftProgress, interviewDraft, shouldProtectInterviewExit]);
 
   useEffect(() => {
@@ -6505,10 +7474,10 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
   const protect = (role: MockUserRole, children: ReactNode) => (
     <ProtectedRoute session={session} role={role}>{children}</ProtectedRoute>
   );
-  const evaluatorIdentity = getEvaluatorIdentity(session);
 
   return (
     <SessionContext.Provider value={session}>
+    <InterviewSessionTerminalContext.Provider value={reportInterviewTerminal}>
     <div className="flex flex-col min-h-screen">
       <Toaster position="top-center" richColors />
       <div className="flex-1 flex flex-col">
@@ -6524,39 +7493,41 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/reset-password" element={<ResetPasswordScreen onNavigate={navigate} />} />
 
           <Route path="/candidate/onboarding" element={protect("CANDIDATE", <CandidateOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("dashboard")} />)} />
-          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
+          <Route path="/candidate/dashboard" element={protect("CANDIDATE", <DashboardScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onResumeInterview={resumeInterviewFromServer} />)} />
           <Route path="/candidate/profile" element={protect("CANDIDATE", <ProfileScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/settings" element={protect("CANDIDATE", <SettingsScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/materials" element={protect("CANDIDATE", <MaterialsScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/materials/:materialId" element={protect("CANDIDATE", <MaterialDetailScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/notifications" element={protect("CANDIDATE", <NotificationsScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} session={session} activeDraftEntry={activeDraftEntry} onContinueDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} />)} />
+          <Route path="/candidate/interviews" element={protect("CANDIDATE", <InterviewHistoryScreen onNavigate={navigate} onResumeInterview={resumeInterviewFromServer} />)} />
           <Route path="/candidate/development" element={protect("CANDIDATE", <DevelopmentScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/disc" element={protect("CANDIDATE", <CandidateDiscTestScreen onNavigate={navigate} session={session} />)} />
           <Route path="/candidate/agenda" element={protect("CANDIDATE", <InterviewAgendaScreen onNavigate={navigate} session={session} />)} />
           {/* Todas as etapas da entrevista exigem perfil profissional completo (API). */}
           <Route element={protect("CANDIDATE", <InterviewProfileGuard onNavigate={navigate} />)}>
-          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onDiscardSavedDraft={discardSavedDraft} onCancelInterview={() => setConfirmCancelInterview(true)} onCancelPreparation={cancelInterviewPreparation} />)} />
+          <Route path="/candidate/interviews/new" element={protect("CANDIDATE", <InterviewSetupScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} session={session} onResumeInterview={resumeInterviewFromServer} savedDraftAvailable={shouldShowResumePrompt} onContinueSavedDraft={() => navigateToStoredDraftProgress(resumeDraftProgress ?? draftProgress)} onCancelInterview={openCancelInterview} onCancelPreparation={cancelInterviewPreparation} />)} />
           <Route path="/candidate/interviews/new/consent" element={protect("CANDIDATE", <ConsentScreen onNavigate={navigate} draft={interviewDraft} />)} />
           <Route path="/candidate/interviews/new/evaluation-mode" element={protect("CANDIDATE", <EvaluationModeScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} />)} />
           <Route path="/candidate/interviews/new/preparation" element={protect("CANDIDATE", <PrepScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} onQuestionIndexChange={(index) => setDraftProgress((current) => current.currentQuestionIndex === index ? current : { ...current, currentQuestionIndex: index })} />)} />
-          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} />)} />
-          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} />)} />
+          <Route path="/candidate/interviews/new/answers" element={protect("CANDIDATE", <InterviewScreen onNavigate={navigate} draft={interviewDraft} setDraft={setInterviewDraft} candidateId={candidateIdentity.id} restoredQuestionIndex={draftProgress.currentScreen === "interview" ? draftProgress.currentQuestionIndex : undefined} restoredHighestIndex={draftProgress.highestQuestionIndex} registerLeaveFlush={registerLeaveFlush} registerStopActivity={registerStopActivity} onStaleExit={leaveStaleInterview} onQuestionIndexChange={(index, highestReached) => setDraftProgress((current) => current.currentQuestionIndex === index && current.highestQuestionIndex === highestReached ? current : { ...current, currentQuestionIndex: index, highestQuestionIndex: highestReached })} />)} />
+          <Route path="/candidate/interviews/new/review" element={protect("CANDIDATE", <ReviewScreen onNavigate={navigate} draft={interviewDraft} onStaleExit={leaveStaleInterview} />)} />
+          <Route path="/candidate/interviews/new/submit" element={protect("CANDIDATE", <InterviewConfirmScreen onNavigate={navigate} draft={interviewDraft} session={session} onDraftCompleted={completeCurrentDraft} onStaleExit={leaveStaleInterview} />)} />
           </Route>
           <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
-          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} session={session} />)} />
-          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} onResumeInterview={resumeInterviewFromServer} />)} />
+          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} />)} />
 
           <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
           <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
-          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalScreenView onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalReviewScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalDoneScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
-          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} evaluatorId={evaluatorIdentity.id} />)} />
+          <Route path="/evaluator/dashboard" element={protect("EVALUATOR", <EvalDashboardScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations" element={protect("EVALUATOR", <EvalQueueScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/active" element={protect("EVALUATOR", <EvalActiveScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/interviews/:id" element={protect("EVALUATOR", <EvalInterviewDetailScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id" element={protect("EVALUATOR", <EvalDraftEvaluationScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/review" element={protect("EVALUATOR", <EvalRealReviewScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/evaluations/:id/success" element={protect("EVALUATOR", <EvalCompletionSuccessScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/history" element={protect("EVALUATOR", <EvalHistoryScreen onNavigate={navigate} />)} />
+          <Route path="/evaluator/history/:id" element={protect("EVALUATOR", <EvalHistoryDetailScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/criteria" element={protect("EVALUATOR", <EvalCriteriaScreen onNavigate={navigate} />)} />
           <Route path="/evaluator/settings" element={protect("EVALUATOR", <EvalSettingsScreen onNavigate={navigate} />)} />
 
@@ -6568,10 +7539,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <Route path="/admin/evaluators/new" element={protect("ADMIN", <AdminEvaluatorFormScreen onNavigate={navigate} />)} />
           <Route path="/admin/interviews" element={protect("ADMIN", <AdminInterviewsScreen onNavigate={navigate} />)} />
           <Route path="/admin/assignments" element={protect("ADMIN", <AdminAssignScreen onNavigate={navigate} />)} />
-          <Route path="/admin/questions" element={protect("ADMIN", <AdminQuestionsScreen onNavigate={navigate} />)} />
-          <Route path="/admin/questions/new" element={protect("ADMIN", <AdminQuestionFormScreen onNavigate={navigate} />)} />
           <Route path="/admin/roles" element={protect("ADMIN", <AdminRolesScreen onNavigate={navigate} />)} />
-          <Route path="/admin/criteria" element={protect("ADMIN", <AdminCriteriaScreen onNavigate={navigate} />)} />
           <Route path="/admin/consents" element={protect("ADMIN", <AdminConsentScreen onNavigate={navigate} />)} />
           <Route path="/admin/audit" element={protect("ADMIN", <AdminAuditScreen onNavigate={navigate} />)} />
           <Route path="/admin/settings" element={protect("ADMIN", <AdminSettingsScreen onNavigate={navigate} />)} />
@@ -6585,19 +7553,35 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           <ConfirmModal
             title={confirmCancelInterview ? "Cancelar entrevista?" : "Deseja sair da entrevista?"}
             message={confirmCancelInterview
-              ? "O progresso salvo desta entrevista será removido. Esta ação não poderá ser desfeita."
-              : "Você pode continuar depois com o progresso salvo ou cancelar esta entrevista e descartar o progresso atual."}
-            confirmLabel={confirmCancelInterview ? "Cancelar entrevista" : "Sair e continuar depois"}
+              ? "Esta entrevista será encerrada e não poderá mais ser continuada em nenhum dispositivo. Você poderá iniciar uma nova entrevista depois."
+              : "Você pode sair e continuar depois, neste ou em outro dispositivo, com o progresso salvo. Se preferir, cancele a entrevista."}
+            confirmLabel={confirmCancelInterview ? (cancelState.busy ? "Cancelando..." : "Cancelar entrevista") : leavingSaving ? "Salvando..." : "Sair e continuar depois"}
             cancelLabel={confirmCancelInterview ? "Voltar" : "Cancelar entrevista"}
             showCloseButton={!confirmCancelInterview}
             danger={confirmCancelInterview}
-            onConfirm={() => {
+            initialFocus={confirmCancelInterview ? "cancel" : "confirm"}
+            dismissOnBackdrop={!confirmCancelInterview}
+            onConfirm={async () => {
               if (confirmCancelInterview) {
-                cancelActiveInterviewDraft();
+                await cancelActiveInterview();
                 return;
               }
+              if (leavingRef.current) return;
+              leavingRef.current = true;
+              leaveAbortedRef.current = false;
+              setLeavingSaving(true);
+              // Proteção local PRIMEIRO (o texto nunca depende da rede) e, se houver conexão,
+              // tenta levar o rascunho pendente ao Back antes de sair. Erro/offline/lentidão
+              // não prendem a saída.
+              saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
+              try {
+                await flushBeforeLeaving(leaveFlushRef.current);
+              } finally {
+                leavingRef.current = false;
+                setLeavingSaving(false);
+              }
+              if (leaveAbortedRef.current) return;
               if (pendingBrowserNavigation) {
-                saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
                 setResumeDraftProgress(draftProgress);
                 setResumePromptDismissed(false);
                 setPendingBrowserNavigation(false);
@@ -6611,28 +7595,39 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
               }
               const target = pendingNavigationScreen;
               if (!target) return;
-              saveStoredInterviewDraft(candidateIdentity.id, interviewDraft, draftProgress);
               setResumeDraftProgress(draftProgress);
               setResumePromptDismissed(false);
               setPendingNavigationScreen(null);
               executeNavigation(target);
             }}
             onCancel={() => {
+              leaveAbortedRef.current = true;
               if (confirmCancelInterview) {
+                if (cancelBusyRef.current) return;
+                setCancelState({ busy: false, error: null });
                 setConfirmCancelInterview(false);
                 return;
               }
-              setConfirmCancelInterview(true);
+              openCancelInterview();
             }}
             onClose={() => {
+              if (cancelBusyRef.current) return;
+              leaveAbortedRef.current = true;
               setConfirmCancelInterview(false);
               setPendingNavigationScreen(null);
               setPendingBrowserNavigation(false);
             }}
-          />
+          >
+            {confirmCancelInterview && cancelState.error && (
+              <p role="alert" data-testid="cancel-interview-error" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {cancelState.error}
+              </p>
+            )}
+          </ConfirmModal>
         )}
       </div>
     </div>
+    </InterviewSessionTerminalContext.Provider>
     </SessionContext.Provider>
   );
 }

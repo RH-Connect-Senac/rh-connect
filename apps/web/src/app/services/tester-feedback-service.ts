@@ -1,3 +1,5 @@
+import { sanitizeServerMessage } from "../domain/user-friendly-error";
+
 type TesterFeedbackInput = {
   feature: string;
   bugFound: string;
@@ -11,18 +13,14 @@ const API_BASE_URL =
 
 async function readFeedbackApiError(response: Response, fallback: string): Promise<string> {
   try {
-    const payload = (await response.json()) as { message?: unknown; error?: unknown };
-    if (typeof payload.message === "string" && payload.message.trim()) {
-      return payload.message;
-    }
-    if (typeof payload.error === "string" && payload.error.trim()) {
-      return payload.error;
-    }
+    const payload = (await response.json()) as { message?: unknown };
+    const message = typeof payload.message === "string" ? payload.message : null;
+    return sanitizeServerMessage(message, { status: response.status, fallback, scope: "feedback" });
   } catch {
     // Keep fallback when the API does not return JSON.
   }
 
-  return fallback;
+  return sanitizeServerMessage(null, { status: response.status, fallback, scope: "feedback" });
 }
 
 export async function submitTesterFeedback(input: TesterFeedbackInput) {

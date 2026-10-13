@@ -9,6 +9,7 @@
  * Nenhum dado é lido ou gravado em localStorage.
  */
 
+import { FRIENDLY_ERROR_MESSAGES, sanitizeServerMessage } from "../domain/user-friendly-error";
 import type { ProfessionalProfile } from "../domain/professional-profile";
 import type { MockAccountStatus } from "./auth-service";
 import { parseProfessionalProfile } from "./candidate-profile-service";
@@ -175,7 +176,7 @@ function failureFromStatus(
     };
   }
 
-  return { ok: false, reason: "error", message: fallbackMessage };
+  return { ok: false, reason: "error", message: sanitizeServerMessage(null, { status, fallback: fallbackMessage, scope: "admin-candidates" }) };
 }
 
 export async function listAdminCandidates(): Promise<
@@ -210,7 +211,7 @@ export async function listAdminCandidates(): Promise<
     return {
       ok: false,
       reason: "error",
-      message: "Resposta inválida do servidor. Tente novamente.",
+      message: FRIENDLY_ERROR_MESSAGES.generic,
     };
   }
 
@@ -220,7 +221,7 @@ export async function listAdminCandidates(): Promise<
     return {
       ok: false,
       reason: "error",
-      message: "Resposta inválida do servidor. Tente novamente.",
+      message: FRIENDLY_ERROR_MESSAGES.generic,
     };
   }
 
@@ -271,7 +272,7 @@ export async function getAdminCandidate(
     return {
       ok: false,
       reason: "error",
-      message: "Resposta inválida do servidor. Tente novamente.",
+      message: FRIENDLY_ERROR_MESSAGES.generic,
     };
   }
 
@@ -318,7 +319,7 @@ export async function getAdminCandidateProfile(
     return {
       ok: false,
       reason: "error",
-      message: "Resposta inválida do servidor. Tente novamente.",
+      message: FRIENDLY_ERROR_MESSAGES.generic,
     };
   }
 

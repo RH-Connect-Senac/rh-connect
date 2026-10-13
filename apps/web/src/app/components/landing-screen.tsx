@@ -6,7 +6,9 @@ import {
 } from "lucide-react";
 import heroEntrevista from "../../assets/landing/hero-entrevista-3.webp";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import { LandingFaq } from "./landing-faq";
 import { LandingFooter } from "./landing-footer";
+import { LandingSectionBadge } from "./landing-section-badge";
 import { BackToTop } from "./ui/back-to-top";
 import { Button as UIButton } from "./ui/button";
 import { Card as UICard } from "./ui/card";
@@ -117,20 +119,20 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
             <RHConnectLogo className="h-8 sm:h-9 w-auto" />
           </button>
           {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-7">
-            <a href="#como-funciona" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Como funciona</a>
-            <a href="#beneficios" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Benefícios</a>
-            <a href="#para-quem" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Para quem é</a>
-            <a href="#sobre" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Sobre o projeto</a>
+          <nav className="hidden lg:flex items-center gap-7">
+            <a href="#como-funciona" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Como funciona</a>
+            <a href="#beneficios" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Benefícios</a>
+            <a href="#para-quem" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Para quem é</a>
+            <a href="#sobre" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Sobre o projeto</a>
           </nav>
           {/* Desktop CTAs */}
-          <div className="hidden md:flex items-center gap-2 sm:gap-3">
+          <div className="hidden lg:flex items-center gap-2 sm:gap-3">
             <Btn variant="outline" size="sm" onClick={() => onNavigate("auth")}>Entrar</Btn>
             <Btn variant="primary" size="sm" onClick={() => onNavigate("register")}>Criar conta</Btn>
           </div>
           {/* Mobile hamburger */}
           <button
-            className="md:hidden p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted transition-colors"
+            className="lg:hidden p-2 text-muted-foreground hover:text-foreground rounded-xl hover:bg-muted transition-colors"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -138,7 +140,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
         </div>
         {/* Mobile menu dropdown */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-border py-4 space-y-2">
+          <div className="lg:hidden border-t border-border py-4 space-y-2">
             {[
               { label: "Como funciona", href: "#como-funciona" },
               { label: "Benefícios", href: "#beneficios" },
@@ -159,8 +161,12 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </header>
 
       {/* ── Hero ── */}
-      <section className="relative isolate flex min-h-[calc(100svh-4rem)] items-center overflow-hidden bg-white px-4 py-14 sm:px-8 sm:py-20 lg:py-20">
-        <div className="absolute inset-0 -z-10">
+      {/* Mobile (< sm): imagem em faixa no topo + texto abaixo, em área branca
+          protegida (sem texto sobre o rosto). A partir de sm: texto à esquerda e
+          pessoa à direita, com a imagem deslocada à direita (sangra além da
+          borda, cortada pelo overflow-hidden) para o texto não tocar o rosto. */}
+      <section className="relative isolate flex flex-col overflow-hidden bg-white sm:min-h-[34rem] sm:flex-row sm:items-center sm:px-8 sm:py-16 lg:min-h-[min(calc(100svh-4rem),56rem)] lg:py-20">
+        <div className="relative h-64 w-full min-[430px]:h-72 sm:absolute sm:inset-y-0 sm:left-0 sm:-right-[22%] sm:-z-10 sm:h-auto md:-right-[12%] lg:right-0">
           <img
             src={heroEntrevista}
             alt=""
@@ -169,8 +175,8 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
             decoding="async"
             className="
         h-full w-full object-cover
-        object-[60%_center]
-        sm:object-[65%_center]
+        object-[88%_30%]
+        sm:object-[100%_center]
         lg:object-[62%_center]
       "
           />
@@ -178,19 +184,20 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           <div
             className="
         absolute inset-0
-        bg-[linear-gradient(180deg,_rgba(255,255,255,0.88)_0%,_rgba(255,255,255,0.80)_28%,_rgba(255,255,255,0.74)_52%,_rgba(255,255,255,0.56)_72%,_rgba(255,255,255,0.20)_100%)]
-        sm:bg-[linear-gradient(90deg,_rgba(255,255,255,0.96)_0%,_rgba(255,255,255,0.90)_30%,_rgba(239,246,255,0.72)_48%,_rgba(30,91,255,0.18)_62%,_rgba(0,0,0,0)_78%)]
+        bg-[linear-gradient(180deg,_rgba(255,255,255,0)_62%,_rgba(255,255,255,1)_100%)]
+        sm:bg-[linear-gradient(90deg,_rgba(255,255,255,0.97)_0%,_rgba(255,255,255,0.92)_40%,_rgba(255,255,255,0.55)_50%,_rgba(255,255,255,0)_60%)]
+        lg:bg-[linear-gradient(90deg,_rgba(255,255,255,0.96)_0%,_rgba(255,255,255,0.90)_30%,_rgba(239,246,255,0.72)_48%,_rgba(30,91,255,0.18)_62%,_rgba(0,0,0,0)_78%)]
       "
           />
         </div>
 
-        <div className="mx-auto w-full max-w-6xl">
-          <div className="max-w-[22rem] sm:max-w-xl">
-            <h1 className="mb-5 text-3xl font-extrabold leading-tight text-foreground sm:text-4xl lg:text-5xl">
+        <div className="mx-auto w-full max-w-6xl px-4 pb-10 pt-2 sm:px-0 sm:pb-0 sm:pt-0">
+          <div className="max-w-[26rem] sm:max-w-[19rem] md:max-w-[22rem] lg:max-w-[30rem] xl:max-w-xl">
+            <h1 className="mb-4 text-balance text-[1.75rem] font-extrabold leading-[1.15] tracking-tight text-foreground sm:mb-5 sm:text-[1.875rem] md:text-[2.125rem] lg:text-[2.75rem] lg:leading-tight lg:tracking-normal xl:text-5xl">
               Seu treinamento para conquistar a vaga dos seus sonhos
             </h1>
 
-            <p className="mb-8 max-w-lg text-base leading-relaxed text-slate-600 sm:text-lg">
+            <p className="mb-6 max-w-lg text-base leading-relaxed text-slate-600 sm:mb-8 lg:text-lg">
               Pratique entrevistas relacionadas ao seu objetivo profissional,
               desenvolva suas respostas e receba orientações para evoluir.
             </p>
@@ -210,7 +217,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
                 className="
             inline-flex w-full items-center justify-center gap-2
             rounded-xl
-            border border-white/70
+            border border-blue-200 lg:border-white/70
             bg-white/75
             px-6 py-3.5
             text-base font-semibold text-blue-700
@@ -230,13 +237,11 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       {/* ── Como funciona ── */}
       <section
         id="como-funciona"
-        className="bg-white px-4 py-16 sm:px-8 sm:py-24"
+        className="scroll-mt-16 bg-white px-4 py-16 sm:px-8 sm:py-24"
       >
         <div className="mx-auto max-w-6xl">
           <div className="mx-auto mb-12 max-w-3xl text-center sm:mb-14">
-            <p className="mb-3 text-sm font-bold uppercase tracking-[0.12em] text-blue-600">
-              Como funciona
-            </p>
+            <LandingSectionBadge>Como funciona</LandingSectionBadge>
 
             <h2 className="mx-auto mb-4 max-w-2xl text-2xl font-extrabold leading-tight text-foreground sm:text-3xl lg:text-4xl">
               Prepare-se para entrevistas em 4 etapas
@@ -288,10 +293,10 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Benefícios ── */}
-      <section id="beneficios" className="px-4 sm:px-8 py-14 sm:py-20 bg-slate-50/60">
+      <section id="beneficios" className="scroll-mt-16 px-4 sm:px-8 py-14 sm:py-20 bg-slate-50/60">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 sm:mb-12">
-            <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Benefícios</p>
+            <LandingSectionBadge>Benefícios</LandingSectionBadge>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground">Por que usar o RH Connect?</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -314,7 +319,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       <section className="px-4 sm:px-8 py-14 sm:py-20 bg-white">
         <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-12 items-center">
           <div>
-            <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Relatório de desempenho</p>
+            <LandingSectionBadge align="left">Relatório de desempenho</LandingSectionBadge>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground mb-4">
               Transforme cada entrevista em aprendizado
             </h2>
@@ -404,10 +409,10 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Para quem é ── */}
-      <section id="para-quem" className="px-4 sm:px-8 py-14 sm:py-20 bg-background">
+      <section id="para-quem" className="scroll-mt-16 px-4 sm:px-8 py-14 sm:py-20 bg-background">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 sm:mb-12">
-            <p className="text-blue-600 text-sm font-bold uppercase tracking-wider mb-3">Para quem é</p>
+            <LandingSectionBadge>Para quem é</LandingSectionBadge>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground">O RH Connect é para você</h2>
             <p className="text-muted-foreground mt-3 max-w-lg mx-auto text-sm sm:text-base">
               Seja qual for o momento da sua carreira, a plataforma se adapta ao seu objetivo.
@@ -429,6 +434,9 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
         </div>
       </section>
 
+      {/* ── FAQ ── */}
+      <LandingFaq onNavigate={onNavigate} />
+
       {/* ── CTA central ── */}
       <section className="px-4 sm:px-8 py-12 sm:py-16" style={{ background: "linear-gradient(135deg, #0F2652 0%, #1D4ED8 100%)" }}>
         <div className="max-w-2xl mx-auto text-center">
@@ -443,7 +451,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
       </section>
 
       {/* ── Sobre o projeto ── */}
-      <section id="sobre" className="px-4 sm:px-8 py-12 sm:py-16 bg-white">
+      <section id="sobre" className="scroll-mt-16 px-4 sm:px-8 py-12 sm:py-16 bg-white">
         <div className="max-w-6xl mx-auto">
           <div className="p-5 sm:p-8 bg-slate-50 rounded-2xl border border-border">
             <div className="mx-auto max-w-3xl text-center">

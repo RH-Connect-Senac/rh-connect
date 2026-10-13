@@ -5,6 +5,7 @@ import {
   HttpException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ const DEFAULT_TIMEOUT_MS = 20000;
 
 @Injectable()
 export class InterviewsAiService {
+  private readonly logger = new Logger(InterviewsAiService.name);
   private readonly serviceUrl: string;
   private readonly timeoutMs: number;
 
@@ -60,13 +62,17 @@ export class InterviewsAiService {
       }
 
       if (error instanceof Error && error.name === 'AbortError') {
+        this.logger.error(`Timeout ao acessar o serviço de IA (${path})`);
         throw new GatewayTimeoutException(
-          'Tempo esgotado ao acessar o serviço de entrevista por IA.',
+          'A operação está demorando mais que o esperado. Tente novamente.',
         );
       }
 
+      this.logger.error(
+        `Serviço de IA indisponível (${path}): ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new ServiceUnavailableException(
-        'Serviço de entrevista por IA indisponível.',
+        'O serviço está temporariamente indisponível. Tente novamente em alguns instantes.',
       );
     } finally {
       clearTimeout(timeout);
@@ -82,8 +88,25 @@ export class InterviewsAiService {
   }
 
   private mapPythonError(status: number, body: unknown) {
-    const message =
-      this.extractErrorMessage(body) || 'Erro no serviço de entrevista por IA.';
+    const detail = this.extractErrorMessage(body);
+    const message = detail || 'Não foi possível concluir esta ação agora.';
+
+    // Falha do serviço de IA/provider: o detalhe técnico fica no log; o cliente recebe
+    // uma mensagem de produto (o status HTTP continua o mesmo).
+    if (status >= 500) {
+      this.logger.error(`Serviço de IA respondeu ${status}: ${detail ?? '(sem corpo)'}`);
+      return status === 504
+        ? new GatewayTimeoutException(
+            'A operação está demorando mais que o esperado. Tente novamente.',
+          )
+        : status === 502
+          ? new BadGatewayException(
+              'Não foi possível gerar as perguntas agora. Tente novamente em instantes.',
+            )
+          : new BadGatewayException(
+              'Não conseguimos concluir esta ação no momento. Tente novamente.',
+            );
+    }
 
     switch (status) {
       case 400:

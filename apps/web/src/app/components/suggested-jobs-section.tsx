@@ -12,10 +12,9 @@ import {
 } from "../domain/suggested-jobs";
 import { copyTextToClipboard } from "../services/clipboard";
 
-// Atalho temporário de apresentação: o fluxo único é escolher a área, escolher
-// uma das vagas, copiar o link e colar MANUALMENTE no campo "URL da vaga" acima.
-// Esta seção nunca preenche o campo nem toca no fluxo de análise/confirmação/
-// continuação da tela.
+// Atalho temporário de apresentação: escolher a área, escolher uma das vagas e
+// copiar o link. Ao copiar, a tela avisa `onLinkCopied(url)` (prefill de UX e aviso
+// junto ao campo de URL); esta seção NUNCA faz requisição nem toca no fluxo de análise.
 
 const FEEDBACK_MS = 5000;
 
@@ -28,7 +27,7 @@ const AREA_ICONS: Record<SuggestedJobArea, typeof Laptop> = {
 
 type CopyFeedback = { jobId: string; status: "copied" | "error" };
 
-export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => void }) {
+export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: (url: string) => void }) {
   const [selectedArea, setSelectedArea] = useState<SuggestedJobArea>(DEFAULT_SUGGESTED_JOB_AREA);
   const [feedback, setFeedback] = useState<CopyFeedback | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -62,7 +61,7 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
     setFeedback({ jobId: job.id, status: copied ? "copied" : "error" });
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => setFeedback(null), FEEDBACK_MS);
-    if (copied) onLinkCopied?.();
+    if (copied) onLinkCopied?.(job.url);
   };
 
   return (
@@ -72,8 +71,8 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
         <div className="min-w-0">
           <p className="text-sm font-semibold text-blue-900">Vagas sugeridas da Empregare</p>
           <p className="mt-1 text-sm leading-relaxed text-blue-900/80">
-            Para facilitar sua escolha, selecionamos algumas vagas da Empregare. Escolha uma opção, copie o link e
-            cole no campo acima.
+            Para facilitar sua escolha, selecione uma vaga abaixo. Ao copiar o link, ele será preenchido
+            automaticamente no campo acima.
           </p>
         </div>
       </div>
@@ -91,7 +90,7 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
               Escolha uma vaga sugerida
             </h3>
             <p className="text-sm text-muted-foreground">
-              Selecione uma área, copie o link de uma das vagas e cole no campo acima.
+              Selecione uma área e escolha uma das vagas para preencher o link automaticamente.
             </p>
           </div>
         </div>
@@ -177,11 +176,6 @@ export function SuggestedJobsSection({ onLinkCopied }: { onLinkCopied?: () => vo
         </div>
 
         <div role="status" aria-live="polite">
-          {feedback?.status === "copied" && (
-            <p className="mt-4 text-sm font-medium text-blue-700">
-              Link copiado. Agora cole no campo acima e toque em Analisar.
-            </p>
-          )}
           {failedJob && (
             <div className="mt-4 flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />

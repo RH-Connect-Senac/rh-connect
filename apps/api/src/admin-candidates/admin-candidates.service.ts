@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CandidateProfileService } from '../candidate-profile/candidate-profile.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CANDIDATE_USER_WHERE } from './candidate-rules';
 
 // Limite de segurança da listagem. A tela do Admin filtra no Front; quando a
 // base crescer, a paginação entra aqui sem mudar o contrato de cada item.
@@ -59,7 +60,7 @@ export class AdminCandidatesService {
   ) {}
 
   async list() {
-    const where: Prisma.app_userWhereInput = { user_role: 'CANDIDATE' };
+    const where: Prisma.app_userWhereInput = { ...CANDIDATE_USER_WHERE };
 
     const [records, total] = await Promise.all([
       this.prisma.app_user.findMany({

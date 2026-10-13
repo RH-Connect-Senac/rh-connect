@@ -6,5 +6,6 @@ import { InterviewsAiService } from './interviews-ai.service';
 @Module({
   controllers: [InterviewsAiController],
   providers: [InterviewsAiService],
+  exports: [InterviewsAiService],
 })
 export class InterviewsAiModule {}
