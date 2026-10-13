@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { navigateToLegalPage } from "./landing-footer";
+import { LandingSectionBadge } from "./landing-section-badge";
 import { ROUTER_BASENAME, getPathForScreen } from "../router/routes";
 
 /** Texto do link para a página legal dentro da resposta sobre dados. */
@@ -84,7 +85,7 @@ export function LandingFaq({ onNavigate }: { onNavigate: (screen: "privacy") => 
     <section id="faq" aria-labelledby="faq-title" className="scroll-mt-16 bg-white px-4 py-14 sm:px-8 sm:py-20">
       <div className="mx-auto max-w-6xl">
         <div className="mx-auto mb-10 max-w-2xl text-center sm:mb-12">
-          <p className="mb-3 text-sm font-bold uppercase tracking-wider text-blue-600">Perguntas frequentes</p>
+          <LandingSectionBadge>Perguntas frequentes</LandingSectionBadge>
           <h2 id="faq-title" className="text-2xl font-extrabold text-foreground sm:text-3xl">
             Ficou com alguma dúvida?
           </h2>
