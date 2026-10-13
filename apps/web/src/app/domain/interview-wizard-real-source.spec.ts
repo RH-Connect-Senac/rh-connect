@@ -314,7 +314,8 @@ describe("retomada pelo Dashboard (código-fonte)", () => {
   it("Dashboard consulta a lista do Back e usa a reconciliação por interviewId", () => {
     expect(app).toContain("useInProgressInterviews()");
     expect(app).toContain("mergeInProgressEntries(");
-    expect(app).toContain("Entrevista em andamento");
+    // 6A.5: o card principal ("Entrevista em andamento") vem do gate; a lista recente vem de GET /interviews.
+    expect(read("domain/interview-resume.ts")).toContain("Entrevista em andamento");
     expect(app).toContain("Continuar entrevista");
   });
 
@@ -387,13 +388,18 @@ describe("uma IN_PROGRESS por candidato (V1) no frontend", () => {
     expect(app).not.toMatch(/useEffect\(\(\) => \{[^}]{0,200}continueExistingFromSetup/);
   });
 
-  it("card 'Nova entrevista' tem altura natural: a grade alinha ao topo e o card não usa h-full", () => {
+  it("card 'Nova entrevista' acompanha a altura da coluna ao lado, sem altura fixa (6A.5)", () => {
     const grid = block('<div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6', "{/* Entrevistas recentes */}");
-    expect(grid).toContain("items-start");
+    // a grade estica as colunas; o card cresce (flex-1) e distribui o conteúdo (topo/CTA no fim)
+    expect(grid).toContain("items-stretch");
+    expect(grid).not.toContain("items-start");
     expect(grid).toContain('data-testid="new-interview-card"');
-    expect(grid).toContain("self-start");
-    expect(grid).not.toMatch(/h-full flex flex-col justify-between/);
-    expect(grid).not.toMatch(/style=\{\{[^}]*height/);
+    expect(grid).toContain('className="flex flex-col" data-testid="new-interview-card"');
+    expect(grid).toContain("flex-1 rounded-2xl");
+    expect(grid).toContain("flex flex-col justify-between");
+    // sem altura rígida (quebraria em telas menores)
+    expect(grid).not.toMatch(/style=\{\{[^}]*(?:height|minHeight)/);
+    expect(grid).not.toMatch(/\b(?:h|min-h)-\[\d+px\]|\bmin-h-\d+/);
   });
 
   it("status do autosave do candidato usa a mesma semântica de cor do avaliador", () => {

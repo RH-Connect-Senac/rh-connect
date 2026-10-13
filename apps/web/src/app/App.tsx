@@ -197,6 +197,15 @@ import { useInterviewSyncPolling } from "./hooks/use-interview-sync-polling";
 import { InterviewSessionTerminalContext } from "./hooks/interview-session-terminal";
 import { useInterviewSessionGuard } from "./hooks/use-interview-session-guard";
 import { useInProgressInterviews } from "./hooks/use-in-progress-interviews";
+import { useCandidateInterviewHistory } from "./hooks/use-candidate-interview-history";
+import {
+  DASHBOARD_RECENT_EMPTY,
+  buildDashboardRecent,
+  buildDashboardSummary,
+  dashboardActionPath,
+  describeDashboardInterviewsFailure,
+  formatDashboardScore,
+} from "./domain/candidate-dashboard-view";
 import { useDashboardInterviewsSync } from "./hooks/use-dashboard-interviews-sync";
 import {
   CONFIRM_MODAL_DANGER_FOCUS_RING,
@@ -209,7 +218,6 @@ import {
 import {
   NEW_INTERVIEW_BLOCKED_MESSAGE,
   buildResumePlan,
-  formatInProgressProgress,
   mergeInProgressEntries,
   resolveNewInterviewGate,
   resolveDashboardInterviewAccess,
@@ -244,14 +252,6 @@ import {
   type ExternalResourceSource,
 } from "./services/external-resources-service";
 import { advanceDevelopmentFromMaterial } from "./services/development-service";
-import {
-  getAvailableCandidateReports,
-  getAverageScore,
-  getCandidateInterviews,
-  getEvaluationByInterviewId,
-  getReportByInterviewId,
-  statusLabelFromInterview,
-} from "./services/interviews-service";
 import {
   clearRememberedLoginEmail,
   getRememberedLoginEmail,
@@ -1201,6 +1201,9 @@ function DashboardScreen({
   const routerNavigate = useNavigate();
   const inProgress = useInProgressInterviews();
   const reloadInProgress = inProgress.reload;
+  // Entrevistas reais (GET /interviews): métricas e "Entrevistas recentes". CANCELLED fica fora (6A.4/6A.5).
+  const interviewsHistory = useCandidateInterviewHistory();
+  const reloadInterviewsHistory = interviewsHistory.reload;
   // Dashboard reativo entre dispositivos (focus/visible/online + polling de 15 s), só enquanto montado.
   useDashboardInterviewsSync(inProgress.refresh);
   const [resumingId, setResumingId] = useState<string | null>(null);
@@ -1214,7 +1217,10 @@ function DashboardScreen({
     if (result.ok) return;
     setResumeMessage(result.message);
     // Enviada/encerrada entre a listagem e o clique: atualiza a lista do Dashboard.
-    if (result.reason === "not_in_progress" || result.reason === "not_found") void reloadInProgress();
+    if (result.reason === "not_in_progress" || result.reason === "not_found") {
+      void reloadInProgress();
+      void reloadInterviewsHistory();
+    }
   };
   const candidateUser = session.user;
   const candidateIdentity = getCandidateIdentity(session);
@@ -1223,26 +1229,9 @@ function DashboardScreen({
   const firstName = (candidateUser?.name ?? CANDIDATE_ACCOUNT.name).trim().split(/\s+/)[0] ?? "candidato";
   const { status: profileStatus, profile: candidateProfile, reload: reloadProfile } = useCandidateProfile();
   const profileCompleteness = candidateProfile ? getProfileCompletionPercent(candidateProfile) : 0;
-  const candidateInterviews = getCandidateInterviews(candidateId);
-  const availableReports = getAvailableCandidateReports(candidateId);
-  const pendingCount = candidateInterviews.filter((item) => item.status !== "EVALUATED").length;
-  const bestScore = availableReports
-    .map((item) => getAverageScore(item.evaluation?.scores))
-    .filter((score): score is number => score !== null)
-    .sort((a, b) => b - a)[0];
-  type RecentInterviewItem = {
-    vaga: string;
-    empresa: string;
-    data: string;
-    status: string;
-    badge: "success" | "warning" | "default" | "info";
-    interviewId?: string;
-    draft?: boolean;
-    /** Entrevista IN_PROGRESS vinda do Back (retomada entre dispositivos). */
-    resumeId?: string;
-    progress?: string;
-    evaluationMode?: EvaluationMode | null;
-  };
+  const historyReady = interviewsHistory.state.status === "ready" ? interviewsHistory.state.history.interviews : null;
+  const dashboardSummary = historyReady ? buildDashboardSummary(historyReady) : null;
+  const recentItems = historyReady ? buildDashboardRecent(historyReady) : [];
   // Back autoritativo (por interviewId, sem duplicar); o rascunho local só aparece
   // como fallback enquanto a lista carrega/falha.
   const inProgressEntries = mergeInProgressEntries({
@@ -1268,46 +1257,6 @@ function DashboardScreen({
     onNavigate("interview-setup");
   };
   const openInterviewAccess = interviewAccess.action === "continue" ? continueExistingInterview : startNewInterview;
-  const activeDraftRecentItem: RecentInterviewItem[] = inProgressEntries.flatMap((entry): RecentInterviewItem[] => {
-    if (entry.source === "server") {
-      return [{
-        vaga: entry.item.title,
-        empresa: entry.item.company ?? "",
-        data: formatInterviewDateTime(entry.item.latestDraftUpdatedAt ?? entry.item.createdAt),
-        status: "Entrevista em andamento",
-        badge: "info",
-        resumeId: entry.item.id,
-        progress: formatInProgressProgress(entry.item),
-        evaluationMode: entry.item.evaluationMode,
-      }];
-    }
-    if (!activeDraftEntry?.draft.context) return [];
-    return [{
-      vaga: activeDraftEntry.draft.context.title,
-      empresa: activeDraftEntry.draft.context.company,
-      data: formatInterviewDateTime(activeDraftEntry.updatedAt),
-      status: "Em andamento",
-      badge: "info",
-      draft: true,
-      evaluationMode: activeDraftEntry.draft.evaluationMode,
-    }];
-  });
-  const recentItems: RecentInterviewItem[] = [
-    ...activeDraftRecentItem,
-    ...candidateInterviews.slice(0, 3).map((interview) => {
-      const report = getReportByInterviewId(interview.id);
-      const interviewTimestamp = interview.submittedAt ?? interview.createdAt;
-      return {
-        vaga: interview.context.title,
-        empresa: interview.context.company,
-        data: formatInterviewDateTime(interviewTimestamp),
-        status: report?.status === "AVAILABLE" ? "Resultado disponível" : statusLabelFromInterview(interview.status),
-        badge: report?.status === "AVAILABLE" ? "success" as const : interview.status === "PENDING_EVALUATION" ? "warning" as const : "info" as const,
-        interviewId: interview.id,
-        evaluationMode: interview.evaluationMode,
-      };
-    }),
-  ].slice(0, Math.max(3, activeDraftRecentItem.length));
 
   return (
     <AuthLayout current="dashboard" onNavigate={onNavigate} title="Dashboard" subtitle={`Bem-vindo de volta, ${firstName}!`} account={account}>
@@ -1351,10 +1300,10 @@ function DashboardScreen({
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-        <StatCard value={candidateInterviews.length} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
-        <StatCard value={pendingCount} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
-        <StatCard value={availableReports.length} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
-        <StatCard value={bestScore ? bestScore.toFixed(1).replace(".", ",") : "—"} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
+        <StatCard value={dashboardSummary ? dashboardSummary.total : "—"} label="Entrevistas realizadas" icon={MessageSquare} color="bg-blue-50 text-blue-600" />
+        <StatCard value={dashboardSummary ? dashboardSummary.waiting : "—"} label="Aguardando avaliação"   icon={Clock}       color="bg-amber-50 text-amber-600" />
+        <StatCard value={dashboardSummary ? dashboardSummary.resultsAvailable : "—"} label="Resultado disponível"   icon={CheckCircle} color="bg-green-50 text-green-600" />
+        <StatCard value={formatDashboardScore(dashboardSummary ? dashboardSummary.bestScore : null)} label="Melhor pontuação"       icon={Award}       color="bg-purple-50 text-purple-600" />
       </div>
 
       {/* Agenda (entrevistas reais/externas) — não confundir com "Entrevistas recentes" (simuladas) */}
@@ -1364,10 +1313,10 @@ function DashboardScreen({
         onAddInterview={() => routerNavigate(`${getPathForScreen("agenda")}?new=1`)}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6 items-start">
-        {/* CTA principal (altura natural: não acompanha a lista de entrevistas ao lado) */}
-        <div className="self-start" data-testid="new-interview-card">
-          <div className="rounded-2xl p-5 sm:p-6 text-white flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6 items-stretch">
+        {/* CTA principal (acompanha a altura da coluna "Entrevistas recentes" no desktop; no mobile fica na altura natural) */}
+        <div className="flex flex-col" data-testid="new-interview-card">
+          <div className="flex-1 rounded-2xl p-5 sm:p-6 text-white flex flex-col justify-between" style={{ background: "linear-gradient(135deg, #1D4ED8, #0F2652)" }}>
             <div>
               <div className="w-10 h-10 bg-white/15 rounded-xl flex items-center justify-center mb-4">
                 <MessageSquare className="w-5 h-5 text-white" />
@@ -1394,33 +1343,53 @@ function DashboardScreen({
               {resumeMessage && (
                 <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{resumeMessage}</div>
               )}
-              {recentItems.length ? (
+              {interviewsHistory.state.status === "loading" ? (
+                <div className="py-8 text-center">
+                  <Spinner size="md" />
+                  <p className="text-xs text-muted-foreground mt-2">Carregando suas entrevistas...</p>
+                </div>
+              ) : interviewsHistory.state.status === "error" ? (
+                (() => {
+                  const failure = describeDashboardInterviewsFailure(interviewsHistory.state.reason, interviewsHistory.state.message);
+                  return (
+                    <EmptyState
+                      icon={AlertCircle}
+                      title={failure.title}
+                      description={failure.description}
+                      className="border-none bg-muted/40 p-6"
+                      action={failure.canRetry ? <Btn size="sm" variant="outline" onClick={() => void reloadInterviewsHistory()}>Tentar novamente</Btn> : undefined}
+                    />
+                  );
+                })()
+              ) : recentItems.length ? (
                 recentItems.map((item) => (
-                  <div key={item.resumeId ? `in-progress-${item.resumeId}` : item.interviewId ?? `${item.vaga}-${item.data}`} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
+                  <div key={item.id} className="p-3 sm:p-4 bg-muted/50 rounded-xl hover:bg-muted transition-colors">
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center border border-border shrink-0 mt-0.5">
                         <Briefcase className="w-4 h-4 text-muted-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{item.vaga}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{item.empresa} · {item.data}</p>
-                        {item.progress && <p className="text-xs text-muted-foreground mt-0.5">{item.progress}</p>}
+                        <p className="text-sm font-semibold text-foreground truncate">{item.title}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{[item.company, item.dateText].filter(Boolean).join(" · ")}</p>
                         <div className="flex flex-wrap items-center gap-2 mt-2">
                           <EvaluationModeBadge mode={item.evaluationMode} />
-                          <StatusBadge tone={statusToneFromBadge(item.badge)}><span className="truncate max-w-[140px] sm:max-w-none">{item.status}</span></StatusBadge>
-                          {item.badge === "success" && (
-                            <Btn size="sm" variant="primary" onClick={() => item.interviewId ? routerNavigate(`/candidate/reports/${item.interviewId}`) : onNavigate("report")}>
-                              Ver relatório
-                            </Btn>
-                          )}
-                          {item.draft && (
-                            <Btn size="sm" variant="primary" onClick={onContinueDraft}>
-                              Continuar entrevista
-                            </Btn>
-                          )}
-                          {item.resumeId && (
-                            <Btn size="sm" variant="primary" disabled={resumingId !== null} onClick={() => void resumeInterview(item.resumeId as string)}>
-                              {resumingId === item.resumeId ? "Carregando..." : "Continuar entrevista"}
+                          <StatusBadge tone={item.tone}><span className="truncate max-w-[140px] sm:max-w-none">{item.statusLabel}</span></StatusBadge>
+                          {item.action && (
+                            <Btn
+                              size="sm"
+                              variant={item.action.kind === "track" ? "outline" : "primary"}
+                              disabled={item.action.kind === "resume" && resumingId !== null}
+                              onClick={() => {
+                                if (!item.action) return;
+                                if (item.action.kind === "resume") {
+                                  void resumeInterview(item.id);
+                                  return;
+                                }
+                                const path = dashboardActionPath(item.action, item.id);
+                                if (path) routerNavigate(path);
+                              }}
+                            >
+                              {item.action.kind === "resume" && resumingId === item.id ? "Carregando..." : item.action.label}
                             </Btn>
                           )}
                         </div>
@@ -1431,8 +1400,8 @@ function DashboardScreen({
               ) : (
                 <EmptyState
                   icon={MessageSquare}
-                  title="Nenhuma entrevista enviada ainda"
-                  description="Quando você concluir uma entrevista, ela aparecerá aqui com o status da avaliação."
+                  title={DASHBOARD_RECENT_EMPTY.title}
+                  description={DASHBOARD_RECENT_EMPTY.description}
                   className="border-none bg-muted/40 p-6"
                 />
               )}
