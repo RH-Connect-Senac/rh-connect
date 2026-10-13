@@ -198,3 +198,27 @@ describe("rótulos", () => {
     expect(formatQuestionType("OUTRO")).toBe("Pergunta");
   });
 });
+
+describe("fila: microanimação de item novo", () => {
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  const html = (newIds?: ReadonlySet<string>) =>
+    renderToStaticMarkup(
+      createElement(EvaluatorQueueContent, {
+        state: { status: "ready", items: [item, { ...item, id: OTHER }] },
+        onEvaluate: noop,
+        newIds,
+      }),
+    );
+  const count = (h: string) => (h.match(/motion-safe:animate-in/g) ?? []).length;
+
+  it("sem newIds ninguém anima", () => {
+    expect(count(html())).toBe(0);
+    expect(count(html(new Set()))).toBe(0);
+  });
+
+  it("anima somente o card marcado e mantém o conteúdo", () => {
+    const h = html(new Set([OTHER]));
+    expect(count(h)).toBe(1);
+    expect(h).toContain("Avaliar");
+  });
+});

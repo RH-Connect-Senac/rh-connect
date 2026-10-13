@@ -96,6 +96,7 @@ import {
 import { Card as UICard } from "./components/ui/card";
 import { Badge as UIBadge } from "./components/ui/badge";
 import { StatusBadge } from "./components/ui/status-badge";
+import { Switch } from "./components/ui/switch";
 import { Alert } from "./components/ui/alert";
 import { FilterChip } from "./components/ui/filter-chip";
 import { EmptyState } from "./components/ui/empty-state";
@@ -5311,22 +5312,23 @@ function InterviewDoneScreen({ onNavigate }: { onNavigate: (s: Screen) => void }
 
           {/* Protocolo */}
           <div className="bg-muted rounded-xl p-4 mb-6 text-left">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
+            {/* Mobile: uma coluna (nada espremido); a partir de sm volta às duas colunas. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Protocolo</p>
-                <p className="text-sm font-bold text-foreground">{interview.id}</p>
+                <p className="text-sm font-bold text-foreground break-words">{interview.id}</p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Vaga</p>
-                <p className="text-sm font-semibold text-foreground">{interview.title}</p>
+                <p className="text-sm font-semibold text-foreground break-words">{interview.title}</p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Enviado em</p>
                 <p className="text-sm font-semibold text-foreground">{interview.submittedAt ? new Date(interview.submittedAt).toLocaleString("pt-BR") : "—"}</p>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground">Status</p>
-                <StatusBadge tone="warning">{interview.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
+                <StatusBadge tone="warning" className="w-fit max-w-full whitespace-normal">{interview.evaluationMode === "AI" ? "Aguardando avaliação por IA" : "Aguardando avaliação"}</StatusBadge>
               </div>
             </div>
           </div>
@@ -5613,17 +5615,8 @@ const Download = ({ className }: { className?: string }) => (
 
 type SettingsTab = "conta" | "senha" | "notif" | "privacidade" | "consentimentos" | "dados" | "excluir";
 
-function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      role="switch"
-      aria-checked={on}
-      className={`w-11 h-6 rounded-full relative transition-colors shrink-0 ${on ? "bg-primary" : "bg-slate-200"}`}
-    >
-      <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow ${on ? "right-1" : "left-1"}`} />
-    </button>
-  );
+function Toggle({ on, onToggle, label }: { on: boolean; onToggle: () => void; label?: string }) {
+  return <Switch checked={on} onCheckedChange={() => onToggle()} aria-label={label} />;
 }
 
 function ConfirmModal({
@@ -5858,7 +5851,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                         <p className="text-sm font-semibold text-foreground">{n.label}</p>
                         <p className="text-xs text-muted-foreground">{n.desc}</p>
                       </div>
-                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} />
+                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} label={n.label} />
                     </div>
                   ))}
                 </div>
@@ -5875,7 +5868,7 @@ function SettingsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => vo
                         <p className="text-sm font-semibold text-foreground">{n.label}</p>
                         <p className="text-xs text-muted-foreground">{n.desc}</p>
                       </div>
-                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} />
+                      <Toggle on={notifs[n.key]} onToggle={() => setNotifs(p => ({ ...p, [n.key]: !p[n.key] }))} label={n.label} />
                     </div>
                   ))}
                 </div>

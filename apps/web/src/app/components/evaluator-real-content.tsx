@@ -11,6 +11,7 @@ import { AlertCircle, ArrowLeft, Clock, Layers, MessageSquare } from "lucide-rea
 import { Alert } from "./ui/alert";
 import { EmptyState } from "./ui/empty-state";
 import { Spinner } from "./ui/spinner";
+import { NEW_ITEM_ENTER_CLASS } from "../domain/new-item-tracker";
 import type {
   EvaluatorCandidate,
   EvaluatorInterviewDetail,
@@ -104,11 +105,14 @@ export function EvaluatorQueueContent({
   state,
   onEvaluate,
   onRetry,
+  newIds,
 }: {
   state: EvaluatorQueueState;
   // Única ação da fila: abre a tela de avaliação com o UUID real.
   onEvaluate: (interviewId: string) => void;
   onRetry?: () => void;
+  // Ids que acabaram de chegar por sincronização (microanimação de entrada).
+  newIds?: ReadonlySet<string>;
 }) {
   if (state.status === "loading") {
     return <LoadingBlock label="Carregando entrevistas..." />;
@@ -130,7 +134,10 @@ export function EvaluatorQueueContent({
   return (
     <ul className="space-y-3" aria-label="Entrevistas atribuídas">
       {state.items.map((item) => (
-        <li key={item.id} className={`${CARD_CLASS} p-4 sm:p-5`}>
+        <li
+          key={item.id}
+          className={`${CARD_CLASS} p-4 sm:p-5${newIds?.has(item.id) ? ` ${NEW_ITEM_ENTER_CLASS}` : ""}`}
+        >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
             <div className="min-w-0 flex-1">
               <p className="font-bold text-foreground">{item.candidate.name}</p>

@@ -6,7 +6,7 @@
  * localStorage ou fallback para outro avaliador é usado aqui.
  */
 
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { Layers } from "lucide-react";
 import { SessionContext } from "../session-context";
@@ -36,6 +36,14 @@ import {
 import { SavedNotice, visibleSyncStatus } from "../domain/evaluator-save-notice";
 import { partitionQueue } from "../domain/evaluator-queue-partition";
 import {
+  EVALUATOR_HISTORY_SYNC_INTERVAL_MS,
+  EVALUATOR_HISTORY_SYNC_MAX_BACKOFF_MS,
+  EVALUATOR_QUEUE_SYNC_INTERVAL_MS,
+  EVALUATOR_QUEUE_SYNC_MAX_BACKOFF_MS,
+} from "../domain/evaluator-list-sync";
+import { useEvaluatorListSync } from "../hooks/use-evaluator-list-sync";
+import { EMPTY_NEW_IDS, NewItemTracker } from "../domain/new-item-tracker";
+import {
   EvaluatorDetailContent,
   EvaluatorQueueContent,
   formatDateTimePtBr,
@@ -43,12 +51,12 @@ import {
   type EvaluatorQueueState,
 } from "./evaluator-real-content";
 import { EvaluatorActiveContent } from "./evaluator-active-content";
+import { EvaluatorContinueSection } from "./evaluator-continue-section";
 import {
   EvaluatorHistoryContent,
   EvaluatorHistoryDetailContent,
   HISTORY_SUBTITLE,
   type EvaluatorHistoryDetailState,
-  type EvaluatorHistoryState,
 } from "./evaluator-history-content";
 import {
   EvaluatorEvaluationContent,
@@ -85,35 +93,24 @@ const EVALUATION_ROUTE = "/evaluator/evaluations";
 // FONTE ÚNICA da fila real (Dashboard, Fila e Em Andamento): UMA consulta a
 // `GET /evaluator/interviews` por tela, particionada UMA vez por
 // `partitionQueue` (regra de "em andamento" vem do servidor). Sem N+1, sem GET
-// de rascunho por item e sem localStorage. `reload` refaz a consulta; um futuro
-// polling (6A.3) só precisa chamar `reload`/atualizar esta mesma fonte.
+// de rascunho por item e sem localStorage. Sincroniza sozinha (6A.3): carga
+// inicial com loading + refresh silencioso a cada 15s e em focus/visible/online
+// (`useEvaluatorListSync`); `reload` é a recarga manual.
 type QueueSource = {
   pending: EvaluatorQueueState;
   inProgress: EvaluatorQueueState;
+  // Ids que ACABARAM de chegar por refresh (nunca na carga inicial).
+  newIds: ReadonlySet<string>;
   reload: () => void;
 };
 
 function useAssignedQueue(): QueueSource {
-  const [state, setState] = useState<EvaluatorQueueState>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
+  const [state, reload] = useEvaluatorListSync({
+    fetch: listAssignedInterviews,
+    intervalMs: EVALUATOR_QUEUE_SYNC_INTERVAL_MS,
+    maxBackoffMs: EVALUATOR_QUEUE_SYNC_MAX_BACKOFF_MS,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    listAssignedInterviews().then((result) => {
-      if (cancelled) return;
-      setState(
-        result.ok
-          ? { status: "ready", items: result.data }
-          : { status: "error", message: result.message },
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [attempt]);
-
-  const reload = useCallback(() => setAttempt((current) => current + 1), []);
   const partitioned = useMemo(() => {
     if (state.status !== "ready") return { pending: state, inProgress: state };
     const { pending, inProgress } = partitionQueue(state.items);
@@ -123,7 +120,15 @@ function useAssignedQueue(): QueueSource {
     };
   }, [state]);
 
-  return { ...partitioned, reload };
+  // Microanimação: o tracker só consome o estado já sincronizado.
+  const trackerRef = useRef<NewItemTracker | null>(null);
+  if (trackerRef.current === null) trackerRef.current = new NewItemTracker();
+  const newIds = useMemo(
+    () => (state.status === "ready" ? trackerRef.current!.observe(state.items) : EMPTY_NEW_IDS),
+    [state],
+  );
+
+  return { ...partitioned, newIds, reload };
 }
 
 function firstName(name: string | undefined) {
@@ -133,7 +138,7 @@ function firstName(name: string | undefined) {
 export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
   const session = useContext(SessionContext);
-  const { pending: queue, inProgress, reload } = useAssignedQueue();
+  const { pending: queue, inProgress, newIds, reload } = useAssignedQueue();
   const name = firstName(session.user?.name);
   const pending = queue.status === "ready" ? queue.items.length : null;
   const active = inProgress.status === "ready" ? inProgress.items.length : null;
@@ -158,6 +163,12 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
           </div>
         </div>
 
+        <EvaluatorContinueSection
+          state={inProgress}
+          onContinue={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
+          onSeeAll={() => onNavigate("eval-active")}
+        />
+
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="flex items-center gap-2 font-bold text-foreground">
@@ -175,12 +186,9 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
             state={queue.status === "ready" ? { status: "ready", items: queue.items.slice(0, 3) } : queue}
             onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
             onRetry={reload}
+            newIds={newIds}
           />
         </section>
-
-        <p className="text-xs text-muted-foreground">
-          Estatísticas e histórico de avaliações concluídas serão exibidos em uma próxima etapa.
-        </p>
       </div>
     </EvalLayout>
   );
@@ -188,7 +196,7 @@ export function EvalDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
 
 export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
-  const { pending: queue, reload } = useAssignedQueue();
+  const { pending: queue, newIds, reload } = useAssignedQueue();
   const subtitle =
     queue.status === "ready"
       ? `${queue.items.length} ${queue.items.length === 1 ? "entrevista aguardando avaliação" : "entrevistas aguardando avaliação"}`
@@ -201,6 +209,7 @@ export function EvalQueueScreen({ onNavigate }: { onNavigate: NavFn }) {
           state={queue}
           onEvaluate={(id) => routerNavigate(`${EVALUATION_ROUTE}/${id}`)}
           onRetry={reload}
+          newIds={newIds}
         />
       </div>
     </EvalLayout>
@@ -384,7 +393,7 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
   const dirty = view ? isDirty(view.form, view.serverForm) : false;
 
   // Cada alteração grava a cópia local na hora e reinicia o debounce; o PUT
-  // acontece depois de ~2s sem edição (ou em "Salvar rascunho").
+  // acontece depois de ~2s sem edição (ou ao revisar/sair da tela).
   const onScoreChange = (key: CriterionKey, value: string) => {
     const controller = autosaveRef.current;
     if (!controller) return;
@@ -395,9 +404,6 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
     const controller = autosaveRef.current;
     if (!controller) return;
     controller.edit({ ...controller.getSnapshot().form, summary: value });
-  };
-  const onSave = () => {
-    void autosaveRef.current?.flush();
   };
   // Saída da avaliação (Voltar, menu lateral, logo): com alteração pendente
   // tenta confirmar o rascunho (até ~3s) e navega de qualquer forma; sem
@@ -487,7 +493,6 @@ export function EvalDraftEvaluationScreen({ onNavigate }: { onNavigate: NavFn })
           onReview: () => void onReview(),
           onScoreChange,
           onSummaryChange,
-          onSave,
         }}
         questionIndex={questionIndex}
         onQuestionChange={(index) => setQuestionIndex(clampQuestionIndex(index, totalQuestions))}
@@ -620,25 +625,14 @@ const HISTORY_ROUTE = "/evaluator/history";
 
 export function EvalHistoryScreen({ onNavigate }: { onNavigate: NavFn }) {
   const routerNavigate = useNavigate();
-  const [state, setState] = useState<EvaluatorHistoryState>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
+  // Lista sincronizada a cada 30s (e em focus/visible/online) sem tocar na busca,
+  // que é estado local da tela e sobrevive aos refreshes silenciosos.
+  const [state, reload] = useEvaluatorListSync({
+    fetch: listCompletedEvaluations,
+    intervalMs: EVALUATOR_HISTORY_SYNC_INTERVAL_MS,
+    maxBackoffMs: EVALUATOR_HISTORY_SYNC_MAX_BACKOFF_MS,
+  });
   const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    listCompletedEvaluations().then((result) => {
-      if (cancelled) return;
-      setState(
-        result.ok
-          ? { status: "ready", items: result.data }
-          : { status: "error", message: result.message },
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [attempt]);
 
   return (
     <EvalLayout
@@ -652,7 +646,7 @@ export function EvalHistoryScreen({ onNavigate }: { onNavigate: NavFn }) {
         search={search}
         onSearchChange={setSearch}
         onView={(id) => routerNavigate(`${HISTORY_ROUTE}/${id}`)}
-        onRetry={() => setAttempt((current) => current + 1)}
+        onRetry={reload}
       />
     </EvalLayout>
   );

@@ -66,21 +66,33 @@ export const ADMIN_ACCOUNT: AccountConfig = {
   settingsScreen: "admin-settings",
 };
 
-// V1: não há sistema real de notificações. Todos os perfis (Candidato,
-// Avaliador e Admin) exibem apenas a mesma comunicação genérica de boas-vindas,
-// sem simular evento novo/não lido (unread: false) e sem navegação associada.
-const WELCOME_NOTIFS: NotifItem[] = [
-  {
-    id: "welcome",
-    title: "Bem-vindo ao RH Connect!",
-    desc: "Explore os recursos da plataforma e continue sua jornada de preparação.",
-    unread: false,
-  },
-];
+// V1: não há sistema real de notificações (nada persistido no navegador nem no Back):
+// cada perfil exibe só uma comunicação estática de boas-vindas, sem simular
+// evento novo/não lido (unread: false) e sem navegação associada. Apenas o TEXTO
+// varia por papel; papel desconhecido usa uma mensagem neutra e segura.
+export type WelcomeRole = "CANDIDATE" | "EVALUATOR" | "ADMIN";
 
-export const CANDIDATE_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
-export const EVAL_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
-export const ADMIN_NOTIFS: NotifItem[] = WELCOME_NOTIFS;
+const WELCOME_TITLE = "Bem-vindo ao RH Connect!";
+const WELCOME_DESC_BY_ROLE: Record<WelcomeRole, string> = {
+  CANDIDATE: "Explore os recursos da plataforma e continue sua jornada de preparação.",
+  EVALUATOR: "Acompanhe suas avaliações atribuídas e continue seu trabalho pela plataforma.",
+  ADMIN: "Gerencie candidatos, avaliadores e acompanhe o andamento das entrevistas pela plataforma.",
+};
+const WELCOME_DESC_FALLBACK = "Explore os recursos da plataforma RH Connect.";
+
+export function welcomeNotifsForRole(role?: string | null): NotifItem[] {
+  const desc =
+    role && Object.prototype.hasOwnProperty.call(WELCOME_DESC_BY_ROLE, role)
+      ? WELCOME_DESC_BY_ROLE[role as WelcomeRole]
+      : WELCOME_DESC_FALLBACK;
+  return [{ id: "welcome", title: WELCOME_TITLE, desc, unread: false }];
+}
+
+// Cada shell (Candidato/Avaliador/Admin) já recebe a sua constante; as rotas
+// de cada perfil são protegidas pelo papel autenticado.
+export const CANDIDATE_NOTIFS: NotifItem[] = welcomeNotifsForRole("CANDIDATE");
+export const EVAL_NOTIFS: NotifItem[] = welcomeNotifsForRole("EVALUATOR");
+export const ADMIN_NOTIFS: NotifItem[] = welcomeNotifsForRole("ADMIN");
 
 // ─── Identidade real (Prompt 08) ───────────────────────────────────────────────
 

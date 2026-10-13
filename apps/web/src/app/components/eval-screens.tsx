@@ -39,6 +39,7 @@ import { ProfileShell, type ProfileShellNavItem } from "./shared/profile-shell";
 import { SessionContext } from "../session-context";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
 import niloOnboarding from "../../assets/nilo/nilo-onboarding.webp";
+import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { PasswordInput } from "./ui/password-input";
 import { Textarea } from "./ui/textarea";
@@ -812,13 +813,15 @@ export function EvalSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(n => (
               <div key={n.key} className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold text-foreground">{n.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{n.desc}</p>
+                  <p id={`eval-notif-${n.key}-label`} className="text-sm font-semibold text-foreground">{n.label}</p>
+                  <p id={`eval-notif-${n.key}-desc`} className="text-xs text-muted-foreground mt-0.5">{n.desc}</p>
                 </div>
-                <button onClick={() => setNotif(prev => ({ ...prev, [n.key]: !prev[n.key] }))}
-                  className={`w-10 h-6 rounded-full transition-colors shrink-0 relative ${notif[n.key] ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${notif[n.key] ? "translate-x-4" : "translate-x-0.5"}`} />
-                </button>
+                <Switch
+                  checked={notif[n.key]}
+                  onCheckedChange={() => setNotif(prev => ({ ...prev, [n.key]: !prev[n.key] }))}
+                  aria-labelledby={`eval-notif-${n.key}-label`}
+                  aria-describedby={`eval-notif-${n.key}-desc`}
+                />
               </div>
             ))}
           </div>
@@ -1109,7 +1112,7 @@ const EVAL_ONBOARDING_STEPS = [
         <p>Para cada entrevista, você avalia o candidato com base em <strong className="text-foreground">critérios predefinidos</strong> como clareza, domínio técnico e comunicação.</p>
         <div className="space-y-2">
           {[
-            { label: "Salvar rascunho",   desc: "Salve sua avaliação parcial a qualquer momento" },
+            { label: "Rascunho automático", desc: "Sua avaliação parcial é salva automaticamente" },
             { label: "Revisão final",     desc: "Confira os scores antes de enviar" },
             { label: "Enviar avaliação",  desc: "O resultado é registrado e notifica o candidato" },
           ].map(s => (

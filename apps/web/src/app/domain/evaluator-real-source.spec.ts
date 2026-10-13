@@ -21,6 +21,8 @@ const REAL_FILES = [
   "components/evaluator-real-content.tsx",
   "components/evaluator-active-content.tsx",
   "domain/evaluator-queue-partition.ts",
+  "domain/evaluator-list-sync.ts",
+  "hooks/use-evaluator-list-sync.ts",
   "components/evaluator-real-screens.tsx",
   "components/evaluator-evaluation-content.tsx",
   "domain/evaluator-evaluation-form.ts",
@@ -124,9 +126,13 @@ describe("área real do avaliador: fonte de dados", () => {
     expect(notice).toContain("SAVED_NOTICE_MS = 2500");
     expect(notice).not.toMatch(/evaluator-interviews-service|\bfetch\(|localStorage|saveEvaluationDraft/);
     expect(code(read("domain/evaluator-autosave.ts"))).not.toMatch(/Salvo automaticamente/);
-    // edições passam por controller.edit; o botão por flush; a saída destrói o timer
+    // edições passam por controller.edit; a revisão por syncNow (que usa flush do
+    // controlador); a saída destrói o timer. Não há mais botão manual "Salvar rascunho".
     expect(screens).toMatch(/controller\.edit\(/);
-    expect(screens).toContain(".flush()");
+    expect(screens).toContain(".syncNow()");
+    expect(screens).toContain("leaveEvaluation(");
+    expect(screens).not.toMatch(/\bonSave\b/);
+    expect(code(read("domain/evaluator-autosave.ts"))).toContain("flush()");
     expect(screens).toContain(".destroy()");
 
     const autosave = code(read("domain/evaluator-autosave.ts"));
@@ -228,7 +234,8 @@ describe("área real do avaliador: fonte de dados", () => {
     expect(content).not.toMatch(/<input[\s>]|<textarea[\s>]/);
     const formOnly = content.slice(content.indexOf("export function EvaluationForm"), content.indexOf("export function EvaluatorEvaluationContent"));
     expect(formOnly).not.toMatch(/focus:ring|focus:outline-none|focus:border/);
-    expect(formOnly.slice(formOnly.indexOf("<Textarea"))).not.toMatch(/focus-visible:/);
+    const textareaStart = formOnly.indexOf("<Textarea");
+    expect(formOnly.slice(textareaStart, formOnly.indexOf("/>", textareaStart))).not.toMatch(/focus-visible:/);
     expect(content).toMatch(/<Textarea[\s\S]*?aria-invalid=/);
     expect(content).toMatch(/<Input[\s\S]*?aria-invalid=/);
   });

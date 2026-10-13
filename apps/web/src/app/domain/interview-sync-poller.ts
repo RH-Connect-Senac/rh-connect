@@ -7,6 +7,8 @@
  *  - aba hidden ou offline: o timer é cancelado (pausa); ao voltar (visible/focus/online) faz um
  *    sync imediato e retoma o intervalo;
  *  - falha: sem UI e sem retry agressivo (o intervalo dobra até um teto e volta ao normal no sucesso);
+ *    o teto padrão é `INTERVIEW_SYNC_MAX_BACKOFF_MS`; quem usa intervalos maiores (ex.: avaliador,
+ *    15 s/30 s) pode passar `maxBackoffMs` próprio, sem afetar os demais;
  *  - o sync pode devolver "stop" (sessão terminal): o polling se encerra sozinho;
  *  - a função devolvida limpa listeners e timers (desmontagem, saída do wizard, sessão terminal).
  */
@@ -38,10 +40,13 @@ export function attachInterviewSyncPolling(input: {
   sync: () => Promise<InterviewSyncResult | void>;
   isOnline?: () => boolean;
   intervalMs?: number;
+  // Teto do backoff após falhas. Opcional: o padrão preserva o comportamento atual.
+  maxBackoffMs?: number;
   scheduler?: SyncScheduler;
   now?: () => number;
 }): () => void {
   const intervalMs = input.intervalMs ?? INTERVIEW_SYNC_INTERVAL_MS;
+  const maxBackoffMs = input.maxBackoffMs ?? INTERVIEW_SYNC_MAX_BACKOFF_MS;
   const scheduler = input.scheduler ?? defaultScheduler;
   const isOnline = input.isOnline ?? (() => true);
   const now = input.now ?? Date.now;
@@ -63,7 +68,7 @@ export function attachInterviewSyncPolling(input: {
 
   const schedule = () => {
     if (timer !== null || !active() || running) return;
-    const delay = Math.min(intervalMs * 2 ** failures, INTERVIEW_SYNC_MAX_BACKOFF_MS);
+    const delay = Math.min(intervalMs * 2 ** failures, maxBackoffMs);
     timer = scheduler.set(() => {
       timer = null;
       if (active()) void run();

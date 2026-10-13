@@ -29,7 +29,7 @@ describe("histórico do avaliador (6A.1): somente leitura", () => {
   });
 
   it("as telas só leem: sem PUT/POST de avaliação e sem fluxos de edição", () => {
-    expect(HISTORY_SCREENS).toContain("listCompletedEvaluations()");
+    expect(HISTORY_SCREENS).toContain("fetch: listCompletedEvaluations");
     expect(HISTORY_SCREENS).toContain("getCompletedEvaluation(id)");
     expect(HISTORY_SCREENS).not.toMatch(
       /saveEvaluationDraft|completeEvaluation|getEvaluationDraft|getAssignedInterview|EvaluationAutosave|EvaluationCompletionFlow|useLocation|localStorage/,

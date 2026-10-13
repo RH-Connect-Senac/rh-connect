@@ -25,7 +25,6 @@ import {
 import {
   EVALUATION_CRITERIA,
   MAX_SUMMARY_LENGTH,
-  canSubmit,
   previewOverallScore,
   summaryLength,
   type CriterionKey,
@@ -81,7 +80,6 @@ export type EvaluationFormUi = {
   onReview?: () => void;
   onScoreChange: (key: CriterionKey, value: string) => void;
   onSummaryChange: (value: string) => void;
-  onSave: () => void;
 };
 
 const TONE_FILLED: Record<ScoreTone, string> = {
@@ -299,7 +297,6 @@ export function QuestionPanel({
 export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: EvaluationFormUi }) {
   const { form, validation, dirty, saving, feedback, restoredFromLocal } = ui;
   const length = summaryLength(form.summary);
-  const submitEnabled = canSubmit({ saving, dirty, valid: validation.valid });
   const reviewEnabled = Boolean(ui.canReview) && !ui.reviewing && Boolean(ui.onReview);
   const scored = countScoredCriteria(form);
   const syncStatus: AutosaveStatus = ui.syncStatus ?? (saving ? "saving" : dirty ? "dirty" : "clean");
@@ -392,7 +389,7 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         {dirty ? "Prévia calculada aqui" : "Calculada pelo servidor"}; a média é a simples das notas
-        preenchidas. O rascunho só é gravado ao salvar.
+        preenchidas. O rascunho é salvo automaticamente.
       </p>
 
       <div className="mt-4">
@@ -442,20 +439,11 @@ export function EvaluationForm({ draft, ui }: { draft: EvaluationDraft; ui: Eval
         </p>
       )}
 
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          className="inline-flex flex-1 items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!submitEnabled}
-          aria-busy={saving ? "true" : "false"}
-          onClick={ui.onSave}
-        >
-          {saving ? "Salvando..." : "Salvar rascunho"}
-        </button>
+      <div className="mt-3 flex justify-end">
         <button
           type="button"
           data-action="review"
-          className="inline-flex flex-1 items-center justify-center rounded-xl border border-primary px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:opacity-60"
+          className="inline-flex items-center justify-center rounded-xl border border-transparent bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-all outline-none hover:bg-[#1E40AF] active:bg-[#1E3A8A] focus-visible:ring-[4px] focus-visible:ring-[rgba(29,78,216,0.24)] disabled:cursor-not-allowed disabled:opacity-50"
           disabled={!reviewEnabled}
           aria-busy={ui.reviewing ? "true" : "false"}
           onClick={ui.onReview}

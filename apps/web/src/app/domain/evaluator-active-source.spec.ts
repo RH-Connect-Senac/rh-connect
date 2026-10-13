@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { APP_ROUTES } from "../router/routes";
@@ -52,7 +52,7 @@ describe("Em Andamento real (6A.2): mock removido", () => {
 
 describe("Em Andamento real (6A.2): fonte única e retomada", () => {
   it("Dashboard, Fila e Em Andamento usam o MESMO hook, uma consulta por tela e a mesma partição", () => {
-    expect(SCREENS.match(/listAssignedInterviews\(\)/g)?.length).toBe(1);
+    expect(SCREENS.match(/fetch: listAssignedInterviews,/g)?.length).toBe(1);
     expect(SCREENS.match(/= useAssignedQueue\(\)/g)?.length).toBe(3);
     expect(SCREENS.match(/partitionQueue\(/g)?.length).toBe(1);
   });
@@ -80,7 +80,7 @@ describe("Em Andamento real (6A.2): fonte única e retomada", () => {
       SCREENS.indexOf("export function EvalQueueScreen"),
       SCREENS.indexOf("export function EvalActiveScreen"),
     );
-    expect(queue).toMatch(/const \{ pending: queue, reload \} = useAssignedQueue\(\)/);
+    expect(queue).toMatch(/const \{ pending: queue, newIds, reload \} = useAssignedQueue\(\)/);
     const dashboard = SCREENS.slice(
       SCREENS.indexOf("export function EvalDashboardScreen"),
       SCREENS.indexOf("export function EvalQueueScreen"),
@@ -110,5 +110,64 @@ describe("saída da avaliação (6A.2.1): flush antes de navegar", () => {
   it("reaproveita o autosave: sem fetch/serviço próprio e sem progresso otimista no cliente", () => {
     expect(DRAFT_SCREEN).not.toMatch(/inProgress|filledCriteria/);
     expect(read("domain/evaluator-autosave.ts")).not.toMatch(/inProgress|filledCriteria/);
+  });
+});
+
+describe("sincronização leve do avaliador (6A.3): onde há e onde NÃO há polling", () => {
+  const section = (from: string, to?: string) => {
+    const start = SCREENS.indexOf(from);
+    expect(start).toBeGreaterThan(-1);
+    return SCREENS.slice(start, to ? SCREENS.indexOf(to, start) : undefined);
+  };
+  const SYNC = /useEvaluatorListSync|attachEvaluatorListSync|attachInterviewSyncPolling|setInterval|visibilitychange|addEventListener\(/;
+
+  it("Dashboard, Fila e Em Andamento sincronizam a cada 15 s (teto 60 s) pela mesma fonte", () => {
+    expect(SCREENS).toMatch(
+      /useEvaluatorListSync\(\{\s*fetch: listAssignedInterviews,\s*intervalMs: EVALUATOR_QUEUE_SYNC_INTERVAL_MS,\s*maxBackoffMs: EVALUATOR_QUEUE_SYNC_MAX_BACKOFF_MS,/,
+    );
+    expect(SCREENS.match(/useEvaluatorListSync\(/g)?.length).toBe(2); // fila + histórico
+    expect(read("domain/evaluator-list-sync.ts")).toContain("EVALUATOR_QUEUE_SYNC_INTERVAL_MS = 15000");
+    expect(read("domain/evaluator-list-sync.ts")).toContain("EVALUATOR_QUEUE_SYNC_MAX_BACKOFF_MS = 60000");
+  });
+
+  it("Histórico tem sync próprio de 30 s (teto 120 s) e a busca continua estado local", () => {
+    const history = section("export function EvalHistoryScreen", "export function EvalHistoryDetailScreen");
+    expect(history).toMatch(
+      /useEvaluatorListSync\(\{\s*fetch: listCompletedEvaluations,\s*intervalMs: EVALUATOR_HISTORY_SYNC_INTERVAL_MS,\s*maxBackoffMs: EVALUATOR_HISTORY_SYNC_MAX_BACKOFF_MS,/,
+    );
+    expect(history).toContain('useState("")');
+    expect(read("domain/evaluator-list-sync.ts")).toContain("EVALUATOR_HISTORY_SYNC_INTERVAL_MS = 30000");
+    expect(read("domain/evaluator-list-sync.ts")).toContain("EVALUATOR_HISTORY_SYNC_MAX_BACKOFF_MS = 120000");
+  });
+
+  it.each([
+    ["avaliação em edição", "export function EvalDraftEvaluationScreen", "export function EvalRealReviewScreen"],
+    ["revisão", "export function EvalRealReviewScreen", "export function EvalCompletionSuccessScreen"],
+    ["sucesso", "export function EvalCompletionSuccessScreen", "export function EvalHistoryScreen"],
+    ["detalhe atribuído", "export function EvalInterviewDetailScreen", "export function EvalDraftEvaluationScreen"],
+    ["detalhe do histórico", "export function EvalHistoryDetailScreen", undefined],
+  ] as const)("%s NÃO tem polling", (_label, from, to) => {
+    expect(section(from, to)).not.toMatch(SYNC);
+  });
+
+  it("usa o motor compartilhado (sem novo timer/listener próprio) e sem biblioteca nova", () => {
+    const domain = code(read("domain/evaluator-list-sync.ts"));
+    expect(domain).toContain("attachInterviewSyncPolling");
+    expect(domain).not.toMatch(/setTimeout|setInterval|addEventListener\(|localStorage|sessionStorage/);
+    expect(code(read("hooks/use-evaluator-list-sync.ts"))).toContain("attachEvaluatorListSync");
+
+    const pkgPath = join(APP, "..", "..", "package.json");
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+      const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).join(" ");
+      expect(deps).not.toMatch(/react-query|tanstack|zustand|redux|swr|workbox/i);
+    }
+  });
+
+  it("o poller compartilhado mantém o teto padrão do candidato (16 s) e o intervalo de 4 s do wizard", () => {
+    const poller = read("domain/interview-sync-poller.ts");
+    expect(poller).toContain("INTERVIEW_SYNC_MAX_BACKOFF_MS = 16000");
+    expect(poller).toContain("INTERVIEW_SYNC_INTERVAL_MS = 4000");
+    expect(poller).toContain("input.maxBackoffMs ?? INTERVIEW_SYNC_MAX_BACKOFF_MS");
   });
 });

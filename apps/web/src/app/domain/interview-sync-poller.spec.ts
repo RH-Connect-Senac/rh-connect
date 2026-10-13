@@ -7,7 +7,7 @@ import {
   type SyncScheduler,
 } from "./interview-sync-poller";
 
-function harness(options: { visible?: boolean; online?: boolean } = {}) {
+function harness(options: { visible?: boolean; online?: boolean; intervalMs?: number; maxBackoffMs?: number } = {}) {
   let clock = 0;
   let nextId = 1;
   const tasks = new Map<number, { at: number; fn: () => void }>();
@@ -55,7 +55,7 @@ function harness(options: { visible?: boolean; online?: boolean } = {}) {
     await flush();
   };
   const listenerCount = () => [...listeners.values()].reduce((sum, set) => sum + set.size, 0);
-  const detach = attachInterviewSyncPolling({ win: target, doc, sync, scheduler, isOnline: () => state.online, now: () => clock });
+  const detach = attachInterviewSyncPolling({ win: target, doc, sync, scheduler, isOnline: () => state.online, now: () => clock, intervalMs: options.intervalMs, maxBackoffMs: options.maxBackoffMs });
   return {
     detach,
     calls,
@@ -174,6 +174,60 @@ describe("polling de sincronização entre dispositivos", () => {
     await h.advance(INTERVIEW_SYNC_MAX_BACKOFF_MS);
     await h.advance(INTERVIEW_SYNC_INTERVAL_MS);
     expect(h.calls.length).toBeGreaterThan(settled);
+  });
+
+  it("teto de backoff PADRÃO continua 16000 ms (retrocompatível, sem maxBackoffMs)", async () => {
+    expect(INTERVIEW_SYNC_MAX_BACKOFF_MS).toBe(16000);
+    const h = harness();
+    h.setResult("error");
+    await h.advance(4000); // falha 1 -> próximo em 8000
+    await h.advance(8000); // falha 2 -> próximo em 16000
+    await h.advance(16000); // falha 3 -> próximo continua 16000 (teto), não 32000
+    const calls = h.calls.length;
+    expect(calls).toBe(3);
+    await h.advance(15999);
+    expect(h.calls.length).toBe(calls);
+    await h.advance(1);
+    expect(h.calls.length).toBe(calls + 1);
+  });
+
+  it("maxBackoffMs customizado: 15 s -> 30 s -> 60 s (teto) e sucesso volta a 15 s", async () => {
+    const h = harness({ intervalMs: 15000, maxBackoffMs: 60000 });
+    h.setResult("error");
+    await h.advance(15000); // falha 1
+    expect(h.calls.length).toBe(1);
+    await h.advance(29999);
+    expect(h.calls.length).toBe(1);
+    await h.advance(1); // falha 2 (aos 30 s depois)
+    expect(h.calls.length).toBe(2);
+    await h.advance(59999);
+    expect(h.calls.length).toBe(2);
+    await h.advance(1); // falha 3 (60 s)
+    expect(h.calls.length).toBe(3);
+    await h.advance(59999); // teto: continua 60 s, não 120 s
+    expect(h.calls.length).toBe(3);
+    await h.advance(1);
+    expect(h.calls.length).toBe(4);
+    h.setResult("ok");
+    await h.advance(60000); // esta chamada tem sucesso
+    expect(h.calls.length).toBe(5);
+    await h.advance(14999); // voltou ao intervalo normal
+    expect(h.calls.length).toBe(5);
+    await h.advance(1);
+    expect(h.calls.length).toBe(6);
+  });
+
+  it("histórico 30 s: 30 -> 60 -> 120 s (teto)", async () => {
+    const h = harness({ intervalMs: 30000, maxBackoffMs: 120000 });
+    h.setResult("error");
+    await h.advance(30000);
+    await h.advance(60000);
+    await h.advance(120000);
+    expect(h.calls.length).toBe(3);
+    await h.advance(119999);
+    expect(h.calls.length).toBe(3);
+    await h.advance(1);
+    expect(h.calls.length).toBe(4);
   });
 
   it("sync que lança erro não derruba o polling", async () => {

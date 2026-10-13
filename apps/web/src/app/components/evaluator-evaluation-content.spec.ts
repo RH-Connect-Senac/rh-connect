@@ -73,7 +73,6 @@ function ui(draft: EvaluationDraft, over: Partial<EvaluationFormUi> = {}): Evalu
     feedback: null as SaveFeedback,
     onScoreChange: noop,
     onSummaryChange: noop,
-    onSave: noop,
     ...over,
   };
 }
@@ -166,50 +165,51 @@ describe("tela real de avaliação (apresentação)", () => {
     expect(html).toMatch(/data-testid="overall-value">7,5</);
   });
 
-  it("nota inválida mostra erro e bloqueia o botão salvar", () => {
+  it("nota inválida mostra erro (sem botão manual de salvar)", () => {
     const form = { ...emptyForm() };
     form.scores.clarity = "11";
     const html = render(ready(emptyDraft), ui(emptyDraft, { form, validation: validateForm(form, {}), dirty: true }));
     expect(html).toContain("A nota deve estar entre 0 e 10.");
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
+    expect(html).not.toContain("Salvar rascunho");
   });
 
-  it("nota negativa também bloqueia e mostra erro", () => {
+  it("nota negativa também mostra erro", () => {
     const form = { ...emptyForm() };
     form.scores.coherence = "-1";
     const html = render(ready(emptyDraft), ui(emptyDraft, { form, validation: validateForm(form, {}), dirty: true }));
     expect(html).toContain("Use um número de 0 a 10");
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
+    expect(html).not.toContain("Salvar rascunho");
   });
 
-  it("decimal e 0/10 deixam o botão salvar habilitado", () => {
+  it("decimal e 0/10 são aceitos sem erro e sem botão manual de salvar", () => {
     const form = { ...emptyForm() };
     form.scores.clarity = "7,5";
     form.scores.coherence = "0";
     form.scores.objectivity = "10";
     const html = render(ready(emptyDraft), ui(emptyDraft, { form, validation: validateForm(form, {}), dirty: true }));
-    expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
-    expect(html).toContain(">Salvar rascunho</button>");
+    expect(html).not.toContain("Salvar rascunho");
+    expect(html).not.toContain("A nota deve estar entre 0 e 10.");
   });
 
-  it("comentário acima de 2000 mostra erro e bloqueia salvar", () => {
+  it("comentário acima de 2000 mostra erro", () => {
     const form = { ...emptyForm(), summary: "a".repeat(2001) };
     const html = render(ready(emptyDraft), ui(emptyDraft, { form, validation: validateForm(form, {}), dirty: true }));
     expect(html).toContain("no máximo 2000 caracteres");
     expect(html).toContain("2001/2000");
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
+    expect(html).not.toContain("Salvar rascunho");
   });
 
   it("sem alterações o botão salvar fica desabilitado", () => {
     const html = render(ready(savedDraft), ui(savedDraft));
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
+    expect(html).not.toContain("Salvar rascunho");
   });
 
-  it("salvando: só o botão Salvar trava ('Salvando...'); campos seguem editáveis (autosave transparente)", () => {
+  it("salvando: status passivo 'Salvando...' e campos seguem editáveis (autosave transparente)", () => {
     const form = formFromDraft(savedDraft);
     form.scores.clarity = "9";
     const html = render(ready(savedDraft), ui(savedDraft, { form, validation: validateForm(form, savedDraft.criteriaScores), dirty: true, saving: true }));
-    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-busy="true"[^>]*>Salvando\.\.\.<\/button>/);
+    expect(html).toMatch(/data-sync="saving"[^>]*>Salvando/);
+    expect(html).not.toContain("Salvar rascunho");
     expect(html).not.toMatch(/id="criterion-clarity"[^>]*\sdisabled=""/);
     expect(html).not.toMatch(/<textarea[^>]*\sdisabled=""/);
   });
@@ -235,7 +235,7 @@ describe("tela real de avaliação (apresentação)", () => {
     expect(html).toContain("Não foi possível salvar o rascunho. Tente novamente.");
     expect(html).toMatch(/id="criterion-clarity"[^>]*value="9"/);
     expect(html).toContain("Texto novo\nainda não salvo");
-    expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Salvar rascunho<\/button>/);
+    expect(html).not.toContain("Salvar rascunho");
   });
 
   it("quebras de linha do comentário são preservadas no campo", () => {
@@ -592,9 +592,27 @@ describe("estados visuais do autosave", () => {
 const reviewBtn = /<button[^>]*data-action="review"[^>]*>/;
 
 describe("edição: Revisar avaliação", () => {
-  it("ao lado de Salvar rascunho, nesta ordem", () => {
+  it("é o único botão de ação da edição e usa o estilo primário (fundo azul, texto branco)", () => {
     const html = render(ready(savedDraft), ui(savedDraft, { canReview: true, onReview: noop }));
-    expect(html.indexOf("Salvar rascunho") < html.indexOf("Revisar avaliação")).toBe(true);
+    expect(html).not.toContain("Salvar rascunho");
+    const btn = html.match(reviewBtn)?.[0] ?? "";
+    expect(btn).toContain("bg-primary");
+    expect(btn).toContain("text-primary-foreground");
+    expect(btn).not.toContain("border-primary");
+    expect(btn).toContain("focus-visible:ring");
+    expect(btn).not.toContain("flex-1");
+    expect(html).toContain('<div class="mt-3 flex justify-end">');
+    expect(html.match(/<button[^>]*data-action="review"/g)).toHaveLength(1);
+    expect(html).toMatch(/data-action="review"[^>]*>Revisar avaliação<\/button>/);
+  });
+  it("o texto de ajuda não manda salvar manualmente", () => {
+    const html = render(ready(savedDraft), ui(savedDraft));
+    expect(html).not.toContain("gravado ao salvar");
+    expect(html).toContain("salvo automaticamente");
+  });
+  it("status de salvamento continua existindo (passivo)", () => {
+    const html = render(ready(savedDraft), ui(savedDraft, { syncStatus: "saved" }));
+    expect(html).toMatch(/data-testid="unsaved-indicator"[^>]*data-sync="saved"/);
   });
   it("desabilitado quando a avaliação não está completa e mostra a dica", () => {
     const html = render(ready(emptyDraft), ui(emptyDraft, { canReview: false, onReview: noop }));

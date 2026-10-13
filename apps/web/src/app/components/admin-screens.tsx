@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 import type { InterviewStatus } from "../domain/interviews";
 import type { MockAccountStatus } from "../services/auth-service";
 import { buildAdminProfileView } from "../domain/admin-profile-view";
+import { TransientNotice } from "../domain/transient-notice";
 import type { ProfessionalProfile } from "../domain/professional-profile";
 import {
   getAdminCandidate,
@@ -44,6 +45,7 @@ import {
   ToggleRight, History, Info, UserCheck, RefreshCw, Send, ArrowRight, Zap,
 } from "lucide-react";
 import { RHConnectLogo } from "./brand/rh-connect-logo";
+import { SwitchVisual } from "./ui/switch";
 import { Input } from "./ui/input";
 import { SearchInput } from "./ui/search-input";
 import { NativeSelect } from "./ui/native-select";
@@ -1029,6 +1031,17 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
   const [assigningEvaluatorId, setAssigningEvaluatorId] = useState<number | null>(null);
   const [assignError, setAssignError] = useState("");
   const [assignNotice, setAssignNotice] = useState("");
+  // Sucesso da atribuição é transitório (~4s); novo sucesso reinicia o timer e
+  // a desmontagem cancela o timer pendente. Erro continua persistente.
+  const noticeRef = useRef<TransientNotice | null>(null);
+  useEffect(() => {
+    const notice = new TransientNotice(setAssignNotice);
+    noticeRef.current = notice;
+    return () => {
+      notice.destroy();
+      noticeRef.current = null;
+    };
+  }, []);
   const assigningRef = useRef(false);
 
   useEffect(() => {
@@ -1079,7 +1092,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
     assigningRef.current = true;
     setAssigningEvaluatorId(evaluator.id);
     setAssignError("");
-    setAssignNotice("");
+    noticeRef.current?.clear();
 
     const result = await assignInterviewToEvaluator(selected, evaluator.id);
 
@@ -1087,7 +1100,7 @@ export function AdminAssignScreen({ onNavigate }: { onNavigate: NavFn }) {
     setAssigningEvaluatorId(null);
 
     if (result.ok) {
-      setAssignNotice(`Entrevista atribuída a ${evaluator.name}.`);
+      noticeRef.current?.show(`Entrevista atribuída a ${evaluator.name}.`);
     } else {
       setAssignError(result.message);
     }
@@ -1553,9 +1566,7 @@ export function AdminConsentScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
-                <div className={`w-10 h-6 rounded-full relative ${s.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${s.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={s.on} />
               </div>
             ))}
           </div>
@@ -1697,9 +1708,7 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
-                <div className={`w-10 h-6 rounded-full relative ${s.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${s.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={s.on} />
               </div>
             ))}
           </Card>
@@ -1736,9 +1745,7 @@ export function AdminSettingsScreen({ onNavigate }: { onNavigate: NavFn }) {
             ].map(s => (
               <div key={s.label} className="flex items-center justify-between gap-4">
                 <p className="text-sm font-medium text-foreground">{s.label}</p>
-                <div className={`w-10 h-6 rounded-full relative ${s.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${s.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={s.on} />
               </div>
             ))}
           </Card>
@@ -2204,9 +2211,7 @@ export function AdminEvaluatorFormScreen({ onNavigate }: { onNavigate: NavFn }) 
             ].map(p => (
               <div key={p.label} className="flex items-center justify-between gap-4 py-2">
                 <p className="text-sm text-foreground">{p.label}</p>
-                <div className={`w-10 h-6 rounded-full relative cursor-pointer ${p.on ? "bg-primary" : "bg-muted-foreground/30"}`}>
-                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${p.on ? "translate-x-4" : "translate-x-0.5"}`} />
-                </div>
+                <SwitchVisual checked={p.on} />
               </div>
             ))}
           </div>
