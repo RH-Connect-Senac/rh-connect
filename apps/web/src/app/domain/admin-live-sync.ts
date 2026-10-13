@@ -42,3 +42,7 @@ export function resolveSelection(selected: string | null, interviews: ReadonlyAr
   if (selected === null) return null;
   return interviews.some((interview) => interview.id === selected) ? selected : null;
 }
+
+// Dashboard Admin (Fase 4.3B): números agregados, mudam devagar — mesma cadência de candidatos/avaliadores.
+export const ADMIN_DASHBOARD_SYNC_INTERVAL_MS = 30000;
+export const ADMIN_DASHBOARD_SYNC_MAX_BACKOFF_MS = 120000;

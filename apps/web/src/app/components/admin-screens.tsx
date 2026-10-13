@@ -20,6 +20,8 @@ import { useCandidateLiveResource } from "../hooks/use-candidate-live-resource";
 import {
   ADMIN_CANDIDATES_SYNC_INTERVAL_MS,
   ADMIN_CANDIDATES_SYNC_MAX_BACKOFF_MS,
+  ADMIN_DASHBOARD_SYNC_INTERVAL_MS,
+  ADMIN_DASHBOARD_SYNC_MAX_BACKOFF_MS,
   ADMIN_EVALUATORS_SYNC_INTERVAL_MS,
   ADMIN_EVALUATORS_SYNC_MAX_BACKOFF_MS,
   ADMIN_QUEUE_SYNC_INTERVAL_MS,
@@ -28,7 +30,17 @@ import {
   resolveSelection,
   type AdminQueueData,
 } from "../domain/admin-live-sync";
+import {
+  buildChartData,
+  describeActivity,
+  formatDashboardScore,
+  scoreSupportText,
+  toDashboardSnapshot,
+  type AdminDashboardSnapshot,
+  type DashboardActivityIcon,
+} from "../domain/admin-dashboard-view";
 import type { ProfessionalProfile } from "../domain/professional-profile";
+import { getAdminDashboard } from "../services/admin-dashboard-service";
 import {
   getAdminCandidate,
   getAdminCandidateProfile,
@@ -50,7 +62,6 @@ import {
   getEvaluationByInterviewId,
   formatScore,
   getInterviewById,
-  getPendingAdminInterviews,
   statusLabelFromInterview,
 } from "../services/interviews-service";
 import {
@@ -136,8 +147,8 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   return <UICard padding="none" className={className}>{children}</UICard>;
 }
 
-function StatCard({ value, label, icon: Icon, color }: {
-  value: string | number; label: string; icon: React.ElementType; color: string;
+function StatCard({ value, label, icon: Icon, color, hint }: {
+  value: string | number; label: string; icon: React.ElementType; color: string; hint?: string | null;
 }) {
   return (
     <Card className="p-3 sm:p-5 flex items-center gap-2 sm:gap-4">
@@ -147,6 +158,7 @@ function StatCard({ value, label, icon: Icon, color }: {
       <div className="min-w-0">
         <p className="text-lg sm:text-2xl font-bold text-foreground leading-tight">{value}</p>
         <p className="text-[11px] sm:text-xs text-muted-foreground font-medium mt-0.5 leading-snug line-clamp-2">{label}</p>
+        {hint ? <p className="text-[10px] sm:text-[11px] text-muted-foreground/80 mt-0.5 leading-snug">{hint}</p> : null}
       </div>
     </Card>
   );
@@ -204,17 +216,6 @@ function AdminLayout({ current, onNavigate, title, subtitle, actions, children }
 }
 
 // ─── Shared mock data ─────────────────────────────────────────────────────────
-
-// Conjunto oficial de avaliadores mock do Admin: Carlos, Eduardo e Camila
-// (ativos) — Patricia aparece em "Convites pendentes". As métricas são
-// zeradas: no futuro serão derivadas das atribuições e avaliações reais.
-// Média só é exibida quando há avaliação concluída (done > 0); caso contrário
-// aparece "—", para não parecer uma nota real igual a zero.
-const EVALUATORS = [
-  { id: "evaluator-carlos-andrade", name: "Carlos Andrade",  email: "carlos.andrade@gmail.com", area: "Gestão de RH · Recrutamento e Seleção", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-  { id: "evaluator-eduardo-rocha", name: "Eduardo Rocha",  email: "eduardo.rocha@gmail.com",   area: "Tecnologia da Informação · Gestão de Projetos de TI", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-  { id: "evaluator-camila-dias", name: "Camila Dias",    email: "camila.dias@gmail.com",     area: "Secretariado · Assessoria Executiva", pending: 0, done: 0, avg: 0, status: "Ativo" as const },
-];
 
 type AdminCandidateRow = {
   id: string;
@@ -425,55 +426,29 @@ const QUESTIONS_DATA = [
 
 // ─── Gráfico Interativo de Entrevistas por Mês ───────────────────────────────
 
-const MONTH_SHORT_LABELS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-const MONTH_FULL_LABELS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+type DashboardChartPeriod = "6m" | "12m";
 
-/** Entrevistas reais enviadas por mês, nos últimos `months` meses (zero quando não há dado). */
-function buildMonthlyInterviewData(months: number) {
-  const now = new Date();
-  const buckets = Array.from({ length: months }, (_, index) => {
-    const date = new Date(now.getFullYear(), now.getMonth() - (months - 1 - index), 1);
-    return {
-      key: date.getFullYear() * 12 + date.getMonth(),
-      m: MONTH_SHORT_LABELS[date.getMonth()],
-      full: MONTH_FULL_LABELS[date.getMonth()],
-      v: 0,
-    };
-  });
-
-  for (const interview of getAdminVisibleInterviews()) {
-    const date = new Date(interview.submittedAt ?? interview.createdAt);
-    if (Number.isNaN(date.getTime())) continue;
-    const bucket = buckets.find((item) => item.key === date.getFullYear() * 12 + date.getMonth());
-    if (bucket) bucket.v += 1;
-  }
-
-  return buckets.map(({ m, full, v }) => ({ m, full, v }));
-}
-
-function InterviewsChartCard() {
-  const data6m = buildMonthlyInterviewData(6);
-  const data12m = buildMonthlyInterviewData(12);
-
-  const [period, setPeriod] = useState<"6m" | "12m">("6m");
+/** Gráfico de entrevistas por mês: dados vêm de `interviewsByMonth` do endpoint (`null` = carregando). */
+function InterviewsChartCard({ interviewsByMonth }: { interviewsByMonth: AdminDashboardSnapshot["interviewsByMonth"] | null }) {
+  const [period, setPeriod] = useState<DashboardChartPeriod>("6m");
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const hasData = interviewsByMonth !== null;
 
   useEffect(() => {
     setMounted(false);
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
-  }, [period]);
+  }, [period, hasData]);
 
-  const data = period === "6m" ? data6m : data12m;
+  const data = interviewsByMonth ? buildChartData(interviewsByMonth, period) : [];
   const maxV = Math.max(...data.map(d => d.v), 1);
 
-  const toggle = (m: string) => setSelected(s => s === m ? null : m);
+  const toggle = (key: string) => setSelected(s => s === key ? null : key);
 
   return (
     <Card className="lg:col-span-2 p-5 sm:p-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <h3 className="font-bold text-foreground flex items-center gap-2">
           <BarChart2 className="w-4 h-4 text-blue-500" />
@@ -494,32 +469,33 @@ function InterviewsChartCard() {
         </div>
       </div>
 
-      {/* Bars */}
+      {!hasData ? (
+        <div className="h-40 rounded-xl bg-muted/60 animate-pulse" role="status" aria-label="Carregando gráfico" />
+      ) : (
       <div className="flex items-end gap-1.5 sm:gap-2 h-40" style={{ overflow: "visible" }}>
         {data.map((d, i) => {
-          const isHov = hovered === d.m;
-          const isSel = selected === d.m;
+          const isHov = hovered === d.key;
+          const isSel = selected === d.key;
           const barH = mounted ? Math.max((d.v / maxV) * 128, 4) : 0;
           return (
             <div
-              key={d.m}
+              key={d.key}
               className="flex-1 flex flex-col items-center gap-1.5 relative cursor-pointer select-none outline-none"
-              onMouseEnter={() => setHovered(d.m)}
+              onMouseEnter={() => setHovered(d.key)}
               onMouseLeave={() => setHovered(null)}
-              onClick={() => toggle(d.m)}
-              onTouchStart={() => setHovered(d.m)}
-              onTouchEnd={() => { toggle(d.m); setHovered(null); }}
+              onClick={() => toggle(d.key)}
+              onTouchStart={() => setHovered(d.key)}
+              onTouchEnd={() => { toggle(d.key); setHovered(null); }}
               role="button"
               tabIndex={0}
-              onKeyDown={e => e.key === "Enter" && toggle(d.m)}
-              aria-label={`${d.full}: ${d.v} entrevistas${isSel ? ", selecionado" : ""}`}
+              onKeyDown={e => e.key === "Enter" && toggle(d.key)}
+              aria-label={`${d.full}: ${d.v} ${d.v === 1 ? "entrevista" : "entrevistas"}${isSel ? ", selecionado" : ""}`}
               aria-pressed={isSel}
             >
-              {/* Tooltip */}
               {isHov && (
                 <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
                   <div className="bg-gray-900 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg shadow-xl whitespace-nowrap leading-none">
-                    {d.full} — {d.v} entrevistas
+                    {d.full} — {d.v} {d.v === 1 ? "entrevista" : "entrevistas"}
                   </div>
                   <div className="w-0 h-0 mx-auto" style={{
                     borderLeft: "5px solid transparent",
@@ -529,12 +505,10 @@ function InterviewsChartCard() {
                 </div>
               )}
 
-              {/* Value label */}
               <span className={`text-[11px] font-bold leading-none transition-colors ${
                 isSel ? "text-blue-600" : isHov ? "text-foreground" : "text-muted-foreground"
               }`}>{d.v}</span>
 
-              {/* Bar */}
               <div
                 className={`w-full rounded-t-md transition-colors ${
                   isSel ? "bg-blue-600" : isHov ? "bg-blue-500" : "bg-primary/80"
@@ -546,7 +520,6 @@ function InterviewsChartCard() {
                 }}
               />
 
-              {/* Month label */}
               <span className={`text-[11px] leading-none transition-colors ${
                 isSel ? "text-blue-600 font-semibold" : isHov ? "text-foreground" : "text-muted-foreground"
               }`}>{d.m}</span>
@@ -554,12 +527,12 @@ function InterviewsChartCard() {
           );
         })}
       </div>
+      )}
 
-      {/* Selected state footer */}
       {selected && (
         <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
           <p className="text-[11px] text-muted-foreground">
-            Filtrando por <span className="font-semibold text-blue-600">{data.find(d => d.m === selected)?.full}</span>
+            Filtrando por <span className="font-semibold text-blue-600">{data.find(d => d.key === selected)?.full}</span>
           </p>
           <button
             onClick={() => setSelected(null)}
@@ -573,80 +546,122 @@ function InterviewsChartCard() {
   );
 }
 
-export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
-  const candidatesList = useAdminCandidatesList();
-  const candidateCount = candidatesList.state.status === "success" ? candidatesList.state.data.total : null;
-  const interviewRows = createAdminInterviewRows();
-  const pendingInterviews = getPendingAdminInterviews();
-  const averageScores = interviewRows.map((item) => item.score).filter((score): score is number => score !== null);
-  const averageScore = averageScores.length
-    ? averageScores.reduce((sum, score) => sum + score, 0) / averageScores.length
-    : null;
+// ─── Dashboard Admin REAL (Fase 4.3B) ─────────────────────────────────────────
 
-  const recentRealActivity = getAdminVisibleInterviews().slice(0, 4).map((interview, index) => ({
-    time: new Date(interview.submittedAt ?? interview.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-    user: "Sistema",
-    action: interview.status === "PENDING_EVALUATION" ? "Nova entrevista recebida" : statusLabelFromInterview(interview.status),
-    detail: `${createAdminInterviewDisplayId(index)} · ${interview.candidateName} · ${interview.context.title}`,
-  }));
-  const activity = recentRealActivity;
+// Números agregados vêm de UM endpoint (`GET /admin/dashboard`). Sync leve de 30 s pelo motor
+// compartilhado (pausa hidden/offline, retoma em focus/visible/online, 401/403 encerram).
+const DASHBOARD_SYNC = {
+  intervalMs: ADMIN_DASHBOARD_SYNC_INTERVAL_MS,
+  maxBackoffMs: ADMIN_DASHBOARD_SYNC_MAX_BACKOFF_MS,
+};
+
+// `generatedAt` muda a cada resposta; o snapshot o descarta para o refresh só re-renderizar
+// quando algum número realmente mudou.
+async function fetchAdminDashboardSnapshot() {
+  const result = await getAdminDashboard();
+  return result.ok ? { ok: true as const, data: toDashboardSnapshot(result.data) } : result;
+}
+
+function useAdminDashboard() {
+  return useCandidateLiveResource<AdminDashboardSnapshot>({
+    resourceKey: "admin-dashboard",
+    fetch: fetchAdminDashboardSnapshot,
+    sync: DASHBOARD_SYNC,
+  });
+}
+
+const ACTIVITY_ICONS: Record<DashboardActivityIcon, React.ElementType> = {
+  candidate: Users,
+  interview: FileText,
+  assigned: UserCheck,
+  evaluation: CheckCircle,
+};
+
+export function AdminDashboardScreen({ onNavigate }: { onNavigate: NavFn }) {
+  const { state, reload } = useAdminDashboard();
+  const dashboard = state.status === "ready" ? state.value : null;
+  const summary = dashboard?.summary ?? null;
+  const activity = dashboard ? dashboard.recentActivity.map(describeActivity) : [];
+
+  const quickActions = [
+    { label: "Atribuir entrevistas",          screen: "admin-assign", count: summary ? summary.pendingAssignmentCount : null },
+    { label: "Gerenciar candidatos",          screen: "admin-candidates", count: summary ? summary.candidateCount : null },
+    { label: "Gerenciar avaliadores",         screen: "admin-evaluators", count: summary ? summary.activeEvaluatorCount : null },
+  ];
 
   return (
     <AdminLayout current="admin-dashboard" onNavigate={onNavigate} title="Dashboard Administrativo" subtitle="Visão geral do sistema RH Connect · SENAC-DF">
       <div className="w-full space-y-5">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatCard value={candidateCount ?? "—"}  label="Candidatos cadastrados" icon={Users}     color="bg-blue-50 text-blue-600" />
-          <StatCard value={EVALUATORS.filter((evaluator) => evaluator.status === "Ativo").length}   label="Avaliadores ativos"     icon={UserCheck} color="bg-teal-50 text-teal-600" />
-          <StatCard value={pendingInterviews.length}   label="Avaliações pendentes"   icon={Clock}     color="bg-amber-50 text-amber-600" />
-          <StatCard value={averageScore !== null ? formatScore(averageScore) : "—"}  label="Score médio geral"      icon={Star}      color="bg-green-50 text-green-600" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Monthly chart — interactive */}
-          <InterviewsChartCard />
-
-          {/* Quick links */}
-          <Card className="p-5 sm:p-6">
-            <h3 className="font-bold text-foreground mb-4">Ações Rápidas</h3>
-            <div className="space-y-2">
-              {[
-                { label: "Atribuir avaliações pendentes", screen: "admin-assign", count: pendingInterviews.length },
-                { label: "Gerenciar candidatos",          screen: "admin-candidates", count: candidateCount },
-                { label: "Adicionar pergunta",            screen: "admin-question-form", count: null },
-                { label: "Ver logs de auditoria",         screen: "admin-audit", count: null },
-              ].map(a => (
-                <button key={a.label} onClick={() => onNavigate(a.screen)}
-                  className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-muted transition-colors text-left">
-                  <span className="text-sm font-medium text-foreground">{a.label}</span>
-                  <div className="flex items-center gap-2">
-                    {a.count !== null && <Badge variant="info">{a.count}</Badge>}
-                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                </button>
-              ))}
+        {state.status === "error" ? (
+          <EmptyState
+            icon={AlertCircle}
+            title="Não foi possível carregar o dashboard"
+            description={state.message}
+            action={<Btn variant="outline" onClick={reload}>Tentar novamente</Btn>}
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <StatCard value={summary ? summary.candidateCount : "—"} label="Candidatos cadastrados" icon={Users} color="bg-blue-50 text-blue-600" />
+              <StatCard value={summary ? summary.activeEvaluatorCount : "—"} label="Avaliadores ativos" icon={UserCheck} color="bg-teal-50 text-teal-600" />
+              <StatCard value={summary ? summary.pendingAssignmentCount : "—"} label="Aguardando atribuição" icon={Clock} color="bg-amber-50 text-amber-600" />
+              <StatCard
+                value={summary ? formatDashboardScore(summary.averageScore) : "—"}
+                label="Pontuação média"
+                hint={summary ? (scoreSupportText(summary.averageScoreSample) ?? "Avaliações humanas concluídas") : "Avaliações humanas concluídas"}
+                icon={Star}
+                color="bg-green-50 text-green-600"
+              />
             </div>
-          </Card>
-        </div>
 
-        {/* Recent activity */}
-        <Card className="p-5 sm:p-6">
-          <h3 className="font-bold text-foreground mb-4 flex items-center gap-2"><History className="w-4 h-4" /> Atividade Recente</h3>
-          <div className="space-y-3">
-            {activity.length === 0 && (
-              <p className="text-sm text-muted-foreground">Nenhuma atividade recente.</p>
-            )}
-            {activity.map((a, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className="text-xs text-muted-foreground w-12 shrink-0 pt-0.5">{a.time}</span>
-                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm text-foreground"><span className="font-semibold">{a.user}</span> · {a.action}</p>
-                  <p className="text-xs text-muted-foreground">{a.detail}</p>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <InterviewsChartCard interviewsByMonth={dashboard ? dashboard.interviewsByMonth : null} />
+
+              <Card className="p-5 sm:p-6">
+                <h3 className="font-bold text-foreground mb-4">Ações Rápidas</h3>
+                <div className="space-y-2">
+                  {quickActions.map(a => (
+                    <button key={a.label} onClick={() => onNavigate(a.screen)}
+                      className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-muted transition-colors text-left">
+                      <span className="text-sm font-medium text-foreground">{a.label}</span>
+                      <div className="flex items-center gap-2">
+                        {a.count !== null && <Badge variant="info">{a.count}</Badge>}
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+              </Card>
+            </div>
+
+            <Card className="p-5 sm:p-6">
+              <h3 className="font-bold text-foreground mb-4 flex items-center gap-2"><History className="w-4 h-4" /> Atividade Recente</h3>
+              {!dashboard ? (
+                <div className="space-y-3" role="status" aria-label="Carregando atividade recente">
+                  {[0, 1, 2].map(i => <div key={i} className="h-9 rounded-lg bg-muted/60 animate-pulse" />)}
+                </div>
+              ) : activity.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhuma atividade recente.</p>
+              ) : (
+                <div className="space-y-3">
+                  {activity.map(a => {
+                    const Icon = ACTIVITY_ICONS[a.icon];
+                    return (
+                      <div key={a.id} className="flex items-start gap-3">
+                        <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">{a.time}</span>
+                        <Icon className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm text-foreground">{a.title}</p>
+                          {a.detail ? <p className="text-xs text-muted-foreground">{a.detail}</p> : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </>
+        )}
       </div>
     </AdminLayout>
   );

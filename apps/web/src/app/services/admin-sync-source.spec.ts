@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Fase 4.2: sincronização leve SÓ nas 3 telas Admin reais (fila, candidatos, avaliadores).
+// Fase 4.2/4.3B: sincronização leve SÓ nas 4 telas Admin reais (fila, candidatos, avaliadores, Dashboard).
 const read = (relative: string) => readFileSync(resolve(__dirname, "..", relative), "utf8");
 const code = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
@@ -19,14 +19,15 @@ const CANDIDATES_HOOK = slice("function useAdminCandidatesList(", "function useA
 const CANDIDATES_SCREEN = slice("export function AdminCandidatesScreen", "type AdminEvaluatorsState");
 const EVALUATORS_AREA = slice("type AdminEvaluatorsState", "export function AdminInterviewsScreen");
 const ASSIGN_SCREEN = slice("const ASSIGN_SYNC", "export function AdminQuestionsScreen");
-const DASHBOARD = slice("export function AdminDashboardScreen", "export function AdminCandidatesScreen");
+const DASHBOARD = slice("const DASHBOARD_SYNC", "export function AdminCandidatesScreen");
 const INTERVIEWS = slice("export function AdminInterviewsScreen", "const ASSIGN_SYNC");
 const AFTER_ASSIGN = SCREENS.slice(SCREENS.indexOf("export function AdminQuestionsScreen"));
 const DETAIL_HOOKS = slice("function useAdminCandidateDetail", "function useAdminCandidateProfile");
 
 describe("sync do Admin (4.2): onde há polling", () => {
-  it("há exatamente 3 usos de useCandidateLiveResource em admin-screens, um por tela real", () => {
-    expect(SCREENS.match(/useCandidateLiveResource</g)?.length).toBe(3);
+  it("há exatamente 4 usos de useCandidateLiveResource em admin-screens, um por tela real", () => {
+    expect(SCREENS.match(/useCandidateLiveResource</g)?.length).toBe(4);
+    expect(DASHBOARD).toContain("useCandidateLiveResource<AdminDashboardSnapshot>");
     expect(CANDIDATES_HOOK).toContain("useCandidateLiveResource<AdminCandidatesList>");
     expect(EVALUATORS_AREA).toContain("useCandidateLiveResource<AdminEvaluator[]>");
     expect(ASSIGN_SCREEN).toContain("useCandidateLiveResource<AdminQueueData>");
@@ -42,17 +43,18 @@ describe("sync do Admin (4.2): onde há polling", () => {
     expect(ASSIGN_SCREEN).toContain("ADMIN_QUEUE_SYNC_MAX_BACKOFF_MS");
     expect(SCREENS).toContain("ADMIN_CANDIDATES_SYNC_INTERVAL_MS");
     expect(SCREENS).toContain("ADMIN_EVALUATORS_SYNC_INTERVAL_MS");
+    expect(DASHBOARD).toContain("ADMIN_DASHBOARD_SYNC_INTERVAL_MS");
+    expect(DASHBOARD).toContain("ADMIN_DASHBOARD_SYNC_MAX_BACKOFF_MS");
   });
 
-  it("candidatos: o sync só liga na tela de lista; o Dashboard Admin usa o hook SEM sync", () => {
+  it("candidatos: o sync só liga na tela de lista; o Dashboard Admin não usa mais a lista de candidatos", () => {
     expect(CANDIDATES_SCREEN).toContain("useAdminCandidatesList({ sync: true })");
     expect(SCREENS.match(/useAdminCandidatesList\(\{ sync: true \}\)/g)?.length).toBe(1);
-    expect(DASHBOARD).toContain("useAdminCandidatesList()");
-    expect(DASHBOARD).not.toMatch(/useCandidateLiveResource|sync:/);
+    expect(DASHBOARD).not.toContain("useAdminCandidatesList");
     expect(CANDIDATES_HOOK).toContain("sync: options.sync ? CANDIDATES_SYNC : undefined");
   });
 
-  it("telas mock e demais telas reais NÃO ganharam polling (Dashboard, Entrevistas, detalhe, perguntas, etc.)", () => {
+  it("telas mock e demais telas reais NÃO ganharam polling (Entrevistas, detalhe, perguntas, etc.)", () => {
     for (const area of [INTERVIEWS, AFTER_ASSIGN, DETAIL_HOOKS]) {
       expect(area).not.toMatch(/useCandidateLiveResource|attachInterviewSyncPolling|setInterval|ADMIN_\w+_SYNC/);
     }

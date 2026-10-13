@@ -142,7 +142,7 @@ async function refreshAccessToken(): Promise<boolean> {
 
 // O access token dura 15 minutos: num 401 tenta renovar uma única vez via
 // `/auth/refresh` (mesmo fluxo de `admin-candidates-service.ts`) e repete.
-async function requestAdminApi(
+export async function requestAdminApi(
   path: string,
   init: { method: "GET" } | { method: "POST"; body: unknown },
 ): Promise<Response | null> {
