@@ -5,6 +5,7 @@ import {
   createRealInterview,
   generateRealQuestions,
   getRealInterview,
+  getRealInterviewResult,
   getRealQuestions,
   getRealQuestionsStateForResume,
   listInProgressInterviews,
@@ -738,6 +739,119 @@ describe("acompanhamento real (6A.2): GET /interviews/:id", () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const network = await getRealInterview(INTERVIEW_ID);
     expect(!network.ok && network.reason).toBe("error");
+    expect(!network.ok && network.message).not.toMatch(/failed to fetch/i);
+  });
+});
+
+describe("resultado real do candidato (6A.3): GET /interviews/:id/result", () => {
+  const CRITERIA = {
+    clarity: 8,
+    coherence: 7,
+    objectivity: 9,
+    domain_knowledge: 6,
+    organization: 8,
+    requirements_alignment: 7,
+    examples: 5,
+  };
+
+  function resultBody(overrides: Record<string, unknown> = {}) {
+    return {
+      interview: interviewBody({
+        status: "COMPLETED",
+        evaluationMode: "HUMAN",
+        submittedAt: "2026-10-12T13:00:00.000Z",
+        assignedAt: "2026-10-13T01:00:00.000Z",
+        completedAt: "2026-10-13T03:28:52.775Z",
+      }),
+      evaluation: {
+        overallScore: 5.6,
+        criteriaScores: CRITERIA,
+        summary: "Bom desempenho geral.",
+        completedAt: "2026-10-13T03:28:52.775Z",
+      },
+      questions: [
+        { id: Q_IDS[1], position: 2, type: "BEHAVIORAL", text: "Conte um conflito.", answer: "Conversei com o time.", answeredAt: "2026-10-12T12:30:00.000Z" },
+        { id: Q_IDS[0], position: 1, type: "TECHNICAL", text: "Fale de SQL.", answer: "Uso há 3 anos.", answeredAt: "2026-10-12T12:10:00.000Z" },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("lê só GET /interviews/:id/result (uma chamada, com cookies)", async () => {
+    fetchMock.mockResolvedValueOnce(json(resultBody()));
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const { url, init } = lastCall();
+    expect(url).toMatch(new RegExp(`/interviews/${INTERVIEW_ID}/result$`));
+    expect(init.method).toBe("GET");
+    expect(init.credentials).toBe("include");
+  });
+
+  it("devolve a nota geral do Back sem recalcular (5.6 ≠ média dos critérios)", async () => {
+    fetchMock.mockResolvedValueOnce(json(resultBody()));
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    const mean = Object.values(CRITERIA).reduce((sum, value) => sum + value, 0) / 7;
+    expect(mean).not.toBe(5.6);
+    expect(result.ok && result.data.evaluation.overallScore).toBe(5.6);
+  });
+
+  it("mapeia os 7 critérios reais, o parecer e a conclusão", async () => {
+    fetchMock.mockResolvedValueOnce(json(resultBody()));
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    expect(result.ok && result.data.evaluation.criteriaScores).toEqual(CRITERIA);
+    expect(result.ok && result.data.evaluation.summary).toBe("Bom desempenho geral.");
+    expect(result.ok && result.data.evaluation.completedAt).toBe("2026-10-13T03:28:52.775Z");
+    expect(result.ok && result.data.interview.status).toBe("COMPLETED");
+  });
+
+  it("ordena as perguntas por posição e mantém as respostas reais, sem nota por pergunta", async () => {
+    fetchMock.mockResolvedValueOnce(json(resultBody()));
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    expect(result.ok && result.data.questions.map((q) => q.position)).toEqual([1, 2]);
+    expect(result.ok && result.data.questions[0].answer).toBe("Uso há 3 anos.");
+    expect(result.ok && result.data.questions[0].type).toBe("Tecnica");
+    expect(result.ok && Object.keys(result.data.questions[0])).not.toContain("score");
+  });
+
+  it("descarta nota de critério inválida (string/NaN) em vez de aceitar", async () => {
+    fetchMock.mockResolvedValueOnce(json(resultBody({ evaluation: { overallScore: 5.6, criteriaScores: { clarity: "8", coherence: 7 }, summary: "ok", completedAt: null } })));
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    expect(result.ok && result.data.evaluation.criteriaScores).toEqual({ coherence: 7 });
+  });
+
+  it("resposta sem nota geral numérica é recusada (nunca inventa nota)", async () => {
+    fetchMock.mockResolvedValueOnce(json(resultBody({ evaluation: { overallScore: null, criteriaScores: CRITERIA, summary: "x", completedAt: null } })));
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    expect(result.ok).toBe(false);
+  });
+
+  it("409 INTERVIEW_RESULT_NOT_AVAILABLE vira result_not_available (com o status)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ statusCode: 409, error: "Conflict", code: "INTERVIEW_RESULT_NOT_AVAILABLE", message: "O resultado desta entrevista ainda não está disponível.", interviewStatus: "ASSIGNED", evaluationMode: "HUMAN" }, 409),
+    );
+    const result = await getRealInterviewResult(INTERVIEW_ID);
+    expect(!result.ok && result.reason).toBe("result_not_available");
+    expect(!result.ok && result.interviewStatus).toBe("ASSIGNED");
+  });
+
+  it("404, 401/403, 5xx e rede: motivos corretos e mensagens sem texto técnico", async () => {
+    fetchMock.mockResolvedValueOnce(json({ statusCode: 404, message: "Entrevista não encontrada." }, 404));
+    expect((await getRealInterviewResult(INTERVIEW_ID)) as { reason?: string }).toMatchObject({ reason: "not_found" });
+
+    fetchMock.mockResolvedValueOnce(json({}, 401));
+    expect((await getRealInterviewResult(INTERVIEW_ID)) as { reason?: string }).toMatchObject({ reason: "unauthorized" });
+
+    fetchMock.mockResolvedValueOnce(json({}, 403));
+    expect((await getRealInterviewResult(INTERVIEW_ID)) as { reason?: string }).toMatchObject({ reason: "forbidden" });
+
+    fetchMock.mockResolvedValueOnce(json({ message: "PrismaClientKnownRequestError at db" }, 500));
+    const server = await getRealInterviewResult(INTERVIEW_ID);
+    expect(!server.ok && server.reason).toBe("error");
+    expect(!server.ok && server.message).not.toMatch(/prisma|500|stack/i);
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const network = await getRealInterviewResult(INTERVIEW_ID);
     expect(!network.ok && network.message).not.toMatch(/failed to fetch/i);
   });
 });

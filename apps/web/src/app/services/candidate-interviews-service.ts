@@ -3,6 +3,7 @@
  *
  *   POST  /interviews                                 cria a Interview (IN_PROGRESS)
  *   GET   /interviews/:id                             lê a Interview
+ *   GET   /interviews/:id/result                      resultado HUMAN concluído (relatório do candidato)
  *   POST  /interviews/:id/questions/generate          gera/recupera as 5 perguntas (idempotente)
  *   GET   /interviews/:id/questions                   lê perguntas + respostas persistidas
  *   PUT   /interviews/:id/questions/:qid/answer       grava a resposta OFICIAL (confirmação)
@@ -73,6 +74,8 @@ export type RealAnswerConflict = RealAnswerDraft & {
 export const DRAFT_VERSION_CONFLICT_CODE = "DRAFT_VERSION_CONFLICT";
 export const INTERVIEW_NOT_IN_PROGRESS_CODE = "INTERVIEW_NOT_IN_PROGRESS";
 export const INTERVIEW_ALREADY_IN_PROGRESS_CODE = "INTERVIEW_ALREADY_IN_PROGRESS";
+/** 409 de `GET /interviews/:id/result`: a avaliação ainda não foi concluída/não existe resultado. */
+export const INTERVIEW_RESULT_NOT_AVAILABLE_CODE = "INTERVIEW_RESULT_NOT_AVAILABLE";
 
 export type SaveDraftResult =
   | { ok: true; data: RealAnswerDraft }
@@ -119,6 +122,30 @@ export type RealInterview = {
   context: JobInterviewContext;
 };
 
+/** Pergunta/resposta do resultado: só o que foi persistido (HUMAN não tem nota por pergunta). */
+export type RealResultQuestion = {
+  id: string;
+  position: number;
+  type: WizardQuestionType;
+  text: string;
+  answer: string | null;
+  answeredAt: string | null;
+};
+
+/** `GET /interviews/:id/result` (avaliação HUMANA concluída). Tudo persistido: nada é recalculado. */
+export type RealInterviewResult = {
+  interview: RealInterview;
+  evaluation: {
+    /** Nota geral gravada pelo Back (o cliente não recalcula). */
+    overallScore: number;
+    /** Chaves canônicas do Back (`clarity`, `domain_knowledge`...) com nota finita. */
+    criteriaScores: Record<string, number>;
+    summary: string;
+    completedAt: string | null;
+  };
+  questions: RealResultQuestion[];
+};
+
 /** Item de `GET /interviews/in-progress` (sem texto de resposta/rascunho). */
 export type RealInProgressInterview = {
   id: string;
@@ -140,6 +167,8 @@ export type CandidateInterviewFailure =
   | "not_in_progress"
   // 409 INTERVIEW_ALREADY_IN_PROGRESS: regra V1 (uma IN_PROGRESS por candidato).
   | "already_in_progress"
+  // 409 INTERVIEW_RESULT_NOT_AVAILABLE: a entrevista ainda não tem resultado para o candidato.
+  | "result_not_available"
   | "unauthorized"
   | "forbidden"
   | "error";
@@ -259,6 +288,58 @@ function toInterview(payload: unknown): RealInterview | null {
           ? context.workMode
           : null,
     },
+  };
+}
+
+function toResultQuestion(payload: unknown): RealResultQuestion | null {
+  if (!payload || typeof payload !== "object") return null;
+  const item = payload as Record<string, unknown>;
+  const type = typeof item.type === "string" ? QUESTION_TYPE_LABEL[item.type] : undefined;
+  if (!isUuid(item.id) || typeof item.position !== "number" || !type || typeof item.text !== "string") {
+    return null;
+  }
+  return {
+    id: item.id,
+    position: item.position,
+    type,
+    text: item.text,
+    answer: nullableString(item.answer),
+    answeredAt: nullableString(item.answeredAt),
+  };
+}
+
+function toInterviewResult(payload: unknown): RealInterviewResult | null {
+  if (!payload || typeof payload !== "object") return null;
+  const body = payload as Record<string, unknown>;
+  const interview = toInterview(body.interview);
+  const evaluation = body.evaluation as Record<string, unknown> | null | undefined;
+  if (
+    !interview ||
+    !evaluation ||
+    typeof evaluation !== "object" ||
+    typeof evaluation.overallScore !== "number" ||
+    !Number.isFinite(evaluation.overallScore) ||
+    !Array.isArray(body.questions)
+  ) {
+    return null;
+  }
+  const criteriaScores: Record<string, number> = {};
+  if (evaluation.criteriaScores && typeof evaluation.criteriaScores === "object") {
+    for (const [key, value] of Object.entries(evaluation.criteriaScores as Record<string, unknown>)) {
+      if (typeof value === "number" && Number.isFinite(value)) criteriaScores[key] = value;
+    }
+  }
+  const questions = body.questions.map(toResultQuestion);
+  if (questions.some((question) => question === null)) return null;
+  return {
+    interview,
+    evaluation: {
+      overallScore: evaluation.overallScore,
+      criteriaScores,
+      summary: typeof evaluation.summary === "string" ? evaluation.summary : "",
+      completedAt: nullableString(evaluation.completedAt),
+    },
+    questions: (questions as RealResultQuestion[]).sort((a, b) => a.position - b.position),
   };
 }
 
@@ -397,6 +478,15 @@ function failureFromBody(
         ...(isUuid(body.interviewId) ? { existingInterviewId: body.interviewId } : {}),
       };
     }
+    if (status === 409 && body?.code === INTERVIEW_RESULT_NOT_AVAILABLE_CODE) {
+      const interviewStatus = toStatus(body.interviewStatus);
+      return {
+        ok: false,
+        reason: "result_not_available",
+        message,
+        ...(interviewStatus ? { interviewStatus } : {}),
+      };
+    }
     if (status === 409 && body?.code === INTERVIEW_NOT_IN_PROGRESS_CODE) {
       const interviewStatus = toStatus(body.interviewStatus);
       return {
@@ -524,6 +614,22 @@ export async function getRealInterview(
   }
   const interview = toInterview(await readJson(response));
   return interview ? { ok: true, data: interview } : invalidResponse();
+}
+
+/**
+ * Resultado real do candidato (`GET /interviews/:id/result`). 409
+ * INTERVIEW_RESULT_NOT_AVAILABLE => `result_not_available`; 404 => `not_found`.
+ */
+export async function getRealInterviewResult(
+  interviewId: string,
+): Promise<CandidateInterviewResult<RealInterviewResult>> {
+  const response = await request(`${idPath(interviewId)}/result`, { method: "GET" });
+  if (!response) return networkFailure();
+  if (!response.ok) {
+    return failureFromResponse(response, "Não foi possível carregar o resultado. Tente novamente.");
+  }
+  const result = toInterviewResult(await readJson(response));
+  return result ? { ok: true, data: result } : invalidResponse();
 }
 
 function parseQuestionsState(

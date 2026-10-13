@@ -116,6 +116,7 @@ import {
   createRealInterview,
   generateRealQuestions,
   getRealInterview,
+  getRealInterviewResult,
   getRealQuestions,
   getRealQuestionsState,
   getRealQuestionsStateForResume,
@@ -125,6 +126,7 @@ import {
   saveRealEvaluationMode,
   submitRealInterview,
   type RealInterview,
+  type RealInterviewResult,
   type RealInterviewQuestion,
   type RealInterviewStatus,
 } from "./services/candidate-interviews-service";
@@ -164,6 +166,14 @@ import {
   staleNoticeTone,
 } from "./domain/interview-session-guard";
 import { startInterviewForContext } from "./domain/interview-start";
+import {
+  UNSUPPORTED_REPORT_VIEW,
+  buildReportView,
+  describeReportFailure,
+  isSupportedReportResult,
+  type ReportFailureAction,
+  type ReportFailureView,
+} from "./domain/candidate-report-view";
 import { buildTrackingView, describeTrackingFailure, resolveSubmitDestination } from "./domain/interview-tracking-view";
 import { diffServerState } from "./domain/interview-sync-reconcile";
 import { CANCELLED_TEXTAREA_CLASS, PROGRESS_LABELS, isCancelledSession, resolveProgressVisual } from "./domain/interview-terminal-view";
@@ -224,7 +234,6 @@ import {
   getAverageScore,
   getCandidateInterviews,
   getEvaluationByInterviewId,
-  getInterviewById,
   getReportByInterviewId,
   statusLabelFromInterview,
 } from "./services/interviews-service";
@@ -3863,183 +3872,122 @@ function PendingScreen({
   );
 }
 
-// ─── Screen 11: Resultado e Relatório ─────────────────────────────────────────
+// ─── Screen 11: Resultado e Relatório (real, 6A.3) ────────────────────────────
+// Fonte da verdade: GET /interviews/:id/result (avaliação HUMANA concluída). Sem mock, sem
+// localStorage de resultado e sem recalcular a nota. IA continua fora desta fase.
 
-function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void; session: MockAuthSession }) {
+type ReportLoadState =
+  | { status: "loading" }
+  | { status: "error"; reason: string; message: string }
+  | { status: "ready"; result: RealInterviewResult };
+
+function reportScoreState(score: number) {
+  if (score >= 9) return { label: "Excelente", color: "#16A34A", bg: "bg-green-50", text: "text-green-700", border: "border-green-200" };
+  if (score >= 7) return { label: "Bom", color: "#1D4ED8", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" };
+  return { label: "Atenção", color: "#D97706", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" };
+}
+
+const formatReportScore = (score: number) => score.toFixed(1).replace(".", ",");
+
+function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
   const { id } = useParams();
-  const interview = getInterviewById(id);
-  const evaluation = getEvaluationByInterviewId(id);
-  const report = getReportByInterviewId(id);
-  const candidateIdentity = getCandidateIdentity(session);
-  const [resultView, setResultView] = useState<"Atual" | "Anterior" | "Melhor resultado">("Atual");
-  const [isReportFading, setIsReportFading] = useState(false);
+  const [loadState, setLoadState] = useState<ReportLoadState>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!id || !isUuid(id)) {
+      setLoadState({ status: "error", reason: "not_found", message: "" });
+      return;
+    }
+    setLoadState({ status: "loading" });
+    void getRealInterviewResult(id).then((result) => {
+      if (cancelled) return;
+      setLoadState(
+        result.ok
+          ? { status: "ready", result: result.data }
+          : { status: "error", reason: result.reason, message: result.message },
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, reloadKey]);
+
+  const renderFailure = (failure: ReportFailureView) => {
+    const run = (action: ReportFailureAction) => {
+      if (action === "retry") setReloadKey((key) => key + 1);
+      else if (action === "back-to-status" && id) routerNavigate(`/candidate/interviews/${id}/status`);
+      else onNavigate("interview-history");
+    };
+    const labels: Record<ReportFailureAction, string> = {
+      retry: "Tentar novamente",
+      "back-to-status": "Voltar ao acompanhamento",
+      "back-to-history": "Voltar ao histórico",
+    };
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado e Relatório" subtitle="Relatório da entrevista">
+        <EmptyState
+          icon={failure.primary === "back-to-status" ? Clock : AlertCircle}
+          title={failure.title}
+          description={failure.description}
+          className="w-full max-w-xl p-10"
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Btn variant="primary" onClick={() => run(failure.primary)}>{labels[failure.primary]}</Btn>
+              {failure.secondary && <Btn variant="outline" onClick={() => run(failure.secondary!)}>{labels[failure.secondary]}</Btn>}
+            </div>
+          }
+        />
+      </AuthLayout>
+    );
+  };
+
+  if (loadState.status === "loading") {
+    return (
+      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado e Relatório" subtitle="Relatório da entrevista">
+        <Card className="w-full max-w-xl p-10 text-center">
+          <Spinner />
+          <p className="text-sm text-muted-foreground mt-3">Carregando o relatório da entrevista...</p>
+        </Card>
+      </AuthLayout>
+    );
+  }
+
+  if (loadState.status === "error") {
+    return renderFailure(describeReportFailure(loadState.reason, loadState.message));
+  }
+
+  if (!isSupportedReportResult(loadState.result)) {
+    return renderFailure(UNSUPPORTED_REPORT_VIEW);
+  }
+
+  return <ReportContent result={loadState.result} onNavigate={onNavigate} />;
+}
+
+function ReportContent({ result, onNavigate }: { result: RealInterviewResult; onNavigate: (s: Screen) => void }) {
   const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
-
-  if (!interview || interview.candidateId !== candidateIdentity.id) {
-    return (
-      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle="Relatório da entrevista">
-        <Card className="w-full max-w-2xl p-6 text-center">
-          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">{interview ? "Este relatório não pertence à sua conta" : "Relatório não encontrado"}</h3>
-          <p className="text-sm text-muted-foreground mb-5">Acesse o histórico para consultar relatórios vinculados ao seu perfil.</p>
-          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
-        </Card>
-      </AuthLayout>
-    );
-  }
-
-  if (!report || report.status !== "AVAILABLE") {
-    const pendingReportMessage = interview.evaluationMode === "AI"
-      ? "O relatório ficará disponível após o processamento da avaliação por IA."
-      : "O relatório fica disponível após a conclusão da avaliação humana.";
-    return (
-      <AuthLayout current="report" onNavigate={onNavigate} title="Resultado indisponível" subtitle={interview.context.title}>
-        <Card className="w-full max-w-2xl p-6 text-center">
-          <Clock className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-bold text-foreground mb-2">Relatório ainda não liberado</h3>
-          <p className="text-sm text-muted-foreground mb-5">{pendingReportMessage}</p>
-          <Btn variant="primary" onClick={() => onNavigate("interview-history")}>Voltar ao histórico</Btn>
-        </Card>
-      </AuthLayout>
-    );
-  }
-
-  const normalizeEvaluationCriteria = (scores?: Record<string, number>) =>
-    scores
-      ? Object.entries(scores).map(([name, score]) => ({
-        name: name === "Aderência aos requisitos" ? "Aderência" : name === "Capacidade de exemplificar" ? "Exemplos" : name,
-        score,
-      }))
-      : [];
-  const resolveEvaluationScore = (candidateEvaluation?: typeof evaluation) =>
-    candidateEvaluation?.overallScore ?? getAverageScore(candidateEvaluation?.scores);
-  const resolveComparisonTimestamp = (item: {
-    report?: { generatedAt?: string; updatedAt: string; createdAt: string };
-    interview?: { submittedAt?: string; updatedAt: string; createdAt: string };
-    evaluation?: { completedAt?: string; updatedAt: string; createdAt: string };
-  }) => {
-    const raw =
-      item.evaluation?.completedAt ??
-      item.report?.generatedAt ??
-      item.interview?.submittedAt ??
-      item.evaluation?.updatedAt ??
-      item.report?.updatedAt ??
-      item.interview?.updatedAt ??
-      item.evaluation?.createdAt ??
-      item.report?.createdAt ??
-      item.interview?.createdAt;
-    const timestamp = raw ? new Date(raw).getTime() : Number.NaN;
-    return Number.isFinite(timestamp) ? timestamp : 0;
-  };
-  const availableReportEntries = getAvailableCandidateReports(candidateIdentity.id)
-    .filter((entry) => entry.evaluation)
-    .map((entry) => ({
-      ...entry,
-      key: entry.evaluation!.id,
-      score: resolveEvaluationScore(entry.evaluation),
-      timestamp: resolveComparisonTimestamp(entry),
-    }))
-    .filter((entry) => entry.score != null)
-    .sort((a, b) => b.timestamp - a.timestamp);
-  const currentEntry = availableReportEntries.find((entry) =>
-    entry.interview.id === interview?.id ||
-    entry.report.id === report?.id ||
-    entry.evaluation?.id === evaluation?.id
-  );
-  const currentKey = currentEntry?.key ?? evaluation?.id ?? id ?? "current";
-  const currentTimestamp = currentEntry?.timestamp ?? resolveComparisonTimestamp({ report: report ?? undefined, interview: interview ?? undefined, evaluation: evaluation ?? undefined });
-  const previousEntry = availableReportEntries
-    .filter((entry) => entry.key !== currentKey && entry.timestamp < currentTimestamp)
-    .sort((a, b) => b.timestamp - a.timestamp)[0];
-  const bestAvailableEntry = [...availableReportEntries]
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.timestamp - a.timestamp)[0];
-  const bestEntry = bestAvailableEntry &&
-    bestAvailableEntry.key !== currentKey &&
-    bestAvailableEntry.key !== previousEntry?.key
-      ? bestAvailableEntry
-      : undefined;
-  type ReportResultOption = "Atual" | "Anterior" | "Melhor resultado";
-  type ReportResult = {
-    evaluation: typeof evaluation;
-    summary: string;
-    criteria: { name: string; score: number }[];
-    overallScore?: number | null;
-    evaluationMode?: EvaluationMode | null;
-  };
-  const reportResults: Record<ReportResultOption, ReportResult | undefined> = {
-    Atual: {
-      evaluation,
-      summary:
-        evaluation?.summary || evaluation?.comment || "Resumo não informado para esta avaliação.",
-      criteria: normalizeEvaluationCriteria(evaluation?.scores),
-      overallScore: resolveEvaluationScore(evaluation),
-      evaluationMode: interview?.evaluationMode,
-    },
-    Anterior: previousEntry?.evaluation ? {
-        evaluation: previousEntry.evaluation,
-        summary: previousEntry.evaluation.summary || previousEntry.evaluation.comment || "Resumo não informado para esta avaliação.",
-        criteria: normalizeEvaluationCriteria(previousEntry.evaluation.scores),
-        overallScore: previousEntry.score,
-        evaluationMode: previousEntry.interview.evaluationMode,
-      } : undefined,
-    "Melhor resultado": bestEntry?.evaluation ? {
-        evaluation: bestEntry.evaluation,
-        summary: bestEntry.evaluation.summary || bestEntry.evaluation.comment || "Resumo não informado para esta avaliação.",
-        criteria: normalizeEvaluationCriteria(bestEntry.evaluation.scores),
-        overallScore: bestEntry.score,
-        evaluationMode: bestEntry.interview.evaluationMode,
-      } : undefined,
-  };
-  const resultOptions = (["Atual", "Anterior", "Melhor resultado"] as const)
-    .filter((option) => Boolean(reportResults[option]));
-  const currentReport = reportResults[resultView] ?? reportResults.Atual!;
-  const radarData = currentReport.criteria;
-  const computedAverageScore = radarData.length ? radarData.reduce((sum, item) => sum + item.score, 0) / radarData.length : 0;
-  const averageScoreValue = currentReport.overallScore ?? computedAverageScore;
-  const averageScore = averageScoreValue.toFixed(1);
-
-  const scoreState = (score: number) => {
-    if (score >= 9) return { label: "Excelente", color: "#16A34A", bg: "bg-green-50", text: "text-green-700", border: "border-green-200", badge: "success" as const };
-    if (score >= 7) return { label: "Bom", color: "#1D4ED8", bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200", badge: "info" as const };
-    return { label: "Atenção", color: "#D97706", bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200", badge: "warning" as const };
-  };
-
-  const formatScore = (score: number) => score.toFixed(1).replace(".", ",");
-  const generalState = scoreState(averageScoreValue);
-  const reportStrengths = currentReport.evaluation?.strengths?.filter(Boolean) ?? [];
-  const reportImprovements = currentReport.evaluation?.improvements?.filter(Boolean) ?? [];
-  const reportRecommendations = currentReport.evaluation?.recommendations?.filter(Boolean) ?? [];
-
-  const selectResultView = (option: typeof resultOptions[number]) => {
-    if (option === resultView) return;
-    setIsReportFading(true);
-    window.setTimeout(() => {
-      setResultView(option);
-      setIsReportFading(false);
-    }, 180);
-  };
+  const view = buildReportView(result);
+  const radarData = view.criteria.map((criterion) => ({ name: criterion.chartLabel, label: criterion.label, score: criterion.score }));
+  const generalState = reportScoreState(view.overallScore);
+  const subtitle = view.company ? `${view.title} · ${view.company}` : view.title;
 
   const renderRadarTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
     const item = payload[0].payload;
-    const state = scoreState(item.score);
+    const state = reportScoreState(item.score);
     return (
       <div className="rounded-xl border border-border bg-white px-3 py-2 shadow-lg">
-        <p className="text-xs font-bold text-foreground">{item.name}</p>
-        <p className="text-lg font-extrabold leading-tight" style={{ color: state.color }}>{formatScore(item.score)}</p>
+        <p className="text-xs font-bold text-foreground">{item.label}</p>
+        <p className="text-lg font-extrabold leading-tight" style={{ color: state.color }}>{formatReportScore(item.score)}</p>
         <p className={`text-[11px] font-semibold ${state.text}`}>{state.label}</p>
       </div>
     );
   };
 
   return (
-    <AuthLayout
-      current="report"
-      onNavigate={onNavigate}
-      title="Resultado e Relatório"
-      subtitle={`${interview.context.title} · ${interview.context.company}${report.generatedAt ? ` · ${new Date(report.generatedAt).toLocaleDateString("pt-BR")}` : ""}`}
-      actions={<Btn variant="outline" size="sm" onClick={() => toast.success("PDF gerado! O download iniciará em instantes.")}><Upload className="w-3.5 h-3.5" /> Exportar PDF</Btn>}
-    >
+    <AuthLayout current="report" onNavigate={onNavigate} title="Resultado e Relatório" subtitle={subtitle}>
       <div className="w-full">
         {/* Score hero — two-panel */}
         <Card className="mb-6 overflow-hidden">
@@ -4049,27 +3997,21 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
               <p className="text-[11px] font-bold uppercase tracking-widest text-blue-700 mb-5 flex items-center gap-2">
                 <TrendingUp className="w-3.5 h-3.5" /> Desempenho Geral
               </p>
-              <div style={{ opacity: isReportFading ? 0 : 1, transition: "opacity 180ms ease" }}>
-                <div className="flex items-end gap-2 mb-4">
-                  <span className="text-[72px] sm:text-[80px] font-extrabold text-foreground leading-none">{averageScore}</span>
-                  <span className="text-2xl font-bold text-muted-foreground mb-3">/ 10</span>
-                </div>
-                <div className="mb-5">
-                  <span className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 ${generalState.bg} ${generalState.text} text-sm font-bold rounded-full border ${generalState.border}`}>
-                    <CheckCircle className="w-3.5 h-3.5" /> {generalState.label}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed mb-6">
-                  {currentReport.summary}
-                </p>
+              <div className="flex items-end gap-2 mb-4">
+                <span className="text-[72px] sm:text-[80px] font-extrabold text-foreground leading-none">{formatReportScore(view.overallScore)}</span>
+                <span className="text-2xl font-bold text-muted-foreground mb-3">/ 10</span>
               </div>
-              <div className="flex items-start gap-3 p-4 bg-white/70 rounded-xl border border-blue-100">
-                <Target className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-bold text-foreground">Continue evoluindo!</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Cada prática aproxima você da sua oportunidade ideal.</p>
-                </div>
+              <div className="mb-5">
+                <span className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 ${generalState.bg} ${generalState.text} text-sm font-bold rounded-full border ${generalState.border}`}>
+                  <CheckCircle className="w-3.5 h-3.5" /> {generalState.label}
+                </span>
               </div>
+              {view.summary && (
+                <>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-blue-700 mb-1.5">Parecer do avaliador</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line break-words">{view.summary}</p>
+                </>
+              )}
             </div>
 
             {/* Right: Radar chart */}
@@ -4083,23 +4025,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#D97706" }} /><span className="text-[11px] text-muted-foreground">Atenção (&lt; 7)</span></div>
                   </div>
                 </div>
-                <div className="flex w-fit max-w-full flex-wrap gap-0.5 rounded-lg border border-blue-100 bg-white/70 p-0.5 shadow-sm sm:flex-nowrap">
-                  {resultOptions.map(option => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => selectResultView(option)}
-                      className={`min-w-0 rounded-md px-2 py-1 text-[10px] font-bold leading-tight transition-all duration-150 sm:px-3 sm:text-xs ${
-                        resultView === option
-                          ? "bg-blue-600 text-white shadow-sm"
-                          : "text-blue-700/60 hover:text-blue-700"
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-                <EvaluationModeBadge mode={currentReport.evaluationMode} />
+                <EvaluationModeBadge mode={result.interview.evaluationMode} />
               </div>
               <ResponsiveContainer width="100%" height={268}>
                 <RadarChart data={radarData} outerRadius="68%" margin={{ top: 14, right: 34, bottom: 14, left: 34 }}>
@@ -4114,15 +4040,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                       const labelX = x + (dx / distance) * labelOffset;
                       const labelY = y + (dy / distance) * labelOffset + (dy > 0 ? 4 : -2);
                       return (
-                        <text
-                          x={labelX}
-                          y={labelY}
-                          textAnchor={textAnchor}
-                          fontSize={10}
-                          fontWeight={600}
-                          fill="#0F1B2D"
-                          {...rest}
-                        >
+                        <text x={labelX} y={labelY} textAnchor={textAnchor} fontSize={10} fontWeight={600} fill="#0F1B2D" {...rest}>
                           {payload.value}
                         </text>
                       );
@@ -4147,7 +4065,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                       if (cx == null || cy == null) return <circle key={key} cx={0} cy={0} r={0} fill="transparent" />;
                       const score = payload?.score ?? payload?.payload?.score ?? props.value ?? 0;
                       const name = payload?.name ?? payload?.payload?.name ?? "";
-                      const state = scoreState(score);
+                      const state = reportScoreState(score);
                       const isHovered = hoveredCriterion === name;
                       return (
                         <g
@@ -4157,7 +4075,7 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                           style={{ cursor: "pointer" }}
                         >
                           <g
-                            key={`${resultView}-${name}`}
+                            key={name}
                             style={{
                               transformBox: "fill-box",
                               transformOrigin: "center",
@@ -4175,22 +4093,15 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
                   />
                 </RadarChart>
               </ResponsiveContainer>
-              <div
-                key={resultView}
-                className="mt-3 grid grid-cols-1 gap-x-3 gap-y-1.5 border-t border-border pt-3 sm:grid-cols-2"
-                style={{ animation: "reportCriteriaIn 350ms ease-out" }}
-              >
-                {radarData.map(item => {
-                  const state = scoreState(item.score);
-                  const isHovered = hoveredCriterion === item.name;
+              <div className="mt-3 grid grid-cols-1 gap-x-3 gap-y-1.5 border-t border-border pt-3 sm:grid-cols-2" style={{ animation: "reportCriteriaIn 350ms ease-out" }}>
+                {view.criteria.map((item) => {
+                  const state = reportScoreState(item.score);
+                  const isHovered = hoveredCriterion === item.chartLabel;
                   return (
-                    <div
-                      key={item.name}
-                      className={`flex items-center justify-between gap-2 rounded-md px-1 py-1 transition-colors ${isHovered ? "bg-blue-50" : ""}`}
-                    >
-                      <span className="min-w-0 truncate text-xs font-medium text-foreground">{item.name}</span>
+                    <div key={item.key} className={`flex items-center justify-between gap-2 rounded-md px-1 py-1 transition-colors ${isHovered ? "bg-blue-50" : ""}`}>
+                      <span className="min-w-0 truncate text-xs font-medium text-foreground">{item.label}</span>
                       <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${state.bg} ${state.text}`}>
-                        {formatScore(item.score)} · {state.label}
+                        {formatReportScore(item.score)} · {state.label}
                       </span>
                     </div>
                   );
@@ -4200,81 +4111,43 @@ function ReportScreen({ onNavigate, session }: { onNavigate: (s: Screen) => void
           </div>
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-          {/* Strengths */}
-          <Card className="p-5 sm:p-6">
+        {/* Dados da entrevista (só o que existe) */}
+        {view.details.length > 0 && (
+          <Card className="p-5 sm:p-6 mb-5">
             <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-              <Award className="w-5 h-5 text-green-600" /> Pontos fortes
+              <Briefcase className="w-5 h-5 text-blue-600" /> Sobre a entrevista
             </h3>
-            <div className="space-y-3">
-              {reportStrengths.length > 0 ? reportStrengths.map((strength, index) => (
-                <div key={`${strength}-${index}`} className="flex gap-3 p-3 bg-green-50 rounded-xl border border-green-100">
-                  <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">{strength}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {view.details.map((detail) => (
+                <div key={detail.label} className="min-w-0">
+                  <p className="text-[11px] text-muted-foreground mb-0.5">{detail.label}</p>
+                  <p className="text-sm font-semibold text-foreground break-words">{detail.value}</p>
                 </div>
-              )) : (
-                <div className="flex gap-3 p-3 bg-muted rounded-xl border border-border">
-                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Esta avaliação não possui pontos fortes estruturados registrados.
-                  </p>
-                </div>
-              )}
+              ))}
             </div>
           </Card>
+        )}
 
-          {/* Improvements */}
-          <Card className="p-5 sm:p-6">
-            <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-amber-500" /> Oportunidades de melhoria
+        {/* Perguntas e respostas (sem nota por pergunta: não existe na avaliação humana) */}
+        <Card className="mb-5">
+          <div className="p-5 sm:p-6 border-b border-border">
+            <h3 className="font-bold text-foreground flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-blue-600" /> Perguntas e respostas
             </h3>
-            <div className="space-y-3">
-              {reportImprovements.length > 0 ? reportImprovements.map((improvement, index) => (
-                <div key={`${improvement}-${index}`} className="flex gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">{improvement}</p>
-                </div>
-              )) : (
-                <div className="flex gap-3 p-3 bg-muted rounded-xl border border-border">
-                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Esta avaliação não possui oportunidades de melhoria estruturadas registradas.
-                  </p>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Recommendations */}
-        <Card className="p-5 sm:p-6 mb-5">
-          <h3 className="font-bold text-foreground mb-4 flex items-center gap-2">
-            <Lightbulb className="w-5 h-5 text-blue-600" /> Recomendações de desenvolvimento
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            {reportRecommendations.length > 0
-              ? reportRecommendations.map((recommendation, index) => {
-                const RecommendationIcon = [BookOpen, MessageSquare, Target, Lightbulb][index % 4];
-                return (
-                  <div key={`${recommendation}-${index}`} className="flex gap-3">
-                    <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-                      <RecommendationIcon className="w-4 h-4 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-foreground mb-1">{`Recomendação ${index + 1}`}</p>
-                      <p className="text-xs text-muted-foreground leading-relaxed">{recommendation}</p>
-                    </div>
-                  </div>
-                );
-              })
-              : (
-                <div className="flex gap-3 rounded-xl border border-border bg-muted p-3 sm:col-span-2 xl:col-span-4">
-                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Esta avaliação não possui recomendações estruturadas registradas.
-                  </p>
-                </div>
-              )}
+          </div>
+          <div className="divide-y divide-border">
+            {view.questions.map((question) => (
+              <div key={question.id} className="p-5 sm:p-6">
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1">
+                  Pergunta {question.position} · {question.typeLabel}
+                </p>
+                <p className="text-sm font-semibold text-foreground mb-3 break-words">{question.text}</p>
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Sua resposta</p>
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line break-words">
+                  {question.answer ?? "Resposta não registrada."}
+                </p>
+              </div>
+            ))}
           </div>
         </Card>
 
@@ -7619,7 +7492,7 @@ function AppRoutes({ initialSession }: { initialSession: MockAuthSession }) {
           </Route>
           <Route path="/candidate/interviews/:id/success" element={protect("CANDIDATE", <InterviewDoneScreen onNavigate={navigate} />)} />
           <Route path="/candidate/interviews/:id/status" element={protect("CANDIDATE", <PendingScreen onNavigate={navigate} onResumeInterview={resumeInterviewFromServer} />)} />
-          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} session={session} />)} />
+          <Route path="/candidate/reports/:id" element={protect("CANDIDATE", <ReportScreen onNavigate={navigate} />)} />
 
           <Route path="/evaluator/activate" element={<EvalActivateScreen onNavigate={navigate} />} />
           <Route path="/evaluator/onboarding" element={protect("EVALUATOR", <EvalOnboardingScreen onNavigate={navigate} onComplete={() => completeOnboardingAndNavigate("eval-dashboard")} />)} />
