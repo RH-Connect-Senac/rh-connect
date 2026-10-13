@@ -181,13 +181,13 @@ export function EvalLayout({ current, onNavigate, title, subtitle, actions, chil
 // ─── Shared data ──────────────────────────────────────────────────────────────
 
 const CRITERIA_GUIDE = [
-  { name: "Clareza", desc: "Avalie se o candidato se expressa de forma clara e objetiva, sem ambiguidades.", weight: "15%", tip: "Score ≥ 8: linguagem direta e fácil de seguir. Score < 6: respostas vagas ou confusas." },
-  { name: "Coerência", desc: "Verifique se as ideias apresentadas têm relação lógica e consistência interna.", weight: "15%", tip: "Score ≥ 8: boa relação entre argumentos. Score < 6: contradições ou incoerências." },
-  { name: "Objetividade", desc: "O candidato manteve o foco na pergunta sem se desviar para temas irrelevantes?", weight: "10%", tip: "Score ≥ 8: resposta direta ao ponto. Score < 6: muitas digressões." },
-  { name: "Domínio", desc: "Demonstração de conhecimento técnico ou experiência na área da vaga.", weight: "20%", tip: "Score ≥ 8: domínio evidente com exemplos concretos. Score < 6: conhecimento superficial." },
-  { name: "Organização", desc: "A resposta teve estrutura bem definida: introdução, desenvolvimento e conclusão?", weight: "15%", tip: "Score ≥ 8: resposta bem estruturada. Score < 6: resposta sem organização aparente." },
-  { name: "Aderência aos requisitos", desc: "A resposta dialoga com os requisitos extraídos da vaga e com o contexto profissional apresentado?", weight: "15%", tip: "Score ≥ 8: forte relação com a vaga. Score < 6: pouca conexão com os requisitos." },
-  { name: "Capacidade de exemplificar", desc: "O candidato sustentou a resposta com exemplos, evidências ou situações concretas?", weight: "10%", tip: "Score ≥ 8: exemplos específicos e relevantes. Score < 6: ausência de exemplos." },
+  { name: "Clareza", desc: "Avalie se o candidato se expressa de forma clara e objetiva, sem ambiguidades.", tip: "Pontuação ≥ 8: linguagem direta e fácil de seguir. Pontuação < 6: respostas vagas ou confusas." },
+  { name: "Coerência", desc: "Verifique se as ideias apresentadas têm relação lógica e consistência interna.", tip: "Pontuação ≥ 8: boa relação entre argumentos. Pontuação < 6: contradições ou incoerências." },
+  { name: "Objetividade", desc: "O candidato manteve o foco na pergunta sem se desviar para temas irrelevantes?", tip: "Pontuação ≥ 8: resposta direta ao ponto. Pontuação < 6: muitas digressões." },
+  { name: "Domínio", desc: "Demonstração de conhecimento técnico ou experiência na área da vaga.", tip: "Pontuação ≥ 8: domínio evidente com exemplos concretos. Pontuação < 6: conhecimento superficial." },
+  { name: "Organização", desc: "A resposta teve estrutura bem definida: introdução, desenvolvimento e conclusão?", tip: "Pontuação ≥ 8: resposta bem estruturada. Pontuação < 6: resposta sem organização aparente." },
+  { name: "Aderência aos requisitos", desc: "A resposta dialoga com os requisitos extraídos da vaga e com o contexto profissional apresentado?", tip: "Pontuação ≥ 8: forte relação com a vaga. Pontuação < 6: pouca conexão com os requisitos." },
+  { name: "Capacidade de exemplificar", desc: "O candidato sustentou a resposta com exemplos, evidências ou situações concretas?", tip: "Pontuação ≥ 8: exemplos específicos e relevantes. Pontuação < 6: ausência de exemplos." },
 ];
 
 function formatDateTime(value?: string) {
@@ -593,7 +593,6 @@ export function EvalReviewScreen({ onNavigate, evaluatorId }: { onNavigate: NavF
   const scores = Object.entries(reviewScores).map(([name, score]) => ({
     name,
     score,
-    weight: CRITERIA_GUIDE.find((criterion) => criterion.name === name)?.weight ?? "—",
   }));
   const scoredValues = scores.map((item) => item.score).filter((score) => score > 0);
   const isScoringComplete = scoredValues.length === scores.length;
@@ -654,7 +653,7 @@ export function EvalReviewScreen({ onNavigate, evaluatorId }: { onNavigate: NavF
         {/* Score summary */}
         <Card className="p-5 sm:p-6">
           <div className="flex items-start justify-between mb-5">
-            <h3 className="font-bold text-foreground">Resumo dos Scores</h3>
+            <h3 className="font-bold text-foreground">Resumo das Pontuações</h3>
             <div className="text-right">
               <p className="text-xs text-muted-foreground mb-0.5">{isScoringComplete ? "Média" : "Média parcial"}</p>
               <p className="text-4xl font-extrabold text-primary">{avg}</p>
@@ -672,7 +671,6 @@ export function EvalReviewScreen({ onNavigate, evaluatorId }: { onNavigate: NavF
                 <span className={`text-sm font-bold w-8 text-right ${s.score >= 8 ? "text-green-600" : s.score >= 6 ? "text-blue-600" : "text-amber-600"}`}>
                   {formatScore(s.score)}
                 </span>
-                <span className="text-xs text-muted-foreground w-8">{s.weight}</span>
               </div>
             ))}
           </div>
@@ -716,7 +714,7 @@ export function EvalCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
       <div className="w-full space-y-4">
         <Alert variant="info" className="flex items-start gap-3 p-4">
           <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-          <p className="text-sm text-blue-700">Use este guia para garantir consistência nas avaliações. Cada critério deve ser pontuado de 1 a 10 conforme as descrições abaixo.</p>
+          <p className="text-sm text-blue-700">Use este guia para garantir consistência nas avaliações. Cada critério deve ser pontuado de 0 a 10 conforme as descrições abaixo. Todos os critérios têm a mesma importância na pontuação geral, que é a média simples.</p>
         </Alert>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -727,7 +725,6 @@ export function EvalCriteriaScreen({ onNavigate }: { onNavigate: NavFn }) {
                   <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold">{i + 1}</div>
                   <h3 className="font-bold text-foreground">{c.name}</h3>
                 </div>
-                <Badge variant="info">Peso {c.weight}</Badge>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed mb-3">{c.desc}</p>
               <div className="p-3 bg-muted/50 rounded-xl">
@@ -1065,7 +1062,7 @@ const EVAL_ONBOARDING_STEPS = [
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>
           Como <strong className="text-foreground">Avaliador</strong>, você é responsável por analisar as
-          entrevistas textuais realizadas pelos candidatos e atribuir scores com base em critérios definidos.
+          entrevistas textuais realizadas pelos candidatos e atribuir pontuações com base em critérios definidos.
         </p>
         <div className="flex items-start gap-3 p-3 bg-teal-50 rounded-xl border border-teal-100">
           <Zap className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
@@ -1113,7 +1110,7 @@ const EVAL_ONBOARDING_STEPS = [
         <div className="space-y-2">
           {[
             { label: "Rascunho automático", desc: "Sua avaliação parcial é salva automaticamente" },
-            { label: "Revisão final",     desc: "Confira os scores antes de enviar" },
+            { label: "Revisão final",     desc: "Confira as pontuações antes de enviar" },
             { label: "Enviar avaliação",  desc: "O resultado é registrado e notifica o candidato" },
           ].map(s => (
             <div key={s.label} className="flex items-start gap-2">
@@ -1298,7 +1295,7 @@ export function EvalDoneScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn;
           <div className="inline-flex items-center gap-3 mt-6 px-6 py-4 bg-muted/50 rounded-2xl">
             <div className="text-center">
               <p className="text-4xl font-extrabold text-primary">{avg}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Score final / 10</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Pontuação final / 10</p>
             </div>
             <div className={`px-3 py-1 ${verdict.bg} rounded-xl`}>
               <p className={`text-sm font-bold ${verdict.color}`}>{verdict.label}</p>
@@ -1308,7 +1305,7 @@ export function EvalDoneScreen({ onNavigate, evaluatorId }: { onNavigate: NavFn;
 
         {/* Score breakdown */}
         <Card className="p-5">
-          <h3 className="font-bold text-foreground mb-4">Scores por Critério</h3>
+          <h3 className="font-bold text-foreground mb-4">Pontuações por Critério</h3>
           <div className="space-y-3">
             {scores.map(s => (
               <div key={s.name} className="flex items-center gap-3">
