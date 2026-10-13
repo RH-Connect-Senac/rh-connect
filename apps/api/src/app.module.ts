@@ -11,6 +11,7 @@ import { CandidateProfileModule } from './candidate-profile/candidate-profile.mo
 import { InterviewsModule } from './interviews/interviews.module';
 import { AdminInterviewsModule } from './admin-interviews/admin-interviews.module';
 import { EvaluatorInterviewsModule } from './evaluator-interviews/evaluator-interviews.module';
+import { AdminDashboardModule } from './admin-dashboard/admin-dashboard.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { EvaluatorInterviewsModule } from './evaluator-interviews/evaluator-inte
     InterviewsModule,
     AdminInterviewsModule,
     EvaluatorInterviewsModule,
+    AdminDashboardModule,
   ],
   controllers: [AppController],
   providers: [],

@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  PENDING_ASSIGNMENT_WHERE,
+  isEligibleEvaluatorStatus,
+} from './admin-rules';
+import {
   QUESTION_SELECT,
   toQuestionResponse,
   type QuestionRecord,
@@ -136,10 +140,7 @@ export class AdminInterviewsService {
 
   // Somente HUMAN + PENDING_ASSIGNMENT, mais antigas primeiro.
   async listPendingAssignment() {
-    const where = {
-      evaluation_mode: 'HUMAN',
-      status: 'PENDING_ASSIGNMENT',
-    } as const;
+    const where = PENDING_ASSIGNMENT_WHERE;
 
     const [records, total] = await Promise.all([
       this.prisma.interview.findMany({
@@ -200,7 +201,7 @@ export class AdminInterviewsService {
         name: record.app_user.name,
         email: record.app_user.email,
         accountStatus: record.app_user.account_status,
-        eligible: record.app_user.account_status === 'ACTIVE',
+        eligible: isEligibleEvaluatorStatus(record.app_user.account_status),
         area: record.area,
         specialization: record.specialization,
         availabilityStatus: record.availability_status,
