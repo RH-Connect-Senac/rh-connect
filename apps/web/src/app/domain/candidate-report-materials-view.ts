@@ -86,6 +86,16 @@ export type RecommendedMaterialsView = {
   cards: RecommendedMaterialCard[];
 };
 
+/**
+ * Subconjunto do contrato que decide COMO um material recomendado é apresentado. Compartilhado
+ * pelo relatório da entrevista (R6) e pela lista consolidada de Materiais (R7B): as duas telas
+ * recebem este mesmo recorte, sem acoplar uma à outra.
+ */
+export type RecommendedMaterialInput = Pick<
+  MaterialRecommendation,
+  "source" | "title" | "resourceType" | "area" | "reason" | "availability" | "internalSlug" | "directLinkAvailable" | "url" | "coverUrl"
+>;
+
 export type RecommendedMaterialsOptions = {
   /** O slug informado pelo Back existe no catálogo do app? (evita CTA para uma rota que não abre). */
   hasInternalMaterial: (slug: string) => boolean;
@@ -103,7 +113,7 @@ export function safeHttpUrl(value: string | null | undefined): string | null {
 }
 
 function resolveAction(
-  item: MaterialRecommendation,
+  item: RecommendedMaterialInput,
   options: RecommendedMaterialsOptions,
 ): RecommendedMaterialAction {
   if (item.availability === "UNAVAILABLE") {
@@ -134,6 +144,26 @@ function resolveAction(
   return { kind: "none", notice: { text: MATERIAL_UNKNOWN_NOTICE, tone: "unknown" } };
 }
 
+/** Card de UM material recomendado (fonte, tipo, área, motivo, capa segura e ação/aviso). */
+export function buildRecommendedMaterialCard(
+  item: RecommendedMaterialInput,
+  options: RecommendedMaterialsOptions,
+  key: string,
+): RecommendedMaterialCard {
+  return {
+    key,
+    source: item.source,
+    title: item.title,
+    sourceLabel: SOURCE_LABEL[item.source],
+    typeLabel: item.resourceType || null,
+    areaLabel: AREA_LABEL[item.area],
+    reason: item.reason || null,
+    coverUrl: safeHttpUrl(item.coverUrl),
+    external: item.source !== "RH_CONNECT",
+    action: resolveAction(item, options),
+  };
+}
+
 /**
  * Seção "Materiais recomendados". `null` quando não há recomendação (a seção não é renderizada:
  * entrevistas antigas ou sem recomendação não mostram card vazio nem "nenhuma recomendação").
@@ -147,17 +177,8 @@ export function buildRecommendedMaterialsView(
   return {
     title: RECOMMENDED_MATERIALS_TITLE,
     subtitle: RECOMMENDED_MATERIALS_SUBTITLE,
-    cards: items.map((item, index) => ({
-      key: `${item.source}-${item.position}-${index}`,
-      source: item.source,
-      title: item.title,
-      sourceLabel: SOURCE_LABEL[item.source],
-      typeLabel: item.resourceType || null,
-      areaLabel: AREA_LABEL[item.area],
-      reason: item.reason || null,
-      coverUrl: safeHttpUrl(item.coverUrl),
-      external: item.source !== "RH_CONNECT",
-      action: resolveAction(item, options),
-    })),
+    cards: items.map((item, index) =>
+      buildRecommendedMaterialCard(item, options, `${item.source}-${item.position}-${index}`),
+    ),
   };
 }

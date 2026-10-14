@@ -79,7 +79,10 @@ import {
 } from "./components/materials/editorial-material-card";
 import { ContinueLearningSection } from "./components/materials/continue-learning-section";
 import { RecommendedMaterialsSection } from "./components/materials/recommended-materials-section";
-import { resolveMaterialDetailOrigin } from "./domain/material-detail-origin";
+import { MATERIALS_LIST_PATH, resolveMaterialDetailOrigin } from "./domain/material-detail-origin";
+import { ConsolidatedRecommendationsPanel } from "./components/materials/consolidated-recommendations-panel";
+import { toConsolidatedPanelState } from "./domain/candidate-material-recommendations-view";
+import { useConsolidatedMaterialRecommendations } from "./hooks/use-consolidated-material-recommendations";
 import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
@@ -6267,6 +6270,14 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
 
   const materiais = mergeMaterialsWithUserState(candidateIdentity.id, materialStates);
 
+  // "Recomendados para você": recomendações consolidadas REAIS (GET /candidate/materials/recommendations),
+  // carregadas uma vez ao abrir a página (sem polling) e independentes de busca/filtros/abas.
+  // Carga one-shot própria (fora do candidate live sync): sem polling nem refresh automático.
+  const recommendations = useConsolidatedMaterialRecommendations(candidateIdentity.id);
+  const recommendationsPanelState = toConsolidatedPanelState(recommendations.state, {
+    hasInternalMaterial: (slug) => findSupportMaterialBySlug(slug) !== undefined,
+  });
+
   useEffect(() => {
     const term = busca.trim();
     if (term === "") {
@@ -6540,7 +6551,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
   });
   const filtradoOrdenado = abaFiltro === "historico" ? sortMaterialsByLastAccess(filtrado) : filtrado;
 
-  const recomendados = materiais.filter(m => m.recommended).slice(0, 2);
   const emAndamento = sortMaterialsByLastAccess(materiais).filter(m => m.status === "IN_PROGRESS");
   const cacholaAreas = externalResources.reduce<string[]>((areas, resource) => {
     const area = resource.area?.trim();
@@ -6730,6 +6740,17 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
             }
           >
             {(() => {
+              // Recomendados: lista consolidada real; não depende de busca, filtros nem do catálogo.
+              if (abaFiltro === "recomendados") {
+                return (
+                  <ConsolidatedRecommendationsPanel
+                    state={recommendationsPanelState}
+                    onNavigate={(path) => routerNavigate(path, { state: { from: MATERIALS_LIST_PATH } })}
+                    onRetry={recommendations.reload}
+                  />
+                );
+              }
+
               const rhCard = (m: MaterialCardView) => (
                 <EditorialMaterialCard
                   key={`rh-${m.id}`}
@@ -6760,12 +6781,6 @@ function MaterialsScreen({ onNavigate, session }: { onNavigate: (s: Screen) => v
                 // Ordem fixa: RH Connect → Cachola → Orango.
                 cards = [...filtradoOrdenado.map(rhCard), ...todosCachola.items.map(externalCard), ...todosOrango.items.map(externalCard)];
                 loading = loadingTodosExternal && todosCachola.items.length === 0 && todosOrango.items.length === 0;
-              } else if (abaFiltro === "recomendados") {
-                // Mesmos materiais (`recommended`, no máximo 2) que antes ficavam na seção
-                // independente, agora no mesmo card editorial vertical do restante do Explore.
-                cards = recomendados
-                  .filter((m) => filtrado.some((item) => item.id === m.id))
-                  .map(rhCard);
               } else if (abaFiltro === "rh") {
                 cards = filtradoOrdenado.map(rhCard);
               } else if (abaFiltro === "cachola" || abaFiltro === "orango") {
