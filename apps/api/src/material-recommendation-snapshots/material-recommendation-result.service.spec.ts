@@ -8,7 +8,31 @@ import type {
   SnapshotResult,
 } from './material-recommendation-snapshot.service';
 
+// Taxonomia real + UMA entrada fictícia em que id e slug são diferentes, para
+// provar que o serviço devolve o slug e não depende de id === slug.
+jest.mock('../material-recommendations/rh-material-taxonomy', () => {
+  const actual = jest.requireActual<
+    typeof import('../material-recommendations/rh-material-taxonomy')
+  >('../material-recommendations/rh-material-taxonomy');
+  return {
+    ...actual,
+    RH_MATERIAL_TAXONOMY: [
+      ...actual.RH_MATERIAL_TAXONOMY,
+      {
+        id: 'rh-id-editorial-distinto',
+        slug: 'slug-distinto-do-id',
+        title: 'Material com id diferente do slug',
+        area: 'GERAL',
+        needs: { primary: [], secondary: [] },
+        generalPreparation: false,
+      },
+    ],
+  };
+});
+
 const ID = '11111111-1111-4111-8111-111111111111';
+const RH_ID_DISTINTO = 'rh-id-editorial-distinto';
+const RH_SLUG_DISTINTO = 'slug-distinto-do-id';
 const CACHOLA_KEY = '352c172a38592288cb5406c7e7aff3c7';
 const ORANGO_KEY = 'ORANGO|99';
 const CACHOLA_KEY_2 = 'db7cf13bec46a94bb0483e7a802152b2';
@@ -271,6 +295,67 @@ describe('contrato (nada interno vaza)', () => {
     expect(json.split('como-se-apresentar-em-entrevistas')).toHaveLength(2);
     expect(json).not.toContain(CACHOLA_KEY);
     expect(json).not.toContain(ORANGO_KEY);
+  });
+
+  it('RH Connect: internalSlug é o SLUG da taxonomia, não o material_ref (id) do snapshot', async () => {
+    const { service } = makeService(
+      ready([item({ position: 1, materialRef: RH_ID_DISTINTO })]),
+    );
+
+    const [view] = await service.listForInterview(ID);
+
+    expect(RH_ID_DISTINTO).not.toBe(RH_SLUG_DISTINTO);
+    expect(view.internalSlug).toBe(RH_SLUG_DISTINTO);
+    expect(view.internalSlug).not.toBe(RH_ID_DISTINTO);
+    // O id (material_ref) não aparece em nenhum lugar do contrato.
+    expect(JSON.stringify(view)).not.toContain(RH_ID_DISTINTO);
+    expect(view.availability).toBe('IN_APP');
+  });
+
+  it('RH Connect inexistente na taxonomia atual: internalSlug null e a recomendação histórica permanece', async () => {
+    const { service, findMany } = makeService(
+      ready([
+        item({
+          position: 1,
+          materialRef: 'material-removido-da-taxonomia',
+          title: 'Título histórico antigo',
+          reason: 'Motivo histórico antigo.',
+        }),
+      ]),
+    );
+
+    const [view] = await service.listForInterview(ID);
+
+    expect(view).toMatchObject({
+      source: 'RH_CONNECT',
+      title: 'Título histórico antigo',
+      reason: 'Motivo histórico antigo.',
+      availability: 'IN_APP',
+      internalSlug: null,
+      url: null,
+      coverUrl: null,
+      directLinkAvailable: false,
+    });
+    expect(JSON.stringify(view)).not.toContain('material-removido-da-taxonomia');
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('externos mantêm internalSlug null mesmo com ref igual a um id do RH Connect', async () => {
+    const { service } = makeService(
+      ready([
+        item({ position: 1, source: 'CACHOLA', materialRef: RH_ID_DISTINTO }),
+        item({ position: 2, source: 'ORANGO', materialRef: ORANGO_KEY }),
+      ]),
+      [
+        resource({ external_key: RH_ID_DISTINTO }),
+        resource({ source: 'ORANGO', external_key: ORANGO_KEY }),
+      ],
+    );
+
+    const views = await service.listForInterview(ID);
+
+    expect(views.map((view) => view.internalSlug)).toEqual([null, null]);
+    expect(JSON.stringify(views)).not.toContain(RH_ID_DISTINTO);
   });
 
   it('I: sai sempre em position ASC, sem reordenar pela disponibilidade', async () => {

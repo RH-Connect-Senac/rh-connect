@@ -5,6 +5,7 @@ import type {
   MaterialSource,
   NeedKey,
 } from '../material-recommendations/recommendation.types';
+import { RH_MATERIAL_TAXONOMY } from '../material-recommendations/rh-material-taxonomy';
 import { PrismaService } from '../prisma/prisma.service';
 import { MaterialRecommendationSnapshotService } from './material-recommendation-snapshot.service';
 import type { MaterialSnapshotItem } from './material-recommendation-snapshot.service';
@@ -25,9 +26,10 @@ export type MaterialAvailability =
 // Contrato de `materialRecommendations` no resultado do candidato. Os oito
 // primeiros campos são o snapshot HISTÓRICO (nunca trocados por dado atual);
 // os quatro últimos são operacionais e vêm do catálogo atual quando possível.
-// `internalSlug` só existe para RH_CONNECT (slug/id editorial da rota interna
-// do aplicativo); nos externos é sempre null. Sem material_ref, external_key,
-// UUID de snapshot ou de item.
+// `internalSlug` só existe para RH_CONNECT: é o SLUG da taxonomia atual
+// (a rota interna do aplicativo localiza por slug, não por id). Fica null nos
+// externos e quando o material histórico não existe mais na taxonomia. Sem
+// material_ref, external_key, UUID de snapshot ou de item.
 export interface MaterialRecommendationView {
   position: number;
   source: MaterialSource;
@@ -55,6 +57,14 @@ interface CurrentResource {
 
 const keyOf = (source: string, ref: string) => `${source}:${ref}`;
 
+// `material_ref` do RH Connect é o ID editorial; a rota interna usa o SLUG.
+// Id e slug são campos distintos da taxonomia (hoje coincidem por convenção,
+// mas nada depende disso). Ref que a taxonomia atual não conhece (snapshot
+// antigo) resulta em null: a recomendação histórica continua, sem rota direta.
+const RH_SLUG_BY_ID: ReadonlyMap<string, string> = new Map(
+  RH_MATERIAL_TAXONOMY.map((entry) => [entry.id, entry.slug]),
+);
+
 function nonEmpty(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
@@ -76,11 +86,10 @@ function toView(
   const none = { directLinkAvailable: false, url: null, coverUrl: null };
 
   if (item.source === 'RH_CONNECT') {
-    // Única fonte em que a referência editorial é a rota pública do app.
     return {
       ...historical,
       availability: 'IN_APP',
-      internalSlug: item.materialRef,
+      internalSlug: RH_SLUG_BY_ID.get(item.materialRef) ?? null,
       ...none,
     };
   }
