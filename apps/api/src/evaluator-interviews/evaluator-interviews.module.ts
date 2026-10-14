@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MaterialRecommendationSnapshotModule } from '../material-recommendation-snapshots/material-recommendation-snapshot.module';
 import { EvaluatorCompletionController } from './evaluator-completion.controller';
 import { EvaluatorCompletionService } from './evaluator-completion.service';
 import { EvaluatorEvaluationController } from './evaluator-evaluation.controller';
@@ -9,6 +10,7 @@ import { EvaluatorInterviewsController } from './evaluator-interviews.controller
 import { EvaluatorInterviewsService } from './evaluator-interviews.service';
 
 @Module({
+  imports: [MaterialRecommendationSnapshotModule],
   controllers: [
     EvaluatorInterviewsController,
     EvaluatorEvaluationController,
