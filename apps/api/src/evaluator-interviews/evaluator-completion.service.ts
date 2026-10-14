@@ -1,4 +1,5 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { MaterialRecommendationSnapshotService } from '../material-recommendation-snapshots/material-recommendation-snapshot.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { validateForCompletion } from './evaluation-criteria';
 import { EvaluatorInterviewsService } from './evaluator-interviews.service';
@@ -11,11 +12,19 @@ const CONCURRENT_MESSAGE =
 // da avaliação e os 7 critérios são lidos do BANCO dentro da transação; o
 // cliente não envia status, nota final nem avaliador. Só toca em
 // interview_evaluation e interview, nunca em avaliações por pergunta.
+//
+// Depois que a transação confirma (commit), tenta gerar o snapshot de materiais
+// recomendados. Isso é FORA da transação e isolado em try/catch: uma falha na
+// recomendação é logada e nunca desfaz nem impede a conclusão. O snapshot
+// ausente é gerado depois, sob demanda (lazy), por quem for ler o resultado.
 @Injectable()
 export class EvaluatorCompletionService {
+  private readonly logger = new Logger(EvaluatorCompletionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly interviews: EvaluatorInterviewsService,
+    private readonly materialSnapshots: MaterialRecommendationSnapshotService,
   ) {}
 
   async complete(userId: number, interviewId: string) {
@@ -25,7 +34,7 @@ export class EvaluatorCompletionService {
       interviewId,
     );
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const evaluation = await tx.interview_evaluation.findUnique({
         where: { interview_id: interviewId },
         select: {
@@ -92,5 +101,26 @@ export class EvaluatorCompletionService {
         completedAt,
       };
     });
+
+    // Transação já confirmada: a conclusão é definitiva daqui em diante.
+    await this.tryGenerateMaterialSnapshot(interviewId);
+    return result;
+  }
+
+  private async tryGenerateMaterialSnapshot(interviewId: string) {
+    try {
+      const outcome =
+        await this.materialSnapshots.getOrCreateSnapshot(interviewId);
+      if (outcome.kind === 'ineligible') {
+        this.logger.warn(
+          `Snapshot de materiais não gerado após a conclusão (entrevista ${interviewId}): ${outcome.reason}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Falha ao gerar o snapshot de materiais da entrevista ${interviewId}; a conclusão foi mantida e o snapshot será gerado sob demanda.`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 }

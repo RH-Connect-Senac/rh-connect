@@ -337,8 +337,8 @@ describe('Auth (e2e)', () => {
       .send({ email, password })
       .expect(200);
 
-    const loginCookies = loginResponse.headers['set-cookie'];
-    const refreshCookie = loginCookies.find((c: string) => c.startsWith('refresh_token='));
+    const loginCookies = loginResponse.headers['set-cookie'] as unknown as string[];
+    const refreshCookie = loginCookies.find((c: string) => c.startsWith('refresh_token=')) as string;
     expect(refreshCookie).toBeDefined();
 
     const refreshResponse = await request(app.getHttpServer())
@@ -346,8 +346,8 @@ describe('Auth (e2e)', () => {
       .set('Cookie', [refreshCookie])
       .expect(200);
 
-    const refreshCookies = refreshResponse.headers['set-cookie'];
-    const newAccessCookie = refreshCookies.find((c: string) => c.startsWith('access_token='));
+    const refreshCookies = refreshResponse.headers['set-cookie'] as unknown as string[];
+    const newAccessCookie = refreshCookies.find((c: string) => c.startsWith('access_token=')) as string;
     expect(newAccessCookie).toBeDefined();
 
     const meResponse = await request(app.getHttpServer())

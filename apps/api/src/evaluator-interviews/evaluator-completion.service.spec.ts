@@ -4,8 +4,10 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { MaterialRecommendationSnapshotService } from '../material-recommendation-snapshots/material-recommendation-snapshot.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { validateForCompletion } from './evaluation-criteria';
 import { EvaluatorCompletionService } from './evaluator-completion.service';
@@ -160,11 +162,19 @@ function makeService(interviews: Row[], evaluations: Row[]) {
   const interviewsService = new EvaluatorInterviewsService(
     prisma as unknown as PrismaService,
   );
+  // Snapshot de materiais: sempre falso nestes testes (o serviço real tem o
+  // próprio spec). Por padrão "gera com sucesso".
+  const snapshots = {
+    getOrCreateSnapshot: jest.fn((): Promise<unknown> =>
+      Promise.resolve({ kind: 'ready', created: true, snapshot: {} }),
+    ),
+  };
   const service = new EvaluatorCompletionService(
     prisma as unknown as PrismaService,
     interviewsService,
+    snapshots as unknown as MaterialRecommendationSnapshotService,
   );
-  return { service, interviewsService, prisma, hooks };
+  return { service, interviewsService, prisma, hooks, snapshots };
 }
 
 describe('conclusão válida', () => {
@@ -521,5 +531,109 @@ describe('proteções de código', () => {
     const source = read('evaluator-completion.service.ts');
     expect(source).toMatch(/this\.prisma\.\$transaction/);
     expect(source).not.toMatch(/this\.prisma\.interview(_evaluation)?\./);
+  });
+});
+
+describe('snapshot de materiais após a conclusão', () => {
+  let errorSpy: jest.SpyInstance;
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('gera o snapshot UMA vez, só depois da transação confirmada', async () => {
+    const interviews = [interview()];
+    const evaluations = [evaluation()];
+    const { service, prisma, snapshots } = makeService(interviews, evaluations);
+    const seen: Array<{ interview: unknown; evaluation: unknown }> = [];
+    snapshots.getOrCreateSnapshot.mockImplementation(() => {
+      seen.push({
+        interview: interviews[0].status,
+        evaluation: evaluations[0].status,
+      });
+      return Promise.resolve({ kind: 'ready', created: true, snapshot: {} });
+    });
+
+    await service.complete(CAMILA_USER_ID, ID_A);
+
+    expect(snapshots.getOrCreateSnapshot).toHaveBeenCalledTimes(1);
+    expect(snapshots.getOrCreateSnapshot).toHaveBeenCalledWith(ID_A);
+    // Já COMPLETED (commit feito) no instante da chamada.
+    expect(seen).toEqual([{ interview: 'COMPLETED', evaluation: 'COMPLETED' }]);
+    expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      snapshots.getOrCreateSnapshot.mock.invocationCallOrder[0],
+    );
+    // E fora da transação: a transação foi uma só e não recebeu o serviço.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('falha na geração NÃO desfaz a conclusão e a resposta continua de sucesso', async () => {
+    const interviews = [interview()];
+    const evaluations = [evaluation()];
+    const { service, snapshots } = makeService(interviews, evaluations);
+    snapshots.getOrCreateSnapshot.mockRejectedValue(new Error('banco fora'));
+
+    const result = await service.complete(CAMILA_USER_ID, ID_A);
+
+    expect(result).toEqual({
+      interviewId: ID_A,
+      status: 'COMPLETED',
+      evaluationStatus: 'COMPLETED',
+      overallScore: 8.1,
+      completedAt: evaluations[0].completed_at,
+    });
+    expect(interviews[0].status).toBe('COMPLETED');
+    expect(evaluations[0].status).toBe('COMPLETED');
+    expect(evaluations[0].overall_score).toBe(8.1);
+  });
+
+  it('a falha é registrada em log (não é engolida em silêncio)', async () => {
+    const { service, snapshots } = makeService([interview()], [evaluation()]);
+    snapshots.getOrCreateSnapshot.mockRejectedValue(new Error('banco fora'));
+
+    await service.complete(CAMILA_USER_ID, ID_A);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0][0])).toContain(ID_A);
+  });
+
+  it('resultado inelegível vira aviso em log e a conclusão segue válida', async () => {
+    const interviews = [interview()];
+    const { service, snapshots } = makeService(interviews, [evaluation()]);
+    snapshots.getOrCreateSnapshot.mockResolvedValue({
+      kind: 'ineligible',
+      reason: 'CRITERIA_INCOMPLETE',
+    });
+
+    const result = await service.complete(CAMILA_USER_ID, ID_A);
+
+    expect(result.status).toBe('COMPLETED');
+    expect(interviews[0].status).toBe('COMPLETED');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain('CRITERIA_INCOMPLETE');
+  });
+
+  it('não gera snapshot quando a conclusão falha (conflito, 404, rascunho inexistente)', async () => {
+    const conflict = makeService([interview()], [evaluation()]);
+    conflict.hooks.interviewCountZero = true;
+    await expect(
+      conflict.service.complete(CAMILA_USER_ID, ID_A),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(conflict.snapshots.getOrCreateSnapshot).not.toHaveBeenCalled();
+
+    const notFound = makeService([interview()], [evaluation()]);
+    await expect(
+      notFound.service.complete(CAMILA_USER_ID, MISSING),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(notFound.snapshots.getOrCreateSnapshot).not.toHaveBeenCalled();
+
+    const noDraft = makeService([interview()], []);
+    await expect(
+      noDraft.service.complete(CAMILA_USER_ID, ID_A),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(noDraft.snapshots.getOrCreateSnapshot).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import type { Request } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { MaterialRecommendationResultService } from '../material-recommendation-snapshots/material-recommendation-result.service';
 import { CreateInterviewDto } from './dto/create-interview.dto';
 import { SetEvaluationModeDto } from './dto/set-evaluation-mode.dto';
 import { SubmitInterviewDto } from './dto/submit-interview.dto';
@@ -29,7 +30,10 @@ function userIdOf(req: Request): number {
 @Controller('interviews')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class InterviewsController {
-  constructor(private readonly interviewsService: InterviewsService) {}
+  constructor(
+    private readonly interviewsService: InterviewsService,
+    private readonly materialRecommendations: MaterialRecommendationResultService,
+  ) {}
 
   @Post()
   @Roles('CANDIDATE')
@@ -54,13 +58,20 @@ export class InterviewsController {
   }
 
   // Resultado persistido (HUMAN concluída). `:id/result` não conflita com `:id`.
+  // `getResult` decide TUDO sobre acesso (dono no WHERE, HUMAN, COMPLETED; senão
+  // 404/409). Só depois disso entram as recomendações de materiais (snapshot,
+  // gerado sob demanda se faltar). Falha nelas nunca derruba o resultado: o
+  // serviço não lança e a lista vem vazia.
   @Get(':id/result')
   @Roles('CANDIDATE')
-  getResult(
+  async getResult(
     @Req() req: Request,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    return this.interviewsService.getResult(userIdOf(req), id);
+    const result = await this.interviewsService.getResult(userIdOf(req), id);
+    const materialRecommendations =
+      await this.materialRecommendations.listForInterview(id);
+    return { ...result, materialRecommendations };
   }
 
   @Get(':id')

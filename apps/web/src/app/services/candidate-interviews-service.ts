@@ -133,6 +133,40 @@ export type RealResultQuestion = {
   answeredAt: string | null;
 };
 
+/** Fonte de um material recomendado (contrato do Back; `GET /interviews/:id/result`). */
+export type MaterialRecommendationSource = "RH_CONNECT" | "CACHOLA" | "ORANGO";
+export type MaterialRecommendationArea = "TI" | "RH" | "SECRETARIADO" | "GERAL";
+export type MaterialRecommendationMatchKind = "primary" | "secondary" | "general_preparation";
+/**
+ * Disponibilidade resolvida pelo Back no momento da leitura:
+ * - IN_APP: material do RH Connect (abre dentro do app);
+ * - AVAILABLE: externo ativo; UNAVAILABLE: externo inativo/removido;
+ * - UNKNOWN: o Back não conseguiu verificar (NÃO significa indisponível).
+ */
+export type MaterialRecommendationAvailability = "AVAILABLE" | "UNAVAILABLE" | "IN_APP" | "UNKNOWN";
+
+/**
+ * Material recomendado ao candidato nesta entrevista. `title`, `resourceType`, `area` e `reason`
+ * são o histórico gravado na época; `availability`/`url`/`coverUrl` são o estado ATUAL.
+ * `matchedNeed`/`matchKind`/`position` são metadados internos: nunca exibidos como texto.
+ */
+export type MaterialRecommendation = {
+  position: number;
+  source: MaterialRecommendationSource;
+  title: string;
+  resourceType: string;
+  area: MaterialRecommendationArea;
+  matchedNeed: string | null;
+  matchKind: MaterialRecommendationMatchKind;
+  reason: string;
+  availability: MaterialRecommendationAvailability;
+  /** Só RH_CONNECT; identifica o material na rota interna. */
+  internalSlug: string | null;
+  directLinkAvailable: boolean;
+  url: string | null;
+  coverUrl: string | null;
+};
+
 /** `GET /interviews/:id/result` (avaliação HUMANA concluída). Tudo persistido: nada é recalculado. */
 export type RealInterviewResult = {
   interview: RealInterview;
@@ -145,6 +179,8 @@ export type RealInterviewResult = {
     completedAt: string | null;
   };
   questions: RealResultQuestion[];
+  /** Aditivo: payload antigo (sem o campo) ou inválido vira []. Ordenado por `position`. */
+  materialRecommendations: MaterialRecommendation[];
 };
 
 /** Item de `GET /interviews/in-progress` (sem texto de resposta/rascunho). */
@@ -339,6 +375,68 @@ function toResultQuestion(payload: unknown): RealResultQuestion | null {
   };
 }
 
+const MATERIAL_SOURCES: readonly MaterialRecommendationSource[] = ["RH_CONNECT", "CACHOLA", "ORANGO"];
+const MATERIAL_AREAS: readonly MaterialRecommendationArea[] = ["TI", "RH", "SECRETARIADO", "GERAL"];
+const MATERIAL_MATCH_KINDS: readonly MaterialRecommendationMatchKind[] = ["primary", "secondary", "general_preparation"];
+const MATERIAL_AVAILABILITIES: readonly MaterialRecommendationAvailability[] = ["AVAILABLE", "UNAVAILABLE", "IN_APP", "UNKNOWN"];
+
+function nonEmptyStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function toMaterialRecommendation(payload: unknown): MaterialRecommendation | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const item = payload as Record<string, unknown>;
+  const source = MATERIAL_SOURCES.find((candidate) => candidate === item.source);
+  const area = MATERIAL_AREAS.find((candidate) => candidate === item.area);
+  const matchKind = MATERIAL_MATCH_KINDS.find((candidate) => candidate === item.matchKind);
+  const availability = MATERIAL_AVAILABILITIES.find((candidate) => candidate === item.availability);
+  if (
+    !source ||
+    !area ||
+    !matchKind ||
+    !availability ||
+    typeof item.position !== "number" ||
+    !Number.isInteger(item.position) ||
+    typeof item.title !== "string" ||
+    !item.title.trim() ||
+    typeof item.resourceType !== "string" ||
+    typeof item.reason !== "string"
+  ) {
+    return null;
+  }
+  return {
+    position: item.position,
+    source,
+    title: item.title.trim(),
+    resourceType: item.resourceType.trim(),
+    area,
+    matchedNeed: nonEmptyStringOrNull(item.matchedNeed),
+    matchKind,
+    reason: item.reason.trim(),
+    availability,
+    internalSlug: nonEmptyStringOrNull(item.internalSlug),
+    directLinkAvailable: item.directLinkAvailable === true,
+    url: nonEmptyStringOrNull(item.url),
+    coverUrl: nonEmptyStringOrNull(item.coverUrl),
+  };
+}
+
+/**
+ * `materialRecommendations` do resultado. Defensivo: campo ausente (payload antigo), que não seja
+ * array ou item estruturalmente inválido NUNCA derrubam o resultado principal (item inválido é
+ * ignorado). A ordem é a de `position` (empate mantém a ordem recebida); não reordena por fonte
+ * nem por disponibilidade.
+ */
+export function toMaterialRecommendations(payload: unknown): MaterialRecommendation[] {
+  if (!Array.isArray(payload)) return [];
+  return payload
+    .map((raw, index) => ({ item: toMaterialRecommendation(raw), index }))
+    .filter((entry): entry is { item: MaterialRecommendation; index: number } => entry.item !== null)
+    .sort((a, b) => a.item.position - b.item.position || a.index - b.index)
+    .map((entry) => entry.item);
+}
+
 function toInterviewResult(payload: unknown): RealInterviewResult | null {
   if (!payload || typeof payload !== "object") return null;
   const body = payload as Record<string, unknown>;
@@ -371,6 +469,7 @@ function toInterviewResult(payload: unknown): RealInterviewResult | null {
       completedAt: nullableString(evaluation.completedAt),
     },
     questions: (questions as RealResultQuestion[]).sort((a, b) => a.position - b.position),
+    materialRecommendations: toMaterialRecommendations(body.materialRecommendations),
   };
 }
 

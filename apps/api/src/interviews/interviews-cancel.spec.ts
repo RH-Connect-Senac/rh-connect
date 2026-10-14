@@ -184,8 +184,8 @@ function makeDb(interviews: IRow[], questions: QRow[]) {
         const restored = JSON.parse(snapshot) as typeof state;
         const revive = <T extends Record<string, unknown>>(rows: T[]) =>
           rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'string' && /^\d{4}-\d\d-\d\dT/.test(v) ? new Date(v) : v]))) as unknown as T[];
-        state.interviews.splice(0, state.interviews.length, ...revive(restored.interviews as never));
-        state.questions.splice(0, state.questions.length, ...revive(restored.questions as never));
+        state.interviews.splice(0, state.interviews.length, ...revive<IRow>(restored.interviews as never));
+        state.questions.splice(0, state.questions.length, ...revive<QRow>(restored.questions as never));
         throw error;
       }
     }),

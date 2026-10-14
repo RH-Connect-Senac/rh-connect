@@ -71,6 +71,72 @@ describe("ReportScreen real (6A.3): fonte de dados", () => {
   });
 });
 
+describe("ReportScreen real (R6): materiais recomendados", () => {
+  const SECTION = code(read("components/materials/recommended-materials-section.tsx"));
+  const MATERIALS_VIEW = code(read("domain/candidate-report-materials-view.ts"));
+  const CARD = code(read("components/materials/editorial-material-card.tsx"));
+
+  it("renderiza a seção a partir de view.materials, depois dos dados da entrevista e antes das perguntas", () => {
+    const details = REPORT.indexOf("Sobre a entrevista");
+    const section = REPORT.indexOf("<RecommendedMaterialsSection");
+    const questions = REPORT.indexOf("Perguntas e respostas");
+    expect(section).toBeGreaterThan(details);
+    expect(questions).toBeGreaterThan(section);
+    expect(REPORT).toContain("view={view.materials}");
+  });
+
+  it("navega por rota interna do router (sem window.open nem location)", () => {
+    expect(REPORT).toContain("routerNavigate(path, { state: { from: location.pathname } })");
+    expect(REPORT).not.toMatch(/window\.(open|location)/);
+  });
+
+  it("view model e seção são puros: sem rede, storage, IA ou rota por suposição", () => {
+    for (const source of [SECTION, MATERIALS_VIEW]) {
+      expect(source).not.toMatch(/localStorage|sessionStorage|fetch\(|groq|python|interview-ai|window\.open/i);
+    }
+    expect(MATERIALS_VIEW).toContain("/candidate/materials");
+  });
+
+  it("link externo usa nova aba protegida", () => {
+    expect(CARD).toContain('target="_blank"');
+    expect(CARD).toContain('rel="noopener noreferrer"');
+  });
+
+  const DETAIL_START = APP_TSX.indexOf("function MaterialDetailScreen(");
+  const DETAIL = APP_TSX.slice(DETAIL_START, APP_TSX.indexOf("function NotificationsScreen(", DETAIL_START));
+  const LIST_START = APP_TSX.indexOf("function MaterialsScreen(");
+  const LIST = APP_TSX.slice(LIST_START, DETAIL_START);
+
+  it("B/C. o resultado envia o relatório exato (pathname) como origem ao abrir o material", () => {
+    expect(REPORT).toContain("<RecommendedMaterialsSection");
+    expect(REPORT).toContain("state: { from: location.pathname }");
+  });
+
+  it("o detalhe resolve a origem por função validada (sem navigate(-1) nem destino cru do state)", () => {
+    expect(DETAIL_START).toBeGreaterThan(0);
+    expect(DETAIL).toContain("resolveMaterialDetailOrigin(");
+    expect(DETAIL).toContain("routerNavigate(backOrigin.path)");
+    expect(DETAIL).toContain("{backOrigin.label}");
+    expect(DETAIL).not.toMatch(/navigate\(-1\)|history\.back|routerNavigate\(location\.state|routerNavigate\(from/);
+    expect(APP_TSX).not.toMatch(/navigate\(-1\)/);
+  });
+
+  it("A/F. a entrada por Materiais e os cards Cachola/Orango continuam como estavam", () => {
+    expect(LIST).toContain("routerNavigate(`/candidate/materials/${material.slug}`)");
+    expect(LIST).toContain("openExternalResource(");
+    expect(code(read("components/materials/editorial-material-card.tsx"))).toContain('rel="noopener noreferrer"');
+  });
+
+  it("G. rota de detalhe e relatório inalteradas", () => {
+    expect(APP_TSX).toContain('path="/candidate/materials/:materialId"');
+    expect(APP_ROUTES.find((route) => route.screen === "report")?.path).toBe("/candidate/reports/:id");
+  });
+
+  it("nenhuma rota nova foi criada para os materiais recomendados", () => {
+    expect(APP_ROUTES.map((route) => route.path).filter((path) => /recommend|recomend/i.test(path))).toEqual([]);
+  });
+});
+
 describe("rotas e navegação preservadas", () => {
   it("a rota do relatório continua /candidate/reports/:id e a ReportScreen não recebe mais sessão", () => {
     expect(APP_ROUTES.find((route) => route.screen === "report")?.path).toBe("/candidate/reports/:id");

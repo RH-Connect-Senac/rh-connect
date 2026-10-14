@@ -22,7 +22,11 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { InterviewQuestionsController } from './interview-questions.controller';
 import type { InterviewQuestionsService } from './interview-questions.service';
 import { InterviewsController } from './interviews.controller';
+import type { MaterialRecommendationResultService } from '../material-recommendation-snapshots/material-recommendation-result.service';
 import type { InterviewsService } from './interviews.service';
+
+// Montagem das recomendações é testada à parte; aqui só importa que o controller a receba.
+const materials = { listForInterview: jest.fn().mockResolvedValue([]) };
 
 const guard = new RolesGuard(new Reflector());
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -123,6 +127,7 @@ describe('GET /interviews/in-progress', () => {
     const service = { listInProgress: jest.fn().mockResolvedValue([]) };
     const controller = new InterviewsController(
       service as unknown as InterviewsService,
+      materials as unknown as MaterialRecommendationResultService,
     );
     await controller.listInProgress(req);
     expect(service.listInProgress).toHaveBeenCalledWith(7);
@@ -176,6 +181,7 @@ describe('dono sempre vem do JWT', () => {
     };
     const controller = new InterviewsController(
       service as unknown as InterviewsService,
+      materials as unknown as MaterialRecommendationResultService,
     );
 
     await controller.setEvaluationMode(req, ID, { evaluationMode: 'AI' });
@@ -193,6 +199,7 @@ describe('POST /interviews/:id/cancel', () => {
     const service = { cancel: jest.fn().mockResolvedValue('c') };
     const controller = new InterviewsController(
       service as unknown as InterviewsService,
+      materials as unknown as MaterialRecommendationResultService,
     );
     await controller.cancel(req, ID);
     expect(service.cancel).toHaveBeenCalledWith(7, ID);

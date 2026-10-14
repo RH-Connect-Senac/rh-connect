@@ -10,7 +10,9 @@
 
 import { EVALUATION_CRITERIA } from "./evaluator-evaluation-form";
 import { formatTrackingDate } from "./interview-tracking-view";
+import { findSupportMaterialBySlug } from "../mocks/materials";
 import type { RealInterviewResult } from "../services/candidate-interviews-service";
+import { buildRecommendedMaterialsView, type RecommendedMaterialsView } from "./candidate-report-materials-view";
 
 /** Rótulo curto só para o eixo do gráfico radar (o nome completo vai na lista). */
 const CHART_LABELS: Record<string, string> = {
@@ -47,6 +49,8 @@ export type ReportView = {
   criteria: ReportCriterion[];
   summary: string | null;
   questions: ReportQuestion[];
+  /** Materiais recomendados (R6). `null` = sem recomendação: a seção não é renderizada. */
+  materials: RecommendedMaterialsView | null;
 };
 
 const WORK_MODE_LABEL: Record<string, string> = {
@@ -105,6 +109,9 @@ export function buildReportView(result: RealInterviewResult): ReportView {
         text: question.text,
         answer: question.answer && question.answer.trim() ? question.answer : null,
       })),
+    materials: buildRecommendedMaterialsView(result.materialRecommendations, {
+      hasInternalMaterial: (slug) => findSupportMaterialBySlug(slug) !== undefined,
+    }),
   };
 }
 

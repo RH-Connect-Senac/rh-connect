@@ -1,4 +1,4 @@
-import { ArrowRight, Bookmark, BookOpen, ExternalLink } from "lucide-react";
+import { AlertCircle, ArrowRight, Bookmark, BookOpen, ExternalLink, Info } from "lucide-react";
 
 import type { MaterialStatus, MaterialUserState, SupportMaterial } from "../../domain/materials";
 import type { ExternalLearningResource, ExternalResourceSource } from "../../services/external-resources-service";
@@ -29,7 +29,13 @@ export type EditorialCardData = {
   coverBackdrop?: boolean;
   // Presente só quando a fonte realmente tem estado de favorito.
   favorite?: { active: boolean; onToggle: () => void };
-  action: { label: string; onClick: () => void };
+  // Motivo da recomendação (ex.: relatório da entrevista). Sem limite de linhas: é o texto-chave.
+  reason?: string;
+  // Estado sem ação (ex.: conteúdo indisponível): substitui o botão por um aviso em TEXTO.
+  notice?: { text: string; tone: "unavailable" | "unknown" | "info" };
+  // `href` (http/https): a ação vira um link real (nova aba, noopener noreferrer) em vez de botão.
+  // Sem `action` e sem `notice`, o rodapé do card fica só com a categoria.
+  action?: { label: string; onClick: () => void; href?: string };
 };
 
 type RhConnectMaterial = SupportMaterial & MaterialUserState;
@@ -242,16 +248,39 @@ export function EditorialMaterialCard({
           <p className="line-clamp-2 text-sm leading-relaxed text-muted-foreground">{data.description}</p>
         )}
 
+        {!compact && data.reason && (
+          <p className="text-sm leading-relaxed text-muted-foreground">{data.reason}</p>
+        )}
+
         <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1">
           {data.categoryLabel ? (
             <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">{data.categoryLabel}</span>
           ) : (
             <span />
           )}
-          <Button type="button" variant="secondary" size="sm" onClick={data.action.onClick}>
-            {data.action.label}
-            {data.external ? <ExternalLink aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
-          </Button>
+          {data.action?.href ? (
+            <Button asChild variant="secondary" size="sm">
+              <a href={data.action.href} target="_blank" rel="noopener noreferrer">
+                {data.action.label}
+                <span className="sr-only"> (abre em nova aba)</span>
+                <ExternalLink aria-hidden="true" />
+              </a>
+            </Button>
+          ) : data.action ? (
+            <Button type="button" variant="secondary" size="sm" onClick={data.action.onClick}>
+              {data.action.label}
+              {data.external ? <ExternalLink aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
+            </Button>
+          ) : data.notice ? (
+            <p className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              {data.notice.tone === "unavailable" ? (
+                <AlertCircle aria-hidden="true" className="size-3.5 shrink-0" />
+              ) : (
+                <Info aria-hidden="true" className="size-3.5 shrink-0" />
+              )}
+              {data.notice.text}
+            </p>
+          ) : null}
         </div>
       </div>
     </Card>
