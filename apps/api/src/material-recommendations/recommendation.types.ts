@@ -36,6 +36,9 @@ export interface DevelopmentNeed {
   kind: NeedKind;
 }
 
+// Origem de um material recomendável (catálogo do RH Connect ou curadoria externa).
+export type MaterialSource = 'RH_CONNECT' | 'CACHOLA' | 'ORANGO';
+
 // Área de um material. `GERAL` = serve a qualquer área profissional.
 export type MaterialAreaKey = 'TI' | 'RH' | 'SECRETARIADO' | 'GERAL';
 

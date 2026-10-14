@@ -44,6 +44,11 @@ describe('núcleo da recomendação é agnóstico à modalidade', () => {
         'need-derivation.ts',
         'rh-material-taxonomy.ts',
         'external-material-taxonomy.ts',
+        'material-catalog.ts',
+        'material-redundancy.ts',
+        'professional-area.ts',
+        'recommendation-reasons.ts',
+        'recommendation-engine.ts',
       ]),
     );
   });
@@ -72,10 +77,16 @@ describe('núcleo da recomendação é agnóstico à modalidade', () => {
     }
   });
 
-  it('o motor, quando existir, entra no mesmo guard', () => {
-    const engine = join(ROOT, 'recommendation-engine.ts');
-    if (!existsSync(engine)) return;
-    expect(core.map((source) => source.name)).toContain('recommendation-engine.ts');
+  it('o motor está no mesmo guard e não usa fontes não determinísticas', () => {
+    const engine = core.find((source) => source.name === 'recommendation-engine.ts');
+    expect(engine).toBeDefined();
+    for (const pattern of [/Math\.random/, /Date\.now/, /new Date/, /process\.env/, /localStorage/, /fetch\(/]) {
+      expect({ pattern: String(pattern), found: pattern.test(engine!.text) }).toEqual({
+        pattern: String(pattern),
+        found: false,
+      });
+    }
+    expect(existsSync(join(ROOT, 'recommendation-engine.ts'))).toBe(true);
   });
 
   it('adapters só leem a avaliação persistida: sem banco e sem tipos de entrevista', () => {
