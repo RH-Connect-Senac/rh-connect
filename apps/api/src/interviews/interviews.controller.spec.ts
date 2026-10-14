@@ -12,8 +12,12 @@ jest.mock('../auth/guards/jwt-auth.guard', () => ({
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { InterviewsController } from './interviews.controller';
+import type { MaterialRecommendationResultService } from '../material-recommendation-snapshots/material-recommendation-result.service';
 import type { InterviewsService } from './interviews.service';
 import type { CreateInterviewDto } from './dto/create-interview.dto';
+
+// Montagem das recomendações é testada à parte; aqui só importa que o controller a receba.
+const materials = { listForInterview: jest.fn().mockResolvedValue([]) };
 
 const create = InterviewsController.prototype.create;
 const getById = InterviewsController.prototype.getById;
@@ -64,6 +68,7 @@ describe('InterviewsController', () => {
     const service = { create: jest.fn().mockResolvedValue(created) };
     const controller = new InterviewsController(
       service as unknown as InterviewsService,
+      materials as unknown as MaterialRecommendationResultService,
     );
     const body = {
       sourceUrl: 'https://x.test/1',
@@ -81,6 +86,7 @@ describe('InterviewsController', () => {
     const service = { getOwned: jest.fn().mockResolvedValue(found) };
     const controller = new InterviewsController(
       service as unknown as InterviewsService,
+      materials as unknown as MaterialRecommendationResultService,
     );
     const req = { user: { id: 7, role: 'CANDIDATE' } } as never;
 
