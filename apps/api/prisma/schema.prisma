@@ -151,7 +151,7 @@ model external_learning_resource {
   resource_id           String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   source                String                            @db.VarChar(50)
   external_key          String                            @unique @db.VarChar(128)
-  title                 String                            @db.VarChar(400)
+  title                 String                            @db.VarChar(200)
   resource_type         String                            @db.VarChar(50)
   section               String?                           @db.VarChar(200)
   area                  String?                           @db.VarChar(120)
