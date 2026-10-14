@@ -228,6 +228,7 @@ model interview {
   assigned_by          app_user?             @relation("interview_assigned_by", fields: [assigned_by_user_id], references: [user_id], onDelete: SetNull, onUpdate: NoAction, map: "fk_interview_assigned_by_user")
   questions            interview_question[]
   evaluation           interview_evaluation?
+  material_snapshot    interview_material_snapshot?
 
   @@index([candidate_user_id, created_at], map: "idx_interview_candidate_created_at")
   @@index([status, submitted_at], map: "idx_interview_status_submitted_at")
@@ -392,6 +393,43 @@ enum account_status {
 enum document_type {
   TERMS_OF_USE
   PRIVACY_POLICY
+}
+
+// Snapshot IMUTÁVEL das recomendações de materiais de uma entrevista (1:1).
+// O cabeçalho existe mesmo quando a lista é vazia. Os campos *_snapshot,
+// matched_need e match_kind são a verdade histórica: nunca são sobrescritos
+// por dados atuais do material. Não há FK para external_learning_resource:
+// (source, material_ref) é resolvido na leitura, só para URL, capa e
+// disponibilidade. Sem updated_at.
+model interview_material_snapshot {
+  snapshot_id      String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interview_id     String                            @unique(map: "uq_interview_material_snapshot_interview") @db.Uuid
+  engine_version   String                            @db.VarChar(20)
+  taxonomy_version String                            @db.VarChar(40)
+  created_at       DateTime                          @default(now()) @db.Timestamptz(6)
+  interview        interview                         @relation(fields: [interview_id], references: [interview_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_interview_material_snapshot_interview")
+  recommendations  interview_material_recommendation[]
+}
+
+// Item do snapshot. CHECKs (na migration): position >= 1; match_kind válido;
+// (match_kind = 'general_preparation') = (matched_need IS NULL); tipo não vazio.
+model interview_material_recommendation {
+  recommendation_id      String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  snapshot_id            String                      @db.Uuid
+  position               Int                         @db.SmallInt
+  source                 String                      @db.VarChar(50)
+  material_ref           String                      @db.VarChar(80)
+  title_snapshot         String                      @db.VarChar(200)
+  resource_type_snapshot String                      @db.VarChar(30)
+  area_snapshot          String                      @db.VarChar(20)
+  matched_need           String?                     @db.VarChar(40)
+  match_kind             String                      @db.VarChar(30)
+  reason_snapshot        String                      @db.VarChar(100)
+  created_at             DateTime                    @default(now()) @db.Timestamptz(6)
+  snapshot               interview_material_snapshot @relation(fields: [snapshot_id], references: [snapshot_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_interview_material_recommendation_snapshot")
+
+  @@unique([snapshot_id, position], map: "uq_interview_material_recommendation_position")
+  @@unique([snapshot_id, source, material_ref], map: "uq_interview_material_recommendation_ref")
 }
 
 enum evaluator_availability_status {

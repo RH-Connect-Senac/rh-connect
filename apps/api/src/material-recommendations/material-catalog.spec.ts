@@ -2,6 +2,7 @@ import { EXTERNAL_MATERIAL_TAXONOMY, EXTERNAL_TAXONOMY_VERSION } from './externa
 import {
   MATERIAL_CATALOG,
   MATERIAL_TAXONOMY_VERSION,
+  RH_CONNECT_RESOURCE_TYPE,
   buildMaterialCatalog,
   materialKey,
 } from './material-catalog';
@@ -40,6 +41,18 @@ describe('MATERIAL_CATALOG (catálogo unificado só para o motor)', () => {
         needs: entry.needs,
         generalPreparation: entry.generalPreparation,
       });
+    }
+  });
+
+  it('RH Connect usa "Leitura" e os externos mantêm o resourceType da taxonomia', () => {
+    expect(RH_CONNECT_RESOURCE_TYPE).toBe('Leitura');
+    for (const entry of RH_MATERIAL_TAXONOMY) {
+      const item = MATERIAL_CATALOG.find((m) => m.source === 'RH_CONNECT' && m.ref === entry.id);
+      expect(item?.resourceType).toBe('Leitura');
+    }
+    for (const entry of EXTERNAL_MATERIAL_TAXONOMY) {
+      const item = MATERIAL_CATALOG.find((m) => m.source === entry.source && m.ref === entry.externalKey);
+      expect(item?.resourceType).toBe(entry.resourceType);
     }
   });
 

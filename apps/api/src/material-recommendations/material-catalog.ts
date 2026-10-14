@@ -10,10 +10,17 @@ export interface MaterialCandidate {
   source: MaterialSource;
   ref: string;
   title: string;
+  // Rótulo de exibição do tipo ("Leitura", "Curso", "Vídeo"...). Dado de
+  // apresentação: não participa de nenhuma regra de ranking.
+  resourceType: string;
   area: MaterialAreaKey;
   needs: MaterialNeeds;
   generalPreparation: boolean;
 }
+
+// Tipo dos materiais do RH Connect no catálogo unificado (no frontend o tipo é
+// o código interno `READING`; aqui já é o rótulo exibido ao candidato).
+export const RH_CONNECT_RESOURCE_TYPE = 'Leitura';
 
 // Versão conjunta das taxonomias que alimentam o motor.
 export const MATERIAL_TAXONOMY_VERSION = `${RH_TAXONOMY_VERSION}+${EXTERNAL_TAXONOMY_VERSION}`;
@@ -27,6 +34,7 @@ export function buildMaterialCatalog(): readonly MaterialCandidate[] {
     source: 'RH_CONNECT',
     ref: entry.id,
     title: entry.title,
+    resourceType: RH_CONNECT_RESOURCE_TYPE,
     area: entry.area,
     needs: entry.needs,
     generalPreparation: entry.generalPreparation,
@@ -35,6 +43,7 @@ export function buildMaterialCatalog(): readonly MaterialCandidate[] {
     source: entry.source,
     ref: entry.externalKey,
     title: entry.title,
+    resourceType: entry.resourceType,
     area: entry.area,
     needs: entry.needs,
     generalPreparation: entry.generalPreparation,

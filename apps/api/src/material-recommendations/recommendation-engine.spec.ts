@@ -50,6 +50,7 @@ const groupsOf = (items: readonly RecommendedMaterial[]) =>
 function mat(over: Partial<MaterialCandidate> & Pick<MaterialCandidate, 'ref' | 'title'>): MaterialCandidate {
   return {
     source: 'RH_CONNECT',
+    resourceType: 'Leitura',
     area: 'GERAL',
     needs: { primary: [], secondary: [] },
     generalPreparation: false,
@@ -60,6 +61,7 @@ function mat(over: Partial<MaterialCandidate> & Pick<MaterialCandidate, 'ref' | 
 describe('recommendMaterials: constantes e entrada', () => {
   it('expõe a versão do motor e o limite de 3 recomendações', () => {
     expect(RECOMMENDATION_ENGINE_VERSION).toMatch(/^engine-\d+$/);
+    expect(RECOMMENDATION_ENGINE_VERSION).toBe('engine-1');
     expect(MAX_RECOMMENDATIONS).toBe(3);
   });
 
@@ -460,7 +462,7 @@ describe('formato do resultado e motivos', () => {
     const result = recommendMaterials({ needs: needsOf({ clarity: 3 }) });
     for (const item of result) {
       expect(Object.keys(item).sort()).toEqual(
-        ['area', 'matchKind', 'matchedNeed', 'reason', 'ref', 'source', 'title'].sort(),
+        ['area', 'matchKind', 'matchedNeed', 'reason', 'ref', 'resourceType', 'source', 'title'].sort(),
       );
       expect(['RH_CONNECT', 'CACHOLA', 'ORANGO']).toContain(item.source);
       expect(item.ref.length).toBeGreaterThan(0);
@@ -473,6 +475,53 @@ describe('formato do resultado e motivos', () => {
     for (const item of result) {
       expect(item.source).not.toBe('RH_CONNECT');
       expect(item.ref).toMatch(/^(ORANGO\|\d+|[0-9a-f]{32})$/);
+    }
+  });
+});
+
+describe('resourceType no resultado (dado de apresentação, fora do ranking)', () => {
+  it('materiais do RH Connect saem como "Leitura"', () => {
+    const result = recommendMaterials({ needs: needsOf({ clarity: 3, organization: 4 }) });
+    const rh = result.filter((item) => item.source === 'RH_CONNECT');
+    expect(rh.length).toBeGreaterThan(0);
+    for (const item of rh) expect(item.resourceType).toBe('Leitura');
+  });
+
+  it('materiais externos preservam o resourceType da taxonomia', () => {
+    const catalog = [
+      mat({ source: 'CACHOLA', ref: 'k1', title: 'C1', resourceType: 'Podcast', needs: { primary: ['clarity'], secondary: [] } }),
+      mat({ source: 'ORANGO', ref: 'k2', title: 'C2', resourceType: 'Curso', needs: { primary: ['examples'], secondary: [] } }),
+      mat({ source: 'CACHOLA', ref: 'k3', title: 'C3', resourceType: 'Vídeo', needs: { primary: ['organization'], secondary: [] } }),
+    ];
+    const needs = [need('clarity', 3), need('examples', 4), need('organization', 5)];
+    const result = recommendMaterials({ needs }, { catalog });
+    expect(Object.fromEntries(result.map((item) => [item.ref, item.resourceType]))).toEqual({
+      k1: 'Podcast',
+      k2: 'Curso',
+      k3: 'Vídeo',
+    });
+    const real = recommendMaterials({ needs: needsOf({ domain_knowledge: 3 }), professionalArea: HR });
+    for (const item of real) expect(item.resourceType).toBe(entryOf(item).resourceType);
+  });
+
+  it('mudar o resourceType do catálogo não altera quais itens saem nem a ordem', () => {
+    const swapped = MATERIAL_CATALOG.map((material, index) => ({
+      ...material,
+      resourceType: index % 2 === 0 ? 'Zzz tipo' : 'Aaa',
+    }));
+    const scenarios: Array<{ needs: DevelopmentNeed[]; professionalArea?: string }> = [
+      { needs: needsOf({ clarity: 3 }) },
+      { needs: needsOf({ clarity: 3, organization: 4, examples: 2 }), professionalArea: IT },
+      { needs: needsOf({ domain_knowledge: 3, objectivity: 5 }), professionalArea: HR },
+      { needs: needsOf({ coherence: 1, requirements_alignment: 2 }), professionalArea: SEC },
+      { needs: [] },
+    ];
+    for (const input of scenarios) {
+      const base = recommendMaterials(input);
+      const other = recommendMaterials(input, { catalog: swapped });
+      const blank = (items: readonly RecommendedMaterial[]) =>
+        items.map((item) => ({ ...item, resourceType: '' }));
+      expect(blank(other)).toEqual(blank(base));
     }
   });
 });

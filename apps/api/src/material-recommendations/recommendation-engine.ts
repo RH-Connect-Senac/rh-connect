@@ -48,6 +48,8 @@ export interface RecommendedMaterial {
   // Referência persistente da taxonomia (id do RH Connect ou external_key).
   ref: string;
   title: string;
+  // Rótulo de exibição do tipo do material (cópia do catálogo, sem regra).
+  resourceType: string;
   area: MaterialAreaKey;
   // Necessidade que motivou a escolha; `null` na preparação geral.
   matchedNeed: NeedKey | null;
@@ -193,6 +195,7 @@ class Selection {
       source: material.source,
       ref: material.ref,
       title: material.title,
+      resourceType: material.resourceType,
       area: material.area,
       matchedNeed,
       matchKind,
