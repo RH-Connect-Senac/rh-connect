@@ -15,6 +15,7 @@ import {
   saveRealAnswerDraft,
   saveRealEvaluationMode,
   submitRealInterview,
+  toMaterialRecommendations,
 } from "./candidate-interviews-service";
 import { listPendingAssignmentInterviews } from "./admin-interviews-service";
 import type { JobInterviewContext } from "./interview-context-service";
@@ -854,6 +855,134 @@ describe("resultado real do candidato (6A.3): GET /interviews/:id/result", () =>
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const network = await getRealInterviewResult(INTERVIEW_ID);
     expect(!network.ok && network.message).not.toMatch(/failed to fetch/i);
+  });
+
+  describe("materialRecommendations (R6)", () => {
+    const recommendation = (overrides: Record<string, unknown> = {}) => ({
+      position: 1,
+      source: "RH_CONNECT",
+      title: "Como se apresentar em entrevistas",
+      resourceType: "Leitura",
+      area: "GERAL",
+      matchedNeed: "objectivity",
+      matchKind: "primary",
+      reason: "Ajuda a responder com mais objetividade.",
+      internalSlug: "como-se-apresentar-em-entrevistas",
+      availability: "IN_APP",
+      directLinkAvailable: false,
+      url: null,
+      coverUrl: null,
+      ...overrides,
+    });
+
+    const read = async (materialRecommendations: unknown) => {
+      fetchMock.mockResolvedValueOnce(json(resultBody({ materialRecommendations })));
+      const result = await getRealInterviewResult(INTERVIEW_ID);
+      expect(result.ok).toBe(true);
+      return result.ok ? result.data : null;
+    };
+
+    it("A. parseia um contrato válido (RH Connect, Cachola e Orango) sem alterar o resto do resultado", async () => {
+      const data = await read([
+        recommendation(),
+        recommendation({
+          position: 2,
+          source: "CACHOLA",
+          title: "Curso de comunicação",
+          resourceType: "Curso",
+          internalSlug: null,
+          availability: "AVAILABLE",
+          directLinkAvailable: true,
+          url: "https://cachola.example.com/curso",
+          coverUrl: "https://cachola.example.com/capa.png",
+          matchedNeed: null,
+          matchKind: "general_preparation",
+        }),
+        recommendation({ position: 3, source: "ORANGO", availability: "UNKNOWN", internalSlug: null, matchKind: "secondary" }),
+      ]);
+      expect(data?.materialRecommendations).toHaveLength(3);
+      expect(data?.materialRecommendations[0]).toEqual(recommendation());
+      expect(data?.materialRecommendations[1]).toMatchObject({
+        source: "CACHOLA",
+        availability: "AVAILABLE",
+        directLinkAvailable: true,
+        url: "https://cachola.example.com/curso",
+        coverUrl: "https://cachola.example.com/capa.png",
+        matchedNeed: null,
+      });
+      expect(data?.materialRecommendations[2]).toMatchObject({ source: "ORANGO", availability: "UNKNOWN" });
+      expect(data?.evaluation.overallScore).toBe(5.6);
+      expect(data?.questions).toHaveLength(2);
+    });
+
+    it("B. payload antigo (sem o campo) ou campo que não é array vira []", async () => {
+      fetchMock.mockResolvedValueOnce(json(resultBody()));
+      const old = await getRealInterviewResult(INTERVIEW_ID);
+      expect(old.ok && old.data.materialRecommendations).toEqual([]);
+      for (const invalid of [null, "x", 7, { position: 1 }]) {
+        expect((await read(invalid))?.materialRecommendations).toEqual([]);
+      }
+    });
+
+    it("B2. lista vazia do Back é preservada como []", async () => {
+      expect((await read([]))?.materialRecommendations).toEqual([]);
+    });
+
+    it("C. item estruturalmente inválido é ignorado sem derrubar o resultado principal", async () => {
+      const data = await read([
+        null,
+        "texto",
+        recommendation({ position: 1, title: "   " }),
+        recommendation({ position: "2" }),
+        recommendation({ position: 3, source: "OUTRA" }),
+        recommendation({ position: 4, area: "FINANCEIRO" }),
+        recommendation({ position: 5, matchKind: "tertiary" }),
+        recommendation({ position: 6, availability: "BROKEN" }),
+        recommendation({ position: 7, reason: 10 }),
+        recommendation({ position: 8, resourceType: null }),
+        recommendation({ position: 9, title: "Válido" }),
+      ]);
+      expect(data?.materialRecommendations.map((item) => item.title)).toEqual(["Válido"]);
+      expect(data?.interview.id).toBe(INTERVIEW_ID);
+    });
+
+    it("D. ordena por position (empate mantém a ordem recebida), sem reordenar por fonte ou disponibilidade", async () => {
+      const data = await read([
+        recommendation({ position: 3, source: "RH_CONNECT", title: "C" }),
+        recommendation({ position: 1, source: "ORANGO", availability: "UNAVAILABLE", title: "A", internalSlug: null }),
+        recommendation({ position: 2, source: "CACHOLA", availability: "AVAILABLE", title: "B", internalSlug: null }),
+        recommendation({ position: 2, source: "CACHOLA", availability: "UNKNOWN", title: "B2", internalSlug: null }),
+      ]);
+      expect(data?.materialRecommendations.map((item) => item.title)).toEqual(["A", "B", "B2", "C"]);
+    });
+
+    it("campos opcionais: só string/null passa (internalSlug, url, coverUrl); matchedNeed nullable; flag booleana estrita", async () => {
+      const data = await read([
+        recommendation({
+          internalSlug: 42,
+          url: 10,
+          coverUrl: { href: "x" },
+          matchedNeed: 3,
+          directLinkAvailable: "true",
+          availability: "AVAILABLE",
+          source: "ORANGO",
+        }),
+        recommendation({ position: 2, url: "", coverUrl: "  ", internalSlug: "", matchedNeed: null }),
+      ]);
+      expect(data?.materialRecommendations[0]).toMatchObject({
+        internalSlug: null,
+        url: null,
+        coverUrl: null,
+        matchedNeed: null,
+        directLinkAvailable: false,
+      });
+      expect(data?.materialRecommendations[1]).toMatchObject({ internalSlug: null, url: null, coverUrl: null });
+    });
+
+    it("toMaterialRecommendations é defensivo com qualquer entrada", () => {
+      expect(toMaterialRecommendations(undefined)).toEqual([]);
+      expect(toMaterialRecommendations([undefined, 1, []])).toEqual([]);
+    });
   });
 });
 

@@ -78,6 +78,8 @@ import {
   rhConnectMaterialToEditorialCard,
 } from "./components/materials/editorial-material-card";
 import { ContinueLearningSection } from "./components/materials/continue-learning-section";
+import { RecommendedMaterialsSection } from "./components/materials/recommended-materials-section";
+import { resolveMaterialDetailOrigin } from "./domain/material-detail-origin";
 import { ExploreCatalogGroup, ExploreCatalogSection } from "./components/materials/explore-catalog-section";
 import { NativeSelect } from "./components/ui/native-select";
 import { PasswordInput } from "./components/ui/password-input";
@@ -4003,6 +4005,8 @@ function ReportScreen({ onNavigate }: { onNavigate: (s: Screen) => void }) {
 }
 
 function ReportContent({ result, onNavigate }: { result: RealInterviewResult; onNavigate: (s: Screen) => void }) {
+  const routerNavigate = useNavigate();
+  const location = useLocation();
   const [hoveredCriterion, setHoveredCriterion] = useState<string | null>(null);
   const view = buildReportView(result);
   const radarData = view.criteria.map((criterion) => ({ name: criterion.chartLabel, label: criterion.label, score: criterion.score }));
@@ -4163,6 +4167,9 @@ function ReportContent({ result, onNavigate }: { result: RealInterviewResult; on
             </div>
           </Card>
         )}
+
+        {/* Materiais recomendados: depois do feedback e antes das respostas (longas); some se vazio */}
+        <RecommendedMaterialsSection view={view.materials} onNavigate={(path) => routerNavigate(path, { state: { from: location.pathname } })} />
 
         {/* Perguntas e respostas (sem nota por pergunta: não existe na avaliação humana) */}
         <Card className="mb-5">
@@ -6827,6 +6834,9 @@ function MaterialDetailScreen({ onNavigate, session }: { onNavigate: (s: Screen)
   const routerNavigate = useNavigate();
   const candidateIdentity = getCandidateIdentity(session);
   const { materialId } = useParams();
+  const location = useLocation();
+  // Origem explícita e validada (lista de Materiais ou relatório); acesso direto cai na lista.
+  const backOrigin = resolveMaterialDetailOrigin((location.state as { from?: unknown } | null)?.from);
   const material = materialId ? findSupportMaterialBySlug(materialId) : undefined;
   const [materialState, setMaterialState] = useState<MaterialUserState | null>(() => material ? getMaterialUserState(candidateIdentity.id, material.id) : null);
 
@@ -6879,10 +6889,10 @@ function MaterialDetailScreen({ onNavigate, session }: { onNavigate: (s: Screen)
     >
       <div className="w-full max-w-4xl mx-auto space-y-5">
         <button
-          onClick={() => routerNavigate("/candidate/materials")}
+          onClick={() => routerNavigate(backOrigin.path)}
           className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
         >
-          <ChevronLeft className="w-4 h-4" /> Voltar para Materiais
+          <ChevronLeft className="w-4 h-4" /> {backOrigin.label}
         </button>
 
         <Card className="p-5 sm:p-7 space-y-6">

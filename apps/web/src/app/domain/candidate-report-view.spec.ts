@@ -48,6 +48,7 @@ function result(overrides: Partial<RealInterviewResult> = {}): RealInterviewResu
       { id: "q2", position: 2, type: "Comportamental", text: "Conte um conflito.", answer: "Conversei.", answeredAt: null },
       { id: "q1", position: 1, type: "Tecnica", text: "Fale de SQL.", answer: "Uso há 3 anos.", answeredAt: null },
     ],
+    materialRecommendations: [],
     ...overrides,
   };
 }
@@ -86,6 +87,48 @@ describe("relatório real (6A.3): critérios", () => {
     expect(criteria.find((c) => c.key === "requirements_alignment")).toMatchObject({ label: "Aderência aos requisitos", chartLabel: "Aderência" });
     expect(criteria.find((c) => c.key === "examples")).toMatchObject({ label: "Capacidade de exemplificar", chartLabel: "Exemplos" });
     expect(criteria.find((c) => c.key === "clarity")).toMatchObject({ label: "Clareza", chartLabel: "Clareza" });
+  });
+});
+
+describe("relatório real (R6): materiais recomendados na visão", () => {
+  const rh = {
+    position: 1,
+    source: "RH_CONNECT" as const,
+    title: "Como se apresentar em entrevistas",
+    resourceType: "Leitura",
+    area: "GERAL" as const,
+    matchedNeed: "objectivity",
+    matchKind: "primary" as const,
+    reason: "Ajuda a responder com mais objetividade.",
+    availability: "IN_APP" as const,
+    internalSlug: "como-se-apresentar-em-entrevistas",
+    directLinkAvailable: false,
+    url: null,
+    coverUrl: null,
+  };
+
+  it("sem recomendação (lista vazia ou campo ausente) a visão não tem seção", () => {
+    expect(buildReportView(result()).materials).toBeNull();
+    const legacy = result() as Partial<RealInterviewResult>;
+    delete legacy.materialRecommendations;
+    expect(buildReportView(legacy as RealInterviewResult).materials).toBeNull();
+  });
+
+  it("com recomendação, monta a seção a partir do catálogo REAL de materiais e não altera o restante", () => {
+    const view = buildReportView(result({ materialRecommendations: [rh] }));
+    expect(view.materials?.cards).toHaveLength(1);
+    expect(view.materials?.cards[0].action).toEqual({
+      kind: "internal",
+      label: "Abrir material",
+      path: "/candidate/materials/como-se-apresentar-em-entrevistas",
+    });
+    expect(view.overallScore).toBe(5.6);
+    expect(view.questions).toHaveLength(2);
+  });
+
+  it("slug do Back que não existe no catálogo não vira rota quebrada", () => {
+    const view = buildReportView(result({ materialRecommendations: [{ ...rh, internalSlug: "slug-que-nao-existe" }] }));
+    expect(view.materials?.cards[0].action).toEqual({ kind: "internal", label: "Ir para Materiais", path: "/candidate/materials" });
   });
 });
 
