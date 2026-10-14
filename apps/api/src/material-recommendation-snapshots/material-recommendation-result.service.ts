@@ -5,23 +5,19 @@ import type {
   MaterialSource,
   NeedKey,
 } from '../material-recommendations/recommendation.types';
-import { RH_MATERIAL_TAXONOMY } from '../material-recommendations/rh-material-taxonomy';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  loadCurrentResources,
+  resolveOperationalState,
+} from './material-current-state';
+import type {
+  CurrentResources,
+  MaterialAvailability,
+} from './material-current-state';
 import { MaterialRecommendationSnapshotService } from './material-recommendation-snapshot.service';
 import type { MaterialSnapshotItem } from './material-recommendation-snapshot.service';
 
-// Disponibilidade ATUAL do material (nunca altera o que foi recomendado):
-// - AVAILABLE: recurso externo encontrado e ativo no catálogo atual;
-// - UNAVAILABLE: recurso externo COMPROVADAMENTE removido ou inativo;
-// - IN_APP: material do RH Connect (o conteúdo vive no aplicativo; o backend
-//   não tem linha de catálogo para resolver, então não promete link);
-// - UNKNOWN: a consulta ao catálogo falhou (erro técnico): não se sabe se o
-//   recurso existe, então não se afirma que saiu do ar.
-export type MaterialAvailability =
-  | 'AVAILABLE'
-  | 'UNAVAILABLE'
-  | 'IN_APP'
-  | 'UNKNOWN';
+export type { MaterialAvailability };
 
 // Contrato de `materialRecommendations` no resultado do candidato. Os oito
 // primeiros campos são o snapshot HISTÓRICO (nunca trocados por dado atual);
@@ -46,34 +42,11 @@ export interface MaterialRecommendationView {
   coverUrl: string | null;
 }
 
-interface CurrentResource {
-  source: string;
-  external_key: string;
-  url: string | null;
-  cover_url: string | null;
-  direct_link_available: boolean;
-  is_active: boolean;
-}
-
-const keyOf = (source: string, ref: string) => `${source}:${ref}`;
-
-// `material_ref` do RH Connect é o ID editorial; a rota interna usa o SLUG.
-// Id e slug são campos distintos da taxonomia (hoje coincidem por convenção,
-// mas nada depende disso). Ref que a taxonomia atual não conhece (snapshot
-// antigo) resulta em null: a recomendação histórica continua, sem rota direta.
-const RH_SLUG_BY_ID: ReadonlyMap<string, string> = new Map(
-  RH_MATERIAL_TAXONOMY.map((entry) => [entry.id, entry.slug]),
-);
-
-function nonEmpty(value: string | null | undefined): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
 function toView(
   item: MaterialSnapshotItem,
-  current: ReadonlyMap<string, CurrentResource> | null,
+  current: CurrentResources | null,
 ): MaterialRecommendationView {
-  const historical = {
+  return {
     position: item.position,
     source: item.source,
     title: item.title,
@@ -82,42 +55,8 @@ function toView(
     matchedNeed: item.matchedNeed,
     matchKind: item.matchKind,
     reason: item.reason,
-  };
-  const none = { directLinkAvailable: false, url: null, coverUrl: null };
-
-  if (item.source === 'RH_CONNECT') {
-    return {
-      ...historical,
-      availability: 'IN_APP',
-      internalSlug: RH_SLUG_BY_ID.get(item.materialRef) ?? null,
-      ...none,
-    };
-  }
-
-  // Falha técnica na consulta (`current` nulo): estado desconhecido, nunca
-  // "indisponível".
-  if (current === null) {
-    return { ...historical, availability: 'UNKNOWN', internalSlug: null, ...none };
-  }
-
-  const resource = current.get(keyOf(item.source, item.materialRef)) ?? null;
-  if (!resource || !resource.is_active) {
-    return {
-      ...historical,
-      availability: 'UNAVAILABLE',
-      internalSlug: null,
-      ...none,
-    };
-  }
-
-  const url = nonEmpty(resource.url);
-  return {
-    ...historical,
-    availability: 'AVAILABLE',
-    internalSlug: null,
-    directLinkAvailable: url !== null && resource.direct_link_available,
-    url,
-    coverUrl: nonEmpty(resource.cover_url),
+    // Disponibilidade, slug e links: regra única e compartilhada (R7A).
+    ...resolveOperationalState(item, current),
   };
 }
 
@@ -170,34 +109,9 @@ export class MaterialRecommendationResultService {
   private async resolveCurrentResources(
     interviewId: string,
     items: readonly MaterialSnapshotItem[],
-  ): Promise<Map<string, CurrentResource> | null> {
-    const bySource = new Map<string, string[]>();
-    for (const item of items) {
-      if (item.source === 'RH_CONNECT') continue;
-      const refs = bySource.get(item.source) ?? [];
-      refs.push(item.materialRef);
-      bySource.set(item.source, refs);
-    }
-    if (bySource.size === 0) return new Map();
-
+  ): Promise<CurrentResources | null> {
     try {
-      const rows = await this.prisma.external_learning_resource.findMany({
-        where: {
-          OR: [...bySource].map(([source, refs]) => ({
-            source,
-            external_key: { in: refs },
-          })),
-        },
-        select: {
-          source: true,
-          external_key: true,
-          url: true,
-          cover_url: true,
-          direct_link_available: true,
-          is_active: true,
-        },
-      });
-      return new Map(rows.map((row) => [keyOf(row.source, row.external_key), row]));
+      return await loadCurrentResources(this.prisma, items);
     } catch (error) {
       this.logger.error(
         `Falha ao consultar o catálogo atual de materiais (entrevista ${interviewId}); recomendações históricas sem link.`,
