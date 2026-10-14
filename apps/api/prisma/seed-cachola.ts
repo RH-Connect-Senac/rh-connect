@@ -1,10 +1,13 @@
 import { PrismaClient } from '@prisma/client';
-import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import {
+  CACHOLA_SOURCE,
+  createCacholaExternalKey,
+  normalizeSeedText,
+} from './cachola-external-key';
 
 const prisma = new PrismaClient();
-const CACHOLA_SOURCE = 'CACHOLA';
 
 type CacholaSeedResource = {
   titulo: string;
@@ -15,20 +18,6 @@ type CacholaSeedResource = {
   link_direto_disponivel?: boolean;
   capa?: string | null;
 };
-
-function normalizeSeedText(value: unknown) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function createCacholaExternalKey(resource: CacholaSeedResource) {
-  const title = normalizeSeedText(resource.titulo).toLowerCase();
-  const type = normalizeSeedText(resource.tipo).toLowerCase();
-
-  return createHash('sha256')
-    .update(`${CACHOLA_SOURCE}|${title}|${type}`)
-    .digest('hex')
-    .slice(0, 32);
-}
 
 function loadCacholaResources() {
   const filePath = join(__dirname, 'seed-data', 'cachola-recursos.json');

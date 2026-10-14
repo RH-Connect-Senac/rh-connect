@@ -43,6 +43,7 @@ describe('núcleo da recomendação é agnóstico à modalidade', () => {
         'recommendation.types.ts',
         'need-derivation.ts',
         'rh-material-taxonomy.ts',
+        'external-material-taxonomy.ts',
       ]),
     );
   });
