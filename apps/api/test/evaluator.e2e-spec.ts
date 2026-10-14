@@ -161,7 +161,7 @@ describe('Evaluator invite/activate + Onboarding (e2e)', () => {
       .send({ email: adminEmail, password: adminPassword })
       .expect(200);
 
-    adminCookies = loginResponse.headers['set-cookie'];
+    adminCookies = loginResponse.headers['set-cookie'] as unknown as string[];
 
     // Cria também um candidato ACTIVE, para os testes de onboarding
     const candidatePasswordHash = await bcrypt.hash(candidatePassword, 10);

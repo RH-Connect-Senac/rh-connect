@@ -16,6 +16,13 @@ const later = new Date('2026-10-10T12:00:00.000Z');
 const NOT_FOUND = 'Entrevista não encontrada.';
 
 type Row = Record<string, unknown>;
+// Argumentos que o serviço passa ao Prisma em findMany/findFirst (o mock os registra).
+type QueryArgs = {
+  where: Row;
+  orderBy?: unknown;
+  take?: number;
+  select: Record<string, Record<string, unknown>>;
+};
 
 function questions(interviewId: string) {
   return [
@@ -84,7 +91,7 @@ function makeService(rows: Row[], profiles: Row[]) {
       ),
     },
     interview: {
-      findMany: jest.fn(({ where }: { where: Row }) =>
+      findMany: jest.fn(({ where }: QueryArgs) =>
         Promise.resolve(
           rows
             .filter((row) => matches(row, where))
@@ -94,7 +101,7 @@ function makeService(rows: Row[], profiles: Row[]) {
             })),
         ),
       ),
-      findFirst: jest.fn(({ where }: { where: Row }) =>
+      findFirst: jest.fn(({ where }: QueryArgs) =>
         Promise.resolve(rows.find((row) => matches(row, where)) ?? null),
       ),
     },
