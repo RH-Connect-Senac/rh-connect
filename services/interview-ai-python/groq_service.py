@@ -411,8 +411,9 @@ class GroqService:
 
         model = self._model()
         prompt = self._build_evaluation_prompt(context, normalized_answers)
-        # EXPERIMENTO: seed opcional (GROQ_EVALUATION_SEED) para tentar tornar a
-        # nota estavel entre execucoes da mesma resposta. Sem a variavel, nada muda.
+        # Seed opcional (GROQ_EVALUATION_SEED): estabiliza a nota da mesma resposta
+        # entre execucoes (amplitude media 0,93 -> 0,35 no teste na VPS). Sem a
+        # variavel, nada muda.
         seed = self._evaluation_seed()
         seed_kwargs = {"seed": seed} if seed is not None else {}
 
@@ -480,6 +481,10 @@ class GroqService:
         # invalido/vazio, scores incompletos, rate limit, bad_request,
         # etc.) sobe imediatamente, sem retry estrutural.
         for structural_attempt in range(1, _MAX_STRUCTURAL_EVALUATION_ATTEMPTS + 1):
+            if seed is not None:
+                # Com seed fixa, repetir a chamada geraria a mesma saida invalida.
+                # Cada tentativa estrutural usa seed + (tentativa - 1).
+                seed_kwargs["seed"] = seed + structural_attempt - 1
             completion = self._execute_with_rate_limit_fallback(
                 _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
             )

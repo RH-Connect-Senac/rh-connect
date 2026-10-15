@@ -50,3 +50,26 @@ def test_com_variavel_envia_seed_inteira(monkeypatch):
 def test_valor_invalido_e_ignorado(monkeypatch, raw):
     monkeypatch.setenv("GROQ_EVALUATION_SEED", raw)
     assert "seed" not in _run(monkeypatch)
+
+
+def test_retry_estrutural_usa_seed_diferente_na_segunda_tentativa(monkeypatch):
+    incomplete = {**PAYLOAD, "questionsEvaluation": []}
+    outputs = [json.dumps(incomplete), json.dumps(PAYLOAD)]
+    seeds: list[int] = []
+
+    class _Completions:
+        def create(self, **kwargs):
+            seeds.append(kwargs["seed"])
+            content = outputs[len(seeds) - 1]
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions()))
+    monkeypatch.setenv("GROQ_MODEL", "fake-model")
+    monkeypatch.setenv("GROQ_EVALUATION_SEED", "42")
+    monkeypatch.setattr(
+        GroqService, "_execute_with_rate_limit_fallback", lambda self, call_groq, **kw: call_groq(client)
+    )
+
+    GroqService().evaluate_interview(CONTEXT, ANSWERS)
+
+    assert seeds == [42, 43]
