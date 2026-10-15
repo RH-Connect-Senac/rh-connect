@@ -249,6 +249,63 @@ Response de sucesso:
 }
 ```
 
+## Geração de perguntas e avaliação
+
+### Perguntas (`POST /questions`)
+
+- Sempre 5 perguntas, nesta ordem de tipos: Técnica, Técnica, Comportamental, Comportamental e Carreira (o parser rejeita qualquer outra estrutura).
+- Para evitar perguntas repetidas entre gerações da mesma vaga, a cada chamada o serviço sorteia um **ângulo de pergunta** por posição (por exemplo: cenário hipotético, análise de decisão, investigação de problema, feedback, autonomia, motivação). Os ângulos são genéricos e não criam requisito novo (`_QUESTION_ANGLES` em `groq_service.py`).
+- O prompt também pede variedade de tema e de abertura, perguntas em português do Brasil, sem citar ferramentas ou frameworks que não estejam na vaga e sem números extremos incompatíveis com o nível da vaga.
+- A geração usa `temperature=0.7`; a avaliação continua em `0.2`.
+
+### Avaliação (`POST /evaluate`)
+
+- Os 7 critérios, a escala de 0 a 10 e a fórmula da nota geral seguem a **DEC-005** (`docs/05-decisoes/DEC-005-formula-e-criterios-de-avaliacao.md`): `overallScore` é a **média simples dos 7 critérios, calculada pelo sistema**, não pela IA. Esta documentação não altera essa decisão.
+- Os **tetos automáticos** continuam como antes: resposta vazia limita a 0, "não sei" a 1 e respostas com menos de 20 caracteres a 2 (`_answer_score_cap` e `_aggregate_answer_score_cap`).
+- O prompt de avaliação traz uma rubrica com âncoras por critério (2, 5, 9 e 10), proporcionalidade ao nível da vaga, um filtro para texto longo e genérico (forma não substitui conteúdo) e orientação de tom: respeitoso, construtivo e específico, sem elogio artificial nem exigência de ferramentas ou métodos que não estejam na vaga.
+- O prompt informa a quantidade de respostas e os `questionId` esperados, para reduzir o retorno de itens omitidos.
+- A resposta pede até `max_tokens=8192`. O modelo em uso (`openai/gpt-oss-20b`) é de raciocínio e os tokens de raciocínio contam na saída (medido: cerca de 2.700 a 3.300 tokens por avaliação). Sem esse limite, a Groq cortava a saída em 2.048 tokens e a avaliação falhava com `400 json_validate_failed`.
+
+### Variáveis de ambiente
+
+| Variável | Obrigatória | Descrição |
+|---|---|---|
+| `GROQ_API_KEYS` / `GROQ_API_KEY` | Sim | Chaves da Groq (ver seção acima). |
+| `GROQ_MODEL` | Sim | Modelo usado nas duas operações. |
+| `GROQ_EVALUATION_SEED` | Não | Inteiro (ex.: `42`). Quando definido, a avaliação envia `seed` à Groq para estabilizar a nota da mesma resposta entre execuções. Sem a variável, nada muda. |
+| `PORT` | Não | Porta do serviço (padrão `5001`). |
+| `REQUEST_TIMEOUT_SECONDS` | Não | Timeout das chamadas à Groq. |
+
+Sobre a seed: a Groq a trata como "melhor esforço", então a nota fica mais estável, mas não idêntica em 100% dos casos. No teste na VPS, a oscilação média da nota da mesma resposta entre rodadas caiu de cerca de 0,93 para 0,35 ponto, sem mudar o nível das notas. No retry estrutural, cada tentativa usa `seed + (tentativa - 1)`, para não repetir a mesma saída inválida.
+
+### Calibração e diagnóstico (scripts)
+
+Os scripts abaixo usam **somente dados fictícios**. O `baseline_ia.py` usa só a biblioteca padrão; o `diagnostico_avaliacao.py` usa `python-dotenv` e `groq` (já nas dependências) e lê o `.env` da pasta do serviço. O `baseline_ia.py` grava os resultados na **pasta atual** (`baseline_<label>/`), então rode-o a partir de uma pasta fora do repositório, para não versionar resultados. No exemplo, `$REPO` é a raiz do repositório.
+
+```bash
+mkdir -p ~/baselines && cd ~/baselines
+S=$REPO/services/interview-ai-python/scripts
+
+# Baseline de perguntas e avaliação (serviço já rodando na porta indicada)
+python3 $S/baseline_ia.py --label antes --base-url http://localhost:5001
+
+# Só a avaliação, com 3 repetições por perfil e resumo da oscilação (amplitude)
+python3 $S/baseline_ia.py --label calib --only avaliacao --repeat 3 --base-url http://localhost:5002
+
+# Mostra por que a Groq rejeitou uma avaliação (failed_generation, finish_reason e tokens)
+python3 $S/diagnostico_avaliacao.py --perfil excelente --n 4
+```
+
+"Amplitude" é a diferença entre a maior e a menor nota que a mesma resposta recebeu em rodadas diferentes: quanto menor, mais estável a avaliação.
+
+### Erros comuns
+
+| Sintoma | Causa provável |
+|---|---|
+| `502` com "erro de autenticacao (401)" | Uma das chaves de `GROQ_API_KEYS` é inválida ou foi revogada. O fallback troca de chave somente em `429`, então a chave ruim derruba as requisições que a sorteiam. Teste cada chave e remova a inválida. |
+| `502` com "requisicao invalida (400)" e `json_validate_failed` | A Groq rejeitou um JSON truncado ou malformado. Use `scripts/diagnostico_avaliacao.py` e confira `finish_reason`/`completion_tokens`. |
+| `502` com "avaliacao por pergunta incompleta" | O modelo devolveu menos itens do que o esperado. O serviço repete uma vez; se persistir, o erro é retornado. |
+
 ## Escopo futuro
 
 Este serviço já expõe a extração de contexto da vaga em `/job-context`.
