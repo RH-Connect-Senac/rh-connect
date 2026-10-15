@@ -98,3 +98,13 @@ def test_prompt_calibra_pelo_nivel_da_vaga_sem_premiar_texto_generico():
     assert "recebe 5 ou 6" in prompt
     # o filtro de relevancia continua valendo
     assert "Avalie o conteudo, nao o tamanho nem a formalidade" in prompt
+
+
+def test_escala_inteira_brevidade_e_variacao_entre_perguntas():
+    prompt = _prompt()
+    assert "10 = desempenho completo e sem lacunas relevantes" in prompt
+    assert "merece 9 ou 10" in prompt
+    assert "Brevidade nao e defeito por si so" in prompt
+    assert "resposta curta, correta e objetiva vale mais que resposta curta, vaga ou errada" in prompt
+    assert "as notas por pergunta devem variar" in prompt
+    assert "reduz a nota de forma proporcional" in prompt
