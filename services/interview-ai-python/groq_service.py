@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import threading
 from typing import Any
 
@@ -85,6 +86,61 @@ GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION = "structural_incomplete_ev
 # limit continua sem alteracao, com seu proprio `max_attempts` baseado no
 # numero de credenciais distintas).
 _MAX_STRUCTURAL_EVALUATION_ATTEMPTS = 2
+
+# Temperatura da geracao de perguntas. A avaliacao continua em 0.2 (precisa
+# ser estavel); aqui um valor moderado ajuda a variar as perguntas entre
+# geracoes sem comprometer a validade do JSON.
+_QUESTIONS_TEMPERATURE = 0.7
+
+# Limite de tokens da resposta da avaliacao. Sem esse parametro a Groq cortava
+# a saida em 2048 tokens (finish_reason=length), o que gerava JSON truncado
+# (400 json_validate_failed) ou questionsEvaluation incompleto. A avaliacao
+# devolve 7 criterios + 5 avaliacoes por pergunta + listas, e precisa de folga.
+# O modelo da VPS (openai/gpt-oss-20b) e de raciocinio: os tokens de raciocinio
+# entram na contagem (medido: ~2700 a 3300 por avaliacao), por isso 8192.
+_EVALUATION_MAX_TOKENS = 8192
+
+# "Angulos" sorteados a cada geracao, um por pergunta, dentro do tipo ja
+# exigido pelo parser (Tecnica, Tecnica, Comportamental, Comportamental,
+# Carreira). Sao formatos de pergunta genericos, sem tecnologia nem area
+# profissional: nao criam requisitos novos, so forcam variedade de abordagem
+# (a temperatura sozinha nao garante).
+_QUESTION_ANGLES: dict[str, tuple[str, ...]] = {
+    "Tecnica": (
+        "experiencia pratica: pedir um caso real em que o candidato aplicou o conhecimento",
+        "cenario hipotetico: apresentar uma situacao de trabalho e perguntar como agiria",
+        "analise de decisao: comparar duas abordagens genericas e pedir os criterios de escolha, sem citar ferramentas que nao estejam na vaga",
+        "investigacao de problema: algo deu errado e o candidato explica como descobriria a causa",
+        "qualidade e manutencao: avaliar uma solucao que funciona, mas tem pontos fracos",
+    ),
+    "Comportamental": (
+        "situacao passada: contar um episodio real, o que fez e o resultado",
+        "cenario hipotetico de equipe: um desafio de colaboracao ou de comunicacao",
+        "feedback e aprendizado: lidar com uma critica ou com um erro proprio",
+        "prazo e pressao: conciliar prioridades quando o tempo e curto",
+        "tomada de decisao com informacao incompleta",
+        "autonomia: quando decidir sozinho e quando pedir ajuda",
+    ),
+    "Carreira": (
+        "motivacao: o que atrai o candidato nesta atuacao e nesta vaga",
+        "aprendizado: como o candidato se desenvolve e o que quer aprender neste papel",
+        "ambiente de trabalho: em que condicoes rende melhor e por que",
+        "trajetoria: um passo anterior que o preparou para esta vaga",
+        "desafios do nivel: o que espera achar mais dificil e como se prepara",
+    ),
+}
+
+
+def _pick_question_angles() -> list[str]:
+    """Sorteia um angulo por pergunta, sem repetir angulo dentro do mesmo tipo."""
+    angles: list[str] = []
+    used: dict[str, list[str]] = {}
+    for question_type in QUESTION_TYPES:
+        pool = [angle for angle in _QUESTION_ANGLES[question_type] if angle not in used.get(question_type, [])]
+        chosen = random.choice(pool)
+        used.setdefault(question_type, []).append(chosen)
+        angles.append(chosen)
+    return angles
 
 
 def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
@@ -338,7 +394,7 @@ class GroqService:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=_QUESTIONS_TEMPERATURE,
                 response_format={"type": "json_object"},
             )
 
@@ -355,6 +411,11 @@ class GroqService:
 
         model = self._model()
         prompt = self._build_evaluation_prompt(context, normalized_answers)
+        # Seed opcional (GROQ_EVALUATION_SEED): estabiliza a nota da mesma resposta
+        # entre execucoes (amplitude media 0,93 -> 0,35 no teste na VPS). Sem a
+        # variavel, nada muda.
+        seed = self._evaluation_seed()
+        seed_kwargs = {"seed": seed} if seed is not None else {}
 
         def _call_groq(client: Groq):
             # Bloco 6: o log de observabilidade por tentativa que existia
@@ -389,13 +450,19 @@ class GroqService:
                         "content": (
                             "Voce e um avaliador educacional de entrevistas profissionais. "
                             "Avalie com foco em desenvolvimento do candidato. "
+                            "Seja justo e consistente: respostas de mesma qualidade recebem a mesma "
+                            "nota, e o tamanho ou a formalidade do texto nao substituem conteudo. "
+                            "Use um tom respeitoso, construtivo e especifico, sem tratar uma resposta "
+                            "incompleta como prova de incapacidade. "
                             "Responda somente com JSON valido, sem markdown."
                         ),
                     },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
+                max_tokens=_EVALUATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
+                **seed_kwargs,
             )
 
         # Retry estrutural (no maximo 1 vez, so aqui - nao dentro de
@@ -414,6 +481,10 @@ class GroqService:
         # invalido/vazio, scores incompletos, rate limit, bad_request,
         # etc.) sobe imediatamente, sem retry estrutural.
         for structural_attempt in range(1, _MAX_STRUCTURAL_EVALUATION_ATTEMPTS + 1):
+            if seed is not None:
+                # Com seed fixa, repetir a chamada geraria a mesma saida invalida.
+                # Cada tentativa estrutural usa seed + (tentativa - 1).
+                seed_kwargs["seed"] = seed + structural_attempt - 1
             completion = self._execute_with_rate_limit_fallback(
                 _call_groq, action="avaliar entrevista", ai_operation="evaluate_interview"
             )
@@ -715,6 +786,16 @@ class GroqService:
             raise GroqConfigurationError("GROQ_MODEL nao configurado.")
         return model
 
+    def _evaluation_seed(self) -> int | None:
+        raw = os.getenv("GROQ_EVALUATION_SEED", "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("GROQ_EVALUATION_SEED invalido - ignorado")
+            return None
+
     def _request_timeout(self) -> int:
         raw_timeout = os.getenv("REQUEST_TIMEOUT_SECONDS", "20")
         try:
@@ -747,6 +828,9 @@ class GroqService:
             "workMode": _clean_text(context.get("workMode")),
             "sourceUrl": _clean_text(context.get("sourceUrl")),
         }
+
+        angles = _pick_question_angles()
+        angles_text = "".join(f"- Pergunta {index}: {angle}.\n" for index, angle in enumerate(angles, start=1))
 
         return (
             "Gere perguntas de entrevista para a vaga abaixo.\n\n"
@@ -805,6 +889,28 @@ class GroqService:
             "caracteristicas da empresa que nao aparecem no contexto.\n"
             "- Evite perguntas genericas quando houver contexto suficiente.\n"
             "- Nao inclua resposta esperada, avaliacao ou explicacoes ao candidato.\n\n"
+            "Variedade das perguntas:\n"
+            "- Cada pergunta deve explorar uma competencia ou um aspecto diferente da vaga; "
+            "nao repita o mesmo tema entre as 5 perguntas.\n"
+            "- Siga o formato sugerido para cada pergunta (mantendo o tipo obrigatorio acima):\n"
+            f"{angles_text}"
+            "- Varie a abertura das perguntas; evite formulas batidas como comecar sempre com "
+            "\"Descreva uma situacao em que...\" ou \"Quais sao seus objetivos...\".\n"
+            "- Evite o cenario mais previsivel para esse tipo de vaga; prefira uma situacao "
+            "concreta e especifica, sempre baseada em titulo, atividades e requisitos da vaga.\n"
+            "- Cada pergunta deve ter um unico foco, ser clara e poder ser respondida em "
+            "poucos minutos.\n"
+            "- A variedade nunca justifica inventar tecnologia, requisito ou caracteristica "
+            "que nao esteja no contexto da vaga.\n"
+            "- Nao cite ferramentas, frameworks ou bibliotecas especificos que nao estejam na vaga, "
+            "nem compare produtos pelo nome; fale em abordagens e criterios.\n"
+            "- Evite numeros extremos (volumes de dados, tempos, prazos) incompativeis com o nivel "
+            "da vaga; prefira situacoes realistas.\n"
+            "- Escreva todas as perguntas em portugues do Brasil, sem misturar palavras ou frases "
+            "em ingles.\n"
+            "- As perguntas 1 e 2 devem tratar de situacoes diferentes entre si, e o mesmo vale "
+            "para as perguntas 3 e 4; nao repita o mesmo cenario com outras palavras.\n"
+            "- Ajuste a profundidade ao nivel de experiencia que a vaga indica.\n\n"
             "Formato obrigatorio:\n"
             '{ "questions": ['
             '{ "id": 1, "type": "Tecnica", "text": "..." },'
@@ -863,6 +969,8 @@ class GroqService:
             "sourceUrl": _clean_text(context.get("sourceUrl")),
         }
 
+        expected_ids = [answer["questionId"] for answer in answers]
+
         return (
             "Avalie as respostas do candidato para a vaga abaixo.\n\n"
             "Objetivo da avaliacao:\n"
@@ -888,17 +996,78 @@ class GroqService:
             "- 3-4: superficial.\n"
             "- 5-6: razoavel.\n"
             "- 7-8: boa.\n"
-            "- 9: muito boa.\n"
-            "- 10: excepcional.\n\n"
+            "- 9: muito boa, com pequenas lacunas.\n"
+            "- 10: completa e correta para o nivel da vaga, sem lacunas relevantes.\n\n"
+            "Ancoras por criterio (use para calibrar; notas intermediarias sao permitidas):\n"
+            "- Clareza: 2 = confusa ou ininteligivel; 5 = compreensivel, com trechos vagos; "
+            "9 = facil de entender de ponta a ponta.\n"
+            "- Coerência: 2 = ideias contraditorias ou sem ligacao; 5 = logica geral, com saltos ou "
+            "lacunas; 9 = ideias encadeadas, sem contradicoes.\n"
+            "- Objetividade: 2 = foge da pergunta ou apenas rodeia; 5 = responde, mas com informacao "
+            "irrelevante ou repetida; 9 = vai direto ao ponto com o necessario.\n"
+            "- Domínio: 2 = nenhum conhecimento demonstrado ou erros graves; 5 = conhecimento basico, "
+            "sem detalhes ou com imprecisoes; 9 = conhecimento correto, com detalhes e criterios proprios.\n"
+            "- Organização: 2 = sem estrutura; 5 = estrutura parcial; 9 = sequencia clara e facil de seguir.\n"
+            "- Aderência: 2 = sem relacao com a pergunta ou a vaga; 5 = relacao parcial ou generica; "
+            "9 = responde exatamente a pergunta, no contexto da vaga.\n"
+            "- Exemplos: 0-2 = nenhum exemplo; 5 = exemplo vago ou sem detalhes; "
+            "9 = exemplo concreto, com contexto, acao e resultado.\n"
+            "- Em qualquer criterio, 10 = desempenho completo e sem lacunas relevantes para o nivel "
+            "da vaga.\n\n"
+            "Regras de conteudo e consistencia:\n"
+            "- Seja proporcional ao nivel da vaga: para vagas de entrada ou junior, uma resposta "
+            "correta e dentro do assunto, mesmo breve e sem exemplos, recebe 5 ou 6; use notas "
+            "abaixo de 4 apenas para respostas com erros, fora do assunto ou sem conteudo concreto; "
+            "reserve 7 ou mais para respostas corretas com detalhes ou exemplos.\n"
+            "- Use a escala inteira: resposta completa, correta, bem fundamentada e com exemplos "
+            "concretos para o nivel da vaga merece 9 ou 10; o 10 nao exige perfeicao absoluta.\n"
+            "- Nao desconte nota por itens que a pergunta nao pediu (como metricas, ferramentas ou "
+            "detalhes extras): se a resposta cobre o que a pergunta pede, com correcao, exemplo e "
+            "resultado, a nota e 9 ou 10. Sugestoes de melhoria nao precisam reduzir a nota.\n"
+            "- Brevidade nao e defeito por si so: resposta curta, correta e objetiva vale mais que "
+            "resposta curta, vaga ou errada; o que reduz a nota e a falta de conteudo, de exemplos "
+            "ou de correcao.\n"
+            "- Avalie cada pergunta pelo proprio merito: as notas por pergunta devem variar conforme "
+            "a qualidade de cada resposta, com valores intermediarios (como 4,5 ou 6,5), e nao "
+            "repetir a mesma nota quando as respostas forem diferentes.\n"
+            "- Uma unica resposta sem conteudo entre varias respostas boas reduz a nota de forma "
+            "proporcional, sem rebaixar as demais respostas nem os criterios que elas sustentam.\n"
+            "- Avalie o conteudo, nao o tamanho nem a formalidade: texto longo e bem escrito, mas "
+            "generico, sem informacao concreta ou que poderia servir para qualquer pergunta, recebe "
+            "no maximo 3 por pergunta, com Aderência, Domínio e Exemplos baixos; Clareza, Coerência "
+            "e Organização nao passam de 6 nesse caso.\n"
+            "- Uma resposta equivalente a 'nao sei' ou muito curta e avaliada apenas pelo que foi "
+            "dito; nao conclua nada sobre a capacidade geral da pessoa.\n"
+            "- Respostas de mesma qualidade devem receber notas parecidas; a media das notas por "
+            "pergunta deve ficar proxima da media dos 7 criterios (diferenca de ate 1 ponto).\n"
+            "- Em reason, justifique a nota com base no que a resposta contem (ou diga que nao ha "
+            "conteudo aproveitavel). Nao repita a mesma justificativa em varias perguntas.\n\n"
+            "Tom do feedback:\n"
+            "- Fale da resposta, nao da pessoa. Evite expressoes categoricas como 'falta de "
+            "conhecimento', 'incapaz' ou 'nao demonstrou preparo'; prefira 'a resposta ainda nao "
+            "detalhou...' ou 'ficou faltando explicar...'.\n"
+            "- Em positives, inclua apenas pontos que existam de fato na resposta; se nao houver, "
+            "retorne a lista vazia. Nao invente elogios como 'respondeu a pergunta'.\n"
+            "- Em improvements e suggestion, indique acoes praticas e alcancaveis dentro do assunto "
+            "e da vaga, sem exigir nomes de ferramentas, frameworks, metodos ou siglas que nao "
+            "estejam na vaga ou na pergunta.\n"
+            "- Mantenha os textos curtos: reason em 1 ou 2 frases, no maximo 2 itens em positives e "
+            "em improvements por pergunta, suggestion em 1 frase, strengths, improvements e "
+            "recommendations gerais com no maximo 4 itens curtos cada e summary em ate 3 frases, "
+            "reconhecendo o que houve de bom (se houver) e a principal oportunidade de melhoria.\n\n"
             "Regras obrigatorias:\n"
             "- Retorne somente JSON valido.\n"
             "- Nao use markdown.\n"
             "- Nao inclua texto antes ou depois do JSON.\n"
+            "- Dentro dos valores de texto do JSON, nao use aspas duplas (use aspas simples) nem "
+            "quebras de linha, para o JSON permanecer valido.\n"
             "- Retorne exatamente os 7 criterios oficiais em scores.\n"
             "- Nao inclua overallScore; ele sera calculado pelo sistema.\n"
             "- Inclua strengths, improvements e recommendations como arrays de strings.\n"
             "- Inclua summary como string.\n"
             "- Inclua questionsEvaluation com uma avaliacao para cada resposta recebida.\n"
+            f"- Foram recebidas {len(answers)} respostas: questionsEvaluation deve ter exatamente "
+            f"{len(answers)} itens, com os questionId {expected_ids}, nessa ordem.\n"
             "- Cada item de questionsEvaluation deve conter questionId, score, reason, positives, improvements e suggestion.\n"
             "- questionsEvaluation deve conter EXATAMENTE uma avaliacao para cada pergunta/resposta recebida - nem a mais, nem a menos.\n"
             "- A quantidade de itens em questionsEvaluation deve ser IGUAL a quantidade de perguntas/respostas recebidas.\n"
