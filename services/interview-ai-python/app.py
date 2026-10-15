@@ -32,9 +32,14 @@ def create_app() -> Flask:
         try:
             context = extract_job_context(url)
         except JobContextAdapterError as exc:
-            return jsonify({"error": str(exc)}), exc.status_code
+            body = {"error": str(exc)}
+            if exc.code:
+                body["code"] = exc.code
+            return jsonify(body), exc.status_code
         except Exception:
-            return jsonify({"error": "Erro inesperado ao extrair a vaga."}), 500
+            return jsonify(
+                {"error": "Erro inesperado ao extrair a vaga.", "code": "EXTRACAO_FALHOU"}
+            ), 500
 
         return jsonify(context)
 

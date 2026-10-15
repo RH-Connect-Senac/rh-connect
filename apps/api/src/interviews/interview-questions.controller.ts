@@ -14,6 +14,7 @@ import type { Request } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { AiRateLimitGuard } from '../interviews-ai/ai-rate-limit.guard';
 import { SaveAnswerDto } from './dto/save-answer.dto';
 import { SaveDraftDto } from './dto/save-draft.dto';
 import { InterviewQuestionsService } from './interview-questions.service';
@@ -30,9 +31,12 @@ function userIdOf(req: Request): number {
 export class InterviewQuestionsController {
   constructor(private readonly questionsService: InterviewQuestionsService) {}
 
+  // Chama o provedor de IA quando ainda não há perguntas: além de JWT + dono da
+  // entrevista (no service), conta na cota de IA do usuário (ver AiRateLimitGuard).
   @Post(':id/questions/generate')
   @HttpCode(200)
   @Roles('CANDIDATE')
+  @UseGuards(AiRateLimitGuard)
   generate(@Req() req: Request, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.questionsService.generate(userIdOf(req), id);
   }
