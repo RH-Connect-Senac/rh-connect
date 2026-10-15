@@ -2,6 +2,8 @@
 """Gera o baseline da IA de entrevistas chamando o servico Flask direto.
 
 Uso (somente biblioteca padrao; dados 100% ficticios):
+  # calibracao da avaliacao: 3 repeticoes por perfil, sem gerar perguntas
+  python baseline_ia.py --label calib --only avaliacao --repeat 3 --base-url http://localhost:5002
   python baseline_ia.py --label antes  --base-url http://localhost:5001   (rode FORA do repositorio)
   python baseline_ia.py --label depois --base-url http://localhost:5002
 
@@ -87,23 +89,37 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
     ap.add_argument("--base-url", default="http://localhost:5001")
-    ap.add_argument("--n-questions", type=int, default=5)
+    ap.add_argument("--n-questions", type=int, default=5, help="quantas geracoes de perguntas")
+    ap.add_argument("--repeat", type=int, default=1, help="quantas vezes repetir cada perfil de avaliacao")
+    ap.add_argument("--only", choices=["tudo", "perguntas", "avaliacao"], default="tudo")
+    ap.add_argument("--perfil", action="append", help="rodar so este perfil (pode repetir)")
     a = ap.parse_args()
     out = pathlib.Path(f"baseline_{a.label}"); out.mkdir(exist_ok=True)
 
-    for i in range(1, a.n_questions + 1):
-        r = post(a.base_url, "/questions", {"context": CONTEXT})
-        (out / f"questions_{i}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[perguntas {i}] {'FALHOU' if '_erro_http' in r or '_erro' in r else 'ok'}")
+    if a.only in ("tudo", "perguntas"):
+        for i in range(1, a.n_questions + 1):
+            r = post(a.base_url, "/questions", {"context": CONTEXT})
+            (out / f"questions_{i}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"[perguntas {i}] {'FALHOU' if '_erro_http' in r or '_erro' in r else 'ok'}")
 
-    for name, answers in PROFILES.items():
-        payload = {"context": CONTEXT, "answers": [{**q, "answer": ans} for q, ans in zip(QUESTIONS, answers)]}
-        r = post(a.base_url, "/evaluate", payload)
-        (out / f"evaluate_{name}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
-        if "_erro_http" in r or "_erro" in r:
-            print(f"[avaliacao {name}] FALHOU")
-        else:
-            print(f"[avaliacao {name}] overallScore={r.get('overallScore')} scores={r.get('scores')}")
+    if a.only in ("tudo", "avaliacao"):
+        notas = {}
+        for name, answers in PROFILES.items():
+            if a.perfil and name not in a.perfil:
+                continue
+            for n in range(1, a.repeat + 1):
+                payload = {"context": CONTEXT, "answers": [{**q, "answer": ans} for q, ans in zip(QUESTIONS, answers)]}
+                r = post(a.base_url, "/evaluate", payload)
+                suffix = f"_r{n}" if a.repeat > 1 else ""
+                (out / f"evaluate_{name}{suffix}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
+                if "_erro_http" in r or "_erro" in r:
+                    print(f"[avaliacao {name} #{n}] FALHOU")
+                else:
+                    notas.setdefault(name, []).append(r.get("overallScore"))
+                    print(f"[avaliacao {name} #{n}] overallScore={r.get('overallScore')}")
+        print("\nResumo (overallScore): perfil -> notas | min-max")
+        for name, vals in notas.items():
+            print(f"  {name:18s} {vals} | {min(vals)}-{max(vals)} (amplitude {round(max(vals) - min(vals), 1)})")
 
 
 if __name__ == "__main__":
