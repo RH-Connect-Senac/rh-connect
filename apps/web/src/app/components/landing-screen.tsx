@@ -122,7 +122,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
           <nav className="hidden lg:flex items-center gap-7">
             <a href="#como-funciona" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Como funciona</a>
             <a href="#beneficios" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Benefícios</a>
-            <a href="#para-quem" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Para quem é</a>
+            <a href="#publico-alvo" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Para quem é</a>
             <a href="#sobre" className="whitespace-nowrap text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">Sobre o projeto</a>
           </nav>
           {/* Desktop CTAs */}
@@ -144,7 +144,7 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
             {[
               { label: "Como funciona", href: "#como-funciona" },
               { label: "Benefícios", href: "#beneficios" },
-              { label: "Para quem é", href: "#para-quem" },
+              { label: "Público-alvo", href: "#publico-alvo" },
               { label: "Sobre o projeto", href: "#sobre" },
             ].map(link => (
               <a key={link.label} href={link.href} onClick={() => setMobileMenuOpen(false)}
@@ -408,11 +408,11 @@ export function LandingScreen({ onNavigate }: { onNavigate: NavFn }) {
         </div>
       </section>
 
-      {/* ── Para quem é ── */}
-      <section id="para-quem" className="scroll-mt-16 px-4 sm:px-8 py-14 sm:py-20 bg-background">
+      {/* ── Público-alvo ── */}
+      <section id="publico-alvo" className="scroll-mt-16 px-4 sm:px-8 py-14 sm:py-20 bg-background">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 sm:mb-12">
-            <LandingSectionBadge>Para quem é</LandingSectionBadge>
+            <LandingSectionBadge>Público-alvo</LandingSectionBadge>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground">O RH Connect é para você</h2>
             <p className="text-muted-foreground mt-3 max-w-lg mx-auto text-sm sm:text-base">
               Seja qual for o momento da sua carreira, a plataforma se adapta ao seu objetivo.
