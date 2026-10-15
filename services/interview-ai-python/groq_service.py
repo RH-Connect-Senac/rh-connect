@@ -96,7 +96,9 @@ _QUESTIONS_TEMPERATURE = 0.7
 # a saida em 2048 tokens (finish_reason=length), o que gerava JSON truncado
 # (400 json_validate_failed) ou questionsEvaluation incompleto. A avaliacao
 # devolve 7 criterios + 5 avaliacoes por pergunta + listas, e precisa de folga.
-_EVALUATION_MAX_TOKENS = 4096
+# O modelo da VPS (openai/gpt-oss-20b) e de raciocinio: os tokens de raciocinio
+# entram na contagem (medido: ~2700 a 3300 por avaliacao), por isso 8192.
+_EVALUATION_MAX_TOKENS = 8192
 
 # "Angulos" sorteados a cada geracao, um por pergunta, dentro do tipo ja
 # exigido pelo parser (Tecnica, Tecnica, Comportamental, Comportamental,

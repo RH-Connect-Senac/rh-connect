@@ -87,6 +87,6 @@ def test_avaliacao_pede_limite_de_tokens_maior_que_o_padrao_da_groq(monkeypatch)
 
     GroqService().evaluate_interview(CONTEXT, answers)
 
-    assert _EVALUATION_MAX_TOKENS >= 4096
+    assert _EVALUATION_MAX_TOKENS >= 8192
     assert captured[0]["max_tokens"] == _EVALUATION_MAX_TOKENS
     assert captured[0]["temperature"] == 0.2
