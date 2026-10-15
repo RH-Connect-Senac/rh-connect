@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import threading
 from typing import Any
 
@@ -85,6 +86,54 @@ GROQ_ERROR_CATEGORY_STRUCTURAL_INCOMPLETE_EVALUATION = "structural_incomplete_ev
 # limit continua sem alteracao, com seu proprio `max_attempts` baseado no
 # numero de credenciais distintas).
 _MAX_STRUCTURAL_EVALUATION_ATTEMPTS = 2
+
+# Temperatura da geracao de perguntas. A avaliacao continua em 0.2 (precisa
+# ser estavel); aqui um valor moderado ajuda a variar as perguntas entre
+# geracoes sem comprometer a validade do JSON.
+_QUESTIONS_TEMPERATURE = 0.7
+
+# "Angulos" sorteados a cada geracao, um por pergunta, dentro do tipo ja
+# exigido pelo parser (Tecnica, Tecnica, Comportamental, Comportamental,
+# Carreira). Sao formatos de pergunta genericos, sem tecnologia nem area
+# profissional: nao criam requisitos novos, so forcam variedade de abordagem
+# (a temperatura sozinha nao garante).
+_QUESTION_ANGLES: dict[str, tuple[str, ...]] = {
+    "Tecnica": (
+        "experiencia pratica: pedir um caso real em que o candidato aplicou o conhecimento",
+        "cenario hipotetico: apresentar uma situacao de trabalho e perguntar como agiria",
+        "analise de decisao: comparar duas abordagens e pedir os criterios de escolha",
+        "investigacao de problema: algo deu errado e o candidato explica como descobriria a causa",
+        "priorizacao: varias demandas ao mesmo tempo e o que o candidato faria primeiro e por que",
+        "qualidade e manutencao: avaliar uma solucao que funciona, mas tem pontos fracos",
+    ),
+    "Comportamental": (
+        "situacao passada: contar um episodio real, o que fez e o resultado",
+        "cenario hipotetico de equipe: um desafio de colaboracao ou de comunicacao",
+        "feedback e aprendizado: lidar com uma critica ou com um erro proprio",
+        "prazo e pressao: conciliar prioridades quando o tempo e curto",
+        "tomada de decisao com informacao incompleta",
+        "autonomia: quando decidir sozinho e quando pedir ajuda",
+    ),
+    "Carreira": (
+        "motivacao: o que atrai o candidato nesta atuacao e nesta vaga",
+        "aprendizado: como o candidato se desenvolve e o que quer aprender neste papel",
+        "ambiente de trabalho: em que condicoes rende melhor e por que",
+        "trajetoria: um passo anterior que o preparou para esta vaga",
+        "desafios do nivel: o que espera achar mais dificil e como se prepara",
+    ),
+}
+
+
+def _pick_question_angles() -> list[str]:
+    """Sorteia um angulo por pergunta, sem repetir angulo dentro do mesmo tipo."""
+    angles: list[str] = []
+    used: dict[str, list[str]] = {}
+    for question_type in QUESTION_TYPES:
+        pool = [angle for angle in _QUESTION_ANGLES[question_type] if angle not in used.get(question_type, [])]
+        chosen = random.choice(pool)
+        used.setdefault(question_type, []).append(chosen)
+        angles.append(chosen)
+    return angles
 
 
 def _translate_groq_error(exc: Exception, *, action: str) -> GroqServiceError:
@@ -338,7 +387,7 @@ class GroqService:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=_QUESTIONS_TEMPERATURE,
                 response_format={"type": "json_object"},
             )
 
@@ -748,6 +797,9 @@ class GroqService:
             "sourceUrl": _clean_text(context.get("sourceUrl")),
         }
 
+        angles = _pick_question_angles()
+        angles_text = "".join(f"- Pergunta {index}: {angle}.\n" for index, angle in enumerate(angles, start=1))
+
         return (
             "Gere perguntas de entrevista para a vaga abaixo.\n\n"
             "Regras obrigatorias:\n"
@@ -805,6 +857,20 @@ class GroqService:
             "caracteristicas da empresa que nao aparecem no contexto.\n"
             "- Evite perguntas genericas quando houver contexto suficiente.\n"
             "- Nao inclua resposta esperada, avaliacao ou explicacoes ao candidato.\n\n"
+            "Variedade das perguntas:\n"
+            "- Cada pergunta deve explorar uma competencia ou um aspecto diferente da vaga; "
+            "nao repita o mesmo tema entre as 5 perguntas.\n"
+            "- Siga o formato sugerido para cada pergunta (mantendo o tipo obrigatorio acima):\n"
+            f"{angles_text}"
+            "- Varie a abertura das perguntas; evite formulas batidas como comecar sempre com "
+            "\"Descreva uma situacao em que...\" ou \"Quais sao seus objetivos...\".\n"
+            "- Evite o cenario mais previsivel para esse tipo de vaga; prefira uma situacao "
+            "concreta e especifica, sempre baseada em titulo, atividades e requisitos da vaga.\n"
+            "- Cada pergunta deve ter um unico foco, ser clara e poder ser respondida em "
+            "poucos minutos.\n"
+            "- A variedade nunca justifica inventar tecnologia, requisito ou caracteristica "
+            "que nao esteja no contexto da vaga.\n"
+            "- Ajuste a profundidade ao nivel de experiencia que a vaga indica.\n\n"
             "Formato obrigatorio:\n"
             '{ "questions": ['
             '{ "id": 1, "type": "Tecnica", "text": "..." },'
