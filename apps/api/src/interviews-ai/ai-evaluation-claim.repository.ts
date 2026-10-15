@@ -267,11 +267,14 @@ export class AiEvaluationClaimRepository {
   // Registra o início da chamada e o teto de chamadas à Groq desta tentativa.
   async markAiRequested(
     claim: AiEvaluationClaim,
-    callsUpperBound: number,
+    // null = teto de chamadas à Groq não configurado (nunca presumido).
+    callsUpperBound: number | null,
   ): Promise<{ authorized: boolean }> {
-    assertNonNegativeInt(callsUpperBound, 'callsUpperBound');
-    if (callsUpperBound > 32_767) {
-      throw new AiEvaluationClaimError('INVALID_OPTIONS', 'callsUpperBound');
+    if (callsUpperBound !== null) {
+      assertNonNegativeInt(callsUpperBound, 'callsUpperBound');
+      if (callsUpperBound > 32_767) {
+        throw new AiEvaluationClaimError('INVALID_OPTIONS', 'callsUpperBound');
+      }
     }
     const updated = await this.prisma.$executeRaw(
       Prisma.sql`UPDATE "ai_evaluation_attempt" AS a

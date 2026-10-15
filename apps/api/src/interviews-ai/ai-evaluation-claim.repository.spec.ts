@@ -356,6 +356,15 @@ describe('Fencing: escritas de quem perdeu o lease não têm efeito', () => {
     });
   });
 
+  it('markAiRequested aceita teto de chamadas à Groq desconhecido (null) sem presumir valor', async () => {
+    const { repository, calls } = setup([1]);
+    expect(await repository.markAiRequested(CLAIM, null)).toEqual({
+      authorized: true,
+    });
+    expect(calls[0].values).toContain(null);
+    expect(calls[0].values).not.toContain(0);
+  });
+
   it('markAiRequested recusa limite inválido de chamadas', async () => {
     const { repository, prisma } = setup();
     await expect(repository.markAiRequested(CLAIM, -1)).rejects.toBeInstanceOf(

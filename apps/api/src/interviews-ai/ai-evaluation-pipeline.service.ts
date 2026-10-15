@@ -103,6 +103,10 @@ const RETRYABLE: Record<AiEvaluationPipelineFailureCode, boolean> = {
   UNEXPECTED: false,
 };
 
+// Tabela exposta para a política do executor (R3.3a-4b) conferir que concorda
+// com o `retryable` de cada código; a fonte da verdade continua sendo esta.
+export { RETRYABLE as AI_EVALUATION_FAILURE_RETRYABLE };
+
 export type AiEvaluationPipelineResult =
   | {
       status: 'persisted' | 'already_persisted';

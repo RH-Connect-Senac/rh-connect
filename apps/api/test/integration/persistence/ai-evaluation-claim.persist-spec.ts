@@ -526,6 +526,19 @@ describe('desfechos, backoff persistido e falha terminal', () => {
     expect(attempt.outcome).toBe('LEASE_EXPIRED');
   });
 
+  it('markAiRequested com teto da Groq desconhecido grava NULL (nunca um valor presumido)', async () => {
+    const { interviewId } = await newInterview();
+    const claim = await claimed(interviewId);
+
+    expect(await repository.markAiRequested(claim, null)).toEqual({
+      authorized: true,
+    });
+
+    const [attempt] = await attemptRows(interviewId);
+    expect(attempt.ai_requested_at).not.toBeNull();
+    expect(attempt.ai_calls_upper_bound).toBeNull();
+  });
+
   it('contadores: início (claim) e chamada à IA (ai_requested_at) são medidas distintas', async () => {
     const { interviewId } = await newInterview();
     const startsBefore = await repository.countStartsSince(3_600);
