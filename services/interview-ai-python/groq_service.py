@@ -101,9 +101,8 @@ _QUESTION_ANGLES: dict[str, tuple[str, ...]] = {
     "Tecnica": (
         "experiencia pratica: pedir um caso real em que o candidato aplicou o conhecimento",
         "cenario hipotetico: apresentar uma situacao de trabalho e perguntar como agiria",
-        "analise de decisao: comparar duas abordagens e pedir os criterios de escolha",
+        "analise de decisao: comparar duas abordagens genericas e pedir os criterios de escolha, sem citar ferramentas que nao estejam na vaga",
         "investigacao de problema: algo deu errado e o candidato explica como descobriria a causa",
-        "priorizacao: varias demandas ao mesmo tempo e o que o candidato faria primeiro e por que",
         "qualidade e manutencao: avaliar uma solucao que funciona, mas tem pontos fracos",
     ),
     "Comportamental": (
@@ -870,6 +869,14 @@ class GroqService:
             "poucos minutos.\n"
             "- A variedade nunca justifica inventar tecnologia, requisito ou caracteristica "
             "que nao esteja no contexto da vaga.\n"
+            "- Nao cite ferramentas, frameworks ou bibliotecas especificos que nao estejam na vaga, "
+            "nem compare produtos pelo nome; fale em abordagens e criterios.\n"
+            "- Evite numeros extremos (volumes de dados, tempos, prazos) incompativeis com o nivel "
+            "da vaga; prefira situacoes realistas.\n"
+            "- Escreva todas as perguntas em portugues do Brasil, sem misturar palavras ou frases "
+            "em ingles.\n"
+            "- As perguntas 1 e 2 devem tratar de situacoes diferentes entre si, e o mesmo vale "
+            "para as perguntas 3 e 4; nao repita o mesmo cenario com outras palavras.\n"
             "- Ajuste a profundidade ao nivel de experiencia que a vaga indica.\n\n"
             "Formato obrigatorio:\n"
             '{ "questions": ['

@@ -39,6 +39,8 @@ def test_prompt_inclui_um_angulo_por_pergunta_e_mantem_a_estrutura():
     assert "A pergunta 5 deve ser Carreira." in prompt
     assert "Nao invente tecnologias" in prompt
     assert "Variedade das perguntas" in prompt
+    assert "portugues do Brasil" in prompt
+    assert "nao estejam na vaga" in prompt
 
 
 def test_angulos_pertencem_ao_tipo_de_cada_pergunta_e_nao_repetem_no_mesmo_tipo():
@@ -77,3 +79,10 @@ def test_generate_questions_usa_temperatura_moderada(monkeypatch):
     assert [q["type"] for q in questions] == list(QUESTION_TYPES)
     assert captured[0]["temperature"] == _QUESTIONS_TEMPERATURE == 0.7
     assert captured[0]["response_format"] == {"type": "json_object"}
+
+
+def test_priorizacao_fica_so_no_pool_comportamental():
+    # "priorizacao" (Tecnica) colidia com "prazo e pressao" (Comportamental)
+    # e gerava perguntas quase iguais na mesma geracao.
+    assert not any(a.startswith("priorizacao") for a in _QUESTION_ANGLES["Tecnica"])
+    assert any(a.startswith("prazo e pressao") for a in _QUESTION_ANGLES["Comportamental"])
