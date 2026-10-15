@@ -47,9 +47,9 @@ def test_contrato_de_saida_e_a_media_continuam_no_sistema():
     assert "Retorne exatamente os 7 criterios oficiais em scores." in prompt
 
 
-def test_prompt_proibe_aspas_duplas_nos_textos_do_json():
-    # Citar trechos da resposta levou o modelo a abrir aspas duplas dentro das
-    # strings e a Groq rejeitava com 400 json_validate_failed.
+def test_prompt_nao_pede_para_citar_trechos_e_proibe_aspas_duplas():
+    # Pedir para citar trechos da resposta coincidiu com erros 400
+    # json_validate_failed na Groq; a regra foi removida para teste.
     prompt = _prompt()
-    assert "nunca use aspas duplas dentro dos textos do JSON" in prompt
+    assert "cite um fato ou trecho" not in prompt
     assert "nao use aspas duplas (use aspas simples)" in prompt
