@@ -54,7 +54,26 @@ FLUFF = [  # longa, bem escrita e sem conteudo concreto
     "Procuro sempre manter o equilíbrio e a organização, priorizando de maneira inteligente as atividades e entregando o melhor de mim em cada etapa do processo, com foco em qualidade, agilidade e melhoria contínua.",
     "Espero crescer profissionalmente, desenvolver novas competências e contribuir de forma significativa para os objetivos da empresa, acompanhando as tendências do setor e buscando constantemente o aperfeiçoamento pessoal e coletivo.",
 ]
+OTIMA = [  # completa, correta, com exemplo e resultado
+    "Separo a aplicação em três camadas: rotas (um Blueprint de clientes), serviço com as regras de negócio e repositório para o acesso ao banco, com consultas parametrizadas. Valido a entrada antes de gravar, devolvo 201 no cadastro, 404 quando o cliente não existe e erros em JSON padronizado. Cada endpoint tem testes automatizados. No meu projeto de estudo, essa divisão permitiu trocar o banco de SQLite para PostgreSQL mudando só o repositório.",
+    "Primeiro reproduzo o problema e meço o tempo da consulta em homologação. Depois uso EXPLAIN para ver o plano de execução, verifico os índices nas colunas do WHERE e do JOIN e se a consulta traz colunas ou linhas desnecessárias. Aplico uma mudança por vez e comparo o tempo antes e depois. Em um trabalho da faculdade, um índice composto reduziu uma listagem de 4 segundos para 300 milissegundos.",
+    "No trabalho de conclusão do curso, um colega queria usar uma arquitetura mais complexa. Eu ouvi os argumentos dele, expliquei os meus com base no prazo e montei um protótipo pequeno das duas opções. Comparamos manutenção e tempo de entrega e escolhemos a mais simples, com revisão marcada para depois da primeira entrega. Entregamos no prazo e ele reconheceu que a decisão foi acertada.",
+    "Pergunto ao responsável qual demanda tem maior impacto no usuário e qual prazo é inegociável, estimo o esforço de cada uma e comunico à equipe a ordem escolhida e o que ficará para depois. Se uma delas puder ser entregue de forma parcial, entrego a parte crítica primeiro. Quando não consigo decidir sozinho, peço ajuda cedo e registro o combinado para evitar mal-entendidos.",
+    "Espero aprender o fluxo de deploy e de revisão de código da equipe, aprofundar SQL em casos reais e receber feedback frequente. Minha meta é, em seis meses, entregar sozinho pequenas funcionalidades com testes e documentação e, em um ano, participar do desenho de novas APIs. Vou pedir revisões semanais e anotar o que aprender para consultar depois.",
+]
+CURTA_CORRETA = [  # curtas, mas corretas e no assunto
+    "Rotas por recurso, validação de entrada e acesso ao banco em camada separada.",
+    "Mediria a consulta, olharia o plano com EXPLAIN e criaria índices nas colunas filtradas.",
+    "Ouvi o colega, mostrei minha proposta e fizemos um protótipo para decidir juntos.",
+    "Vejo o impacto de cada uma, aviso a equipe da ordem e começo pela mais crítica.",
+    "Quero aprender o fluxo de deploy da equipe e melhorar meu SQL com casos reais.",
+]
+VARIADA = [GOOD[0], MEDIOCRE[1], WEAK[2], GOOD[3], MEDIOCRE[4]]  # qualidade desigual
 PROFILES = {
+    "otima": OTIMA,
+    "curta_correta": CURTA_CORRETA,
+    "variada": VARIADA,
+    "mista_otima_1_nao_sei": OTIMA[:4] + ["não sei"],
     "excelente": GOOD,
     "mediana": MEDIOCRE,
     "fraca": WEAK,
@@ -116,7 +135,8 @@ def main():
                     print(f"[avaliacao {name} #{n}] FALHOU")
                 else:
                     notas.setdefault(name, []).append(r.get("overallScore"))
-                    print(f"[avaliacao {name} #{n}] overallScore={r.get('overallScore')}")
+                    por_pergunta = [q.get("score") for q in r.get("questionsEvaluation", [])]
+                    print(f"[avaliacao {name} #{n}] overallScore={r.get('overallScore')} porPergunta={por_pergunta}")
         print("\nResumo (overallScore): perfil -> notas | min-max")
         for name, vals in notas.items():
             print(f"  {name:18s} {vals} | {min(vals)}-{max(vals)} (amplitude {round(max(vals) - min(vals), 1)})")
