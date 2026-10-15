@@ -108,3 +108,10 @@ def test_escala_inteira_brevidade_e_variacao_entre_perguntas():
     assert "resposta curta, correta e objetiva vale mais que resposta curta, vaga ou errada" in prompt
     assert "as notas por pergunta devem variar" in prompt
     assert "reduz a nota de forma proporcional" in prompt
+
+
+def test_teto_da_escala_nao_penaliza_o_que_a_pergunta_nao_pediu():
+    prompt = _prompt()
+    assert "10: completa e correta para o nivel da vaga, sem lacunas relevantes." in prompt
+    assert "Nao desconte nota por itens que a pergunta nao pediu" in prompt
+    assert "a nota e 9 ou 10" in prompt
