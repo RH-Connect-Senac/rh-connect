@@ -45,3 +45,11 @@ def test_contrato_de_saida_e_a_media_continuam_no_sistema():
     assert "Nao inclua overallScore; ele sera calculado pelo sistema." in prompt
     assert '"scores": {' in prompt and '"questionsEvaluation": [' in prompt
     assert "Retorne exatamente os 7 criterios oficiais em scores." in prompt
+
+
+def test_prompt_proibe_aspas_duplas_nos_textos_do_json():
+    # Citar trechos da resposta levou o modelo a abrir aspas duplas dentro das
+    # strings e a Groq rejeitava com 400 json_validate_failed.
+    prompt = _prompt()
+    assert "nunca use aspas duplas dentro dos textos do JSON" in prompt
+    assert "nao use aspas duplas (use aspas simples)" in prompt
