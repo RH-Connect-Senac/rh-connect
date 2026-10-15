@@ -223,13 +223,34 @@ model interview {
   submitted_at         DateTime?             @db.Timestamptz(6)
   created_at           DateTime              @default(now()) @db.Timestamptz(6)
   updated_at           DateTime              @default(now()) @db.Timestamptz(6)
+  // Claim/lease do executor da avaliação por IA (R3.3a-4a). Só têm significado
+  // para evaluation_mode = AI em PENDING_AI_EVALUATION; nunca alteram `status`.
+  // ai_claim_token é o TOKEN DE POSSE (fencing): toda escrita do executor sobre a
+  // entrevista é condicionada a ele. CHECKs na migration: token e lease andam
+  // juntos, token só em AI, tentativas >= 0, terminal_at e terminal_reason juntos.
+  ai_claim_token       String?               @db.Uuid
+  ai_lease_until       DateTime?             @db.Timestamptz(6)
+  ai_attempts          Int                   @default(0) @db.SmallInt
+  // Início da PRIMEIRA tentativa. A idade máxima do executor conta a partir daqui,
+  // nunca de submitted_at: entrevistas antigas não expiram só por terem esperado
+  // antes de o executor ser ativado.
+  ai_first_claimed_at  DateTime?             @db.Timestamptz(6)
+  ai_next_attempt_at   DateTime?             @db.Timestamptz(6)
+  ai_last_error_code   String?               @db.VarChar(40)
+  // Falha terminal do executor: a entrevista segue PENDING_AI_EVALUATION (nunca
+  // COMPLETED) e deixa de ser reivindicada até uma ação administrativa explícita.
+  ai_terminal_at       DateTime?             @db.Timestamptz(6)
+  ai_terminal_reason   String?               @db.VarChar(40)
   candidate            app_user              @relation("interview_candidate", fields: [candidate_user_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_interview_candidate_user")
   evaluator_profile    evaluator_profile?    @relation(fields: [evaluator_profile_id], references: [evaluator_profile_id], onDelete: Restrict, onUpdate: NoAction, map: "fk_interview_evaluator_profile")
   assigned_by          app_user?             @relation("interview_assigned_by", fields: [assigned_by_user_id], references: [user_id], onDelete: SetNull, onUpdate: NoAction, map: "fk_interview_assigned_by_user")
   questions            interview_question[]
   evaluation           interview_evaluation?
   material_snapshot    interview_material_snapshot?
+  ai_evaluation_attempts ai_evaluation_attempt[]
 
+  // O índice PARCIAL de elegibilidade do executor (idx_interview_ai_eligible) é
+  // criado na migration; o Prisma não expressa índices parciais.
   @@index([candidate_user_id, created_at], map: "idx_interview_candidate_created_at")
   @@index([status, submitted_at], map: "idx_interview_status_submitted_at")
   @@index([evaluator_profile_id, status], map: "idx_interview_evaluator_status")
@@ -481,4 +502,33 @@ enum job_work_mode {
   REMOTE
   HYBRID
   ONSITE
+}
+
+// Histórico de tentativas do executor da avaliação por IA (R3.3a-4a). Uma linha
+// por CLAIM (início de tentativa), não por chamada à Groq: `ai_requested_at` só é
+// preenchido quando o executor realmente vai chamar a IA, e
+// `ai_calls_upper_bound` guarda o teto de chamadas à Groq daquela tentativa
+// (retry estrutural x chaves distintas, definido pela configuração). Uma tentativa
+// pode terminar sem chamada alguma (estado inválido, payload recusado).
+// CHECKs (na migration): attempt_number >= 1; ai_duration_ms >= 0;
+// ai_calls_upper_bound >= 0; finished_at >= started_at;
+// (finished_at IS NULL) = (outcome IS NULL); outcome e error_code não vazios.
+model ai_evaluation_attempt {
+  attempt_id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  interview_id         String    @db.Uuid
+  claim_token          String    @unique(map: "uq_ai_evaluation_attempt_claim_token") @db.Uuid
+  attempt_number       Int       @db.SmallInt
+  worker_id            String?   @db.VarChar(80)
+  started_at           DateTime  @default(now()) @db.Timestamptz(6)
+  lease_until          DateTime  @db.Timestamptz(6)
+  ai_requested_at      DateTime? @db.Timestamptz(6)
+  ai_calls_upper_bound Int?      @db.SmallInt
+  ai_duration_ms       Int?
+  finished_at          DateTime? @db.Timestamptz(6)
+  outcome              String?   @db.VarChar(40)
+  error_code           String?   @db.VarChar(40)
+  interview            interview @relation(fields: [interview_id], references: [interview_id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ai_evaluation_attempt_interview")
+
+  @@unique([interview_id, attempt_number], map: "uq_ai_evaluation_attempt_interview_number")
+  @@index([started_at], map: "idx_ai_evaluation_attempt_started_at")
 }
