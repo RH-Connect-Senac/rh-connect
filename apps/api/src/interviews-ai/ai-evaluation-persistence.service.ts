@@ -268,7 +268,9 @@ function toComparableFromInput(
 
 // Lê o conteúdo persistido para a forma comparável. `null` = o estado salvo não
 // tem a forma que a persistência da IA sempre grava (=> INCONSISTENT_STATE).
-function toComparableFromRow(row: ClassifyRow): ComparableContent | null {
+function toComparableFromRow(
+  row: Pick<ClassifyRow, 'questions' | 'evaluation'>,
+): ComparableContent | null {
   const evaluation = row.evaluation;
   if (!evaluation || evaluation.status !== 'COMPLETED') return null;
   if (row.questions.length !== FLOW_LIMITS.questionCount) return null;
@@ -348,6 +350,18 @@ function toComparableFromRow(row: ClassifyRow): ComparableContent | null {
     recommendations,
     questions,
   };
+}
+
+// R3.3a-3: o pipeline reaproveita a MESMA definição de "avaliação integral e
+// consistente" usada ao classificar uma reivindicação perdida, sem duplicá-la:
+// avaliação COMPLETED, cinco avaliações por pergunta (uma por pergunta real),
+// sete critérios válidos e textos/listas no formato que esta persistência grava.
+export const STORED_EVALUATION_SELECT = CLASSIFY_SELECT.evaluation;
+
+export function isStoredEvaluationConsistent(
+  row: Pick<ClassifyRow, 'questions' | 'evaluation'>,
+): boolean {
+  return toComparableFromRow(row) !== null;
 }
 
 function prismaErrorCode(error: unknown): string {
