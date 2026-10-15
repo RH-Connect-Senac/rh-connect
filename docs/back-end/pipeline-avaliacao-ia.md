@@ -2,7 +2,7 @@
 
 Escopo: `AiEvaluationPipelineService` (`apps/api/src/interviews-ai/ai-evaluation-pipeline.service.ts`). Processa **uma** entrevista `AI` em `PENDING_AI_EVALUATION`: carrega, classifica o estado, monta o payload, chama o serviço Python, normaliza e persiste.
 
-> Estado: serviço **inerte**. Não há worker, agendador, rota nem disparo automático; quem o chamar decide quando e quantas vezes (R3.3a-4). Nenhuma mudança de schema.
+> Estado: o serviço não tem rota nem disparo próprio; só o executor da R3.3a-4c (`worker-avaliacao-ia.md`, **desabilitado por padrão**) o chama. `process(id, { beforeAiCall })` aceita um gancho opcional chamado imediatamente antes do Python (devolve `aborted` se não autorizar). Nenhuma mudança de schema.
 
 ## 1. O que é reutilizado (nada é duplicado)
 

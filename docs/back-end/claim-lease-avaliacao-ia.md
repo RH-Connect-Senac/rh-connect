@@ -2,7 +2,7 @@
 
 Escopo: persistência de **posse** das entrevistas `AI` em `PENDING_AI_EVALUATION` para o futuro worker (R3.3a-4c). Código: `apps/api/src/interviews-ai/ai-evaluation-claim.repository.ts`. Schema: `apps/api/prisma/schema.prisma` e migration `20261015000000_add_ai_evaluation_claim`.
 
-> Estado: migration aplicada **somente** no banco de integração `rhconnect_it` (isolado, ver §7); não aplicada em desenvolvimento compartilhado, VPS ou produção. O repositório é inerte (nenhum worker, agendador ou rota o chama). Não há alteração no serviço Python, nos prompts, na DEC-005 nem na persistência transacional da R3.2.
+> Estado: migration aplicada **somente** no banco de integração `rhconnect_it` (isolado, ver §7); não aplicada em desenvolvimento compartilhado, VPS ou produção. O repositório só é chamado pelo executor da R3.3a-4c (`worker-avaliacao-ia.md`), desabilitado por padrão; nenhuma rota o chama. Não há alteração no serviço Python, nos prompts, na DEC-005 nem na persistência transacional da R3.2.
 
 ## 1. O que é (e o que não é)
 

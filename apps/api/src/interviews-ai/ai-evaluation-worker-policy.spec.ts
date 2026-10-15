@@ -752,14 +752,17 @@ describe('a política é pura e não liga nada', () => {
     for (const statement of imports) expect(statement).toMatch(/^import type /);
   });
 
-  it('não está registrada como provedor: nenhum processamento é habilitado', () => {
+  it('não está registrada como provedor; o único executor registrado é o desabilitado por padrão (R3.3a-4c)', () => {
     const moduleSource = require('fs').readFileSync(
       require('path').join(__dirname, 'interviews-ai.module.ts'),
       'utf8',
     ) as string;
     expect(moduleSource).not.toContain('worker-policy');
-    expect(moduleSource).not.toMatch(
-      /Worker|Scheduler|ScheduleModule|setInterval/,
-    );
+    expect(moduleSource).not.toMatch(/Scheduler|ScheduleModule|setInterval/);
+    expect(moduleSource.match(/Worker\w*Service/g)).toEqual([
+      'WorkerService',
+      'WorkerService',
+      'WorkerService',
+    ]);
   });
 });

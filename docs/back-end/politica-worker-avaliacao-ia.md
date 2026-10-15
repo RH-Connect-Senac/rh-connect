@@ -49,6 +49,6 @@ Protege a cota quando o provedor ou o Python estão fora. Abre quando as 3 ocorr
 
 `ai-evaluation-worker-policy.spec.ts` (55 testes): configuração e ausência de padrões da Groq, backoff (sequência, teto, jitter), esgotamento por tentativas e idade, classificação exaustiva dos códigos, espera pós-timeout, independência dos três orçamentos, limites exatos, freio (abertura, reset, neutros, fechamento) e pureza do módulo (sem relógio, aleatoriedade, rede, banco, Nest nem registro como provedor). Mutações nas regras centrais derrubam testes.
 
-## 7. O que falta (R3.3a-4c, não implementado)
+## 7. O que faltava (implementado na R3.3a-4c)
 
-Worker/agendador desabilitado por configuração, leitura dos contadores e do histórico, chamada a `claim`/`markAiRequested`/`finish*` conforme a política, `enableShutdownHooks()`, configuração (`.env.example`) e runbook. D3 (Python e API na VPS), D6 (timeout) e os limites numéricos de orçamento e Groq continuam pendentes de definição.
+O executor, a configuração, o gancho `beforeAiCall` do pipeline (a classificação trata `aborted` como espera fixa neutra) e `enableShutdownHooks()` estão descritos em `worker-avaliacao-ia.md`. D3, D6 e os limites numéricos continuam pendentes e sem padrão.

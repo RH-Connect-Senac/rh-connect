@@ -261,7 +261,10 @@ export function classifyPipelineResult(
         { kind: 'done', outcome: 'NOTHING_TO_DO' },
         result.aiDurationMs,
       );
+    case 'aborted':
     case 'skipped':
+      // `aborted` (gancho não autorizou: posse perdida ou orçamento) é tratado pelo
+      // worker antes de chegar aqui; por segurança vale a mesma espera fixa.
       // Não deveria ocorrer (o claim já exclui duplicidade; o worker não chama o
       // pipeline para um id que ele mesmo já processa). Se ocorrer, a tentativa já
       // foi consumida pelo claim: espera FIXA e curta (a base do backoff), sem
@@ -427,6 +430,12 @@ export interface BrakeEvent {
   kind: 'success' | 'transient_failure' | 'neutral';
 }
 
+// Repetições que não indicam falha do provedor (não contam para o freio).
+const NEUTRAL_RETRY_CODES: ReadonlySet<string> = new Set([
+  'IN_FLIGHT',
+  'AI_CALL_NOT_AUTHORIZED',
+]);
+
 // Classifica a ação gravada pelo worker como evento do freio.
 export function toBrakeEvent(action: AiWorkerAction, at: Date): BrakeEvent {
   switch (action.kind) {
@@ -435,8 +444,9 @@ export function toBrakeEvent(action: AiWorkerAction, at: Date): BrakeEvent {
     case 'retry':
       return {
         at,
-        kind:
-          action.errorCode === 'IN_FLIGHT' ? 'neutral' : 'transient_failure',
+        kind: NEUTRAL_RETRY_CODES.has(action.errorCode)
+          ? 'neutral'
+          : 'transient_failure',
       };
     case 'terminal':
       return {

@@ -107,6 +107,10 @@ const RETRYABLE: Record<AiEvaluationPipelineFailureCode, boolean> = {
 // com o `retryable` de cada código; a fonte da verdade continua sendo esta.
 export { RETRYABLE as AI_EVALUATION_FAILURE_RETRYABLE };
 
+export interface AiEvaluationProcessOptions {
+  beforeAiCall?: () => Promise<boolean>;
+}
+
 export type AiEvaluationPipelineResult =
   | {
       status: 'persisted' | 'already_persisted';
@@ -128,6 +132,12 @@ export type AiEvaluationPipelineResult =
       status: 'skipped';
       interviewId: string;
       reason: 'IN_FLIGHT';
+    }
+  | {
+      // O gancho `beforeAiCall` não autorizou a chamada: a IA NÃO foi chamada.
+      status: 'aborted';
+      interviewId: string;
+      reason: 'AI_CALL_NOT_AUTHORIZED';
     }
   | {
       status: 'failed';
@@ -279,7 +289,14 @@ export class AiEvaluationPipelineService {
     private readonly persistence: AiEvaluationPersistenceService,
   ) {}
 
-  async process(interviewId: string): Promise<AiEvaluationPipelineResult> {
+  // `options.beforeAiCall` (opcional) roda imediatamente ANTES da chamada ao Python,
+  // depois de a entrevista já ter sido validada e o payload montado. Se devolver
+  // `false`, a IA não é chamada (`aborted`); se lançar, vira `LOAD_FAILED`
+  // repetível. Sem o gancho, o comportamento é o de sempre.
+  async process(
+    interviewId: string,
+    options: AiEvaluationProcessOptions = {},
+  ): Promise<AiEvaluationPipelineResult> {
     if (typeof interviewId !== 'string' || !UUID_PATTERN.test(interviewId)) {
       return this.finish(
         failure(String(interviewId), 'validate', 'INVALID_INTERVIEW_ID'),
@@ -296,7 +313,7 @@ export class AiEvaluationPipelineService {
 
     this.inFlight.add(interviewId);
     try {
-      return this.finish(await this.run(interviewId), startedAt);
+      return this.finish(await this.run(interviewId, options), startedAt);
     } catch (error) {
       // Defeito inesperado: registra só o nome da classe, nunca a mensagem.
       this.logger.error(
@@ -308,7 +325,10 @@ export class AiEvaluationPipelineService {
     }
   }
 
-  private async run(interviewId: string): Promise<AiEvaluationPipelineResult> {
+  private async run(
+    interviewId: string,
+    options: AiEvaluationProcessOptions,
+  ): Promise<AiEvaluationPipelineResult> {
     // 1. Carrega (somente leitura).
     let row: PipelineRow | null;
     try {
@@ -343,6 +363,23 @@ export class AiEvaluationPipelineService {
         return fromInputError(interviewId, error);
       }
       throw error;
+    }
+
+    // 3.1 Autorização externa opcional (ex.: posse do claim e orçamentos).
+    if (options.beforeAiCall) {
+      let authorized: boolean;
+      try {
+        authorized = await options.beforeAiCall();
+      } catch {
+        return failure(interviewId, 'load', 'LOAD_FAILED', 'authorize-failed');
+      }
+      if (authorized !== true) {
+        return {
+          status: 'aborted',
+          interviewId,
+          reason: 'AI_CALL_NOT_AUTHORIZED',
+        };
+      }
     }
 
     // 4. Chama o Python (UMA vez; sem retry, sem rotação de chaves aqui).

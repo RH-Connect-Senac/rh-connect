@@ -6,6 +6,9 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // Encerramento ordenado (SIGTERM/SIGINT): permite ao executor da avaliação por IA
+  // terminar a tentativa em curso (dentro do prazo) antes de o Prisma desconectar.
+  app.enableShutdownHooks();
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
   app.enableCors({

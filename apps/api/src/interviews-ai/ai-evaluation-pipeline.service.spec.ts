@@ -962,3 +962,74 @@ describe('AiEvaluationPipelineService: privacidade e sem retry próprio', () => 
     );
   });
 });
+
+describe('AiEvaluationPipelineService: gancho beforeAiCall (R3.3a-4c)', () => {
+  it('autorizado: o gancho roda antes da IA e o fluxo segue como sempre', async () => {
+    const { service, ai } = setup();
+    const order: string[] = [];
+    ai.evaluate.mockImplementation(() => {
+      order.push('ia');
+      return Promise.resolve(pythonResponse());
+    });
+    const beforeAiCall = jest.fn(() => {
+      order.push('gancho');
+      return Promise.resolve(true);
+    });
+
+    const result = await service.process(INTERVIEW_ID, { beforeAiCall });
+
+    expect(result.status).toBe('persisted');
+    expect(order).toEqual(['gancho', 'ia']);
+    expect(beforeAiCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('não autorizado: a IA NÃO é chamada, nada é persistido e o resultado é "aborted"', async () => {
+    const { service, ai, persistence } = setup();
+
+    const result = await service.process(INTERVIEW_ID, {
+      beforeAiCall: () => Promise.resolve(false),
+    });
+
+    expect(result).toEqual({
+      status: 'aborted',
+      interviewId: INTERVIEW_ID,
+      reason: 'AI_CALL_NOT_AUTHORIZED',
+    });
+    expect(ai.evaluate).not.toHaveBeenCalled();
+    expect(persistence.persist).not.toHaveBeenCalled();
+  });
+
+  it('só autoriza depois de validar o estado: entrevista concluída nem chega ao gancho', async () => {
+    const { service, ai } = setup(makeRow({ status: 'COMPLETED' }));
+    const beforeAiCall = jest.fn(() => Promise.resolve(true));
+
+    await service.process(INTERVIEW_ID, { beforeAiCall });
+
+    expect(beforeAiCall).not.toHaveBeenCalled();
+    expect(ai.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('gancho que lança: falha repetível (LOAD_FAILED), sem chamar a IA e sem vazar a mensagem', async () => {
+    const { service, ai } = setup();
+
+    const result = failed(
+      await service.process(INTERVIEW_ID, {
+        beforeAiCall: () => Promise.reject(new Error(`banco ${SECRET}`)),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      code: 'LOAD_FAILED',
+      retryable: true,
+      detail: 'authorize-failed',
+    });
+    expect(ai.evaluate).not.toHaveBeenCalled();
+    expect(allLogs()).not.toContain(SECRET);
+  });
+
+  it('sem gancho, o comportamento é idêntico ao anterior', async () => {
+    const { service, ai } = setup();
+    expect((await service.process(INTERVIEW_ID)).status).toBe('persisted');
+    expect(ai.evaluate).toHaveBeenCalledTimes(1);
+  });
+});
