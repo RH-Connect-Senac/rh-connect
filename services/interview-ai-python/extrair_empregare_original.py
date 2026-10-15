@@ -1,5 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
+from http_segura import baixar_html_seguro, criar_sessao_segura
 import json
 import re
 import sys
@@ -32,14 +33,31 @@ def limpar_espacos(texto: str) -> str:
     return texto.strip(' \n\t-•*')
 
 
+class VagaNaoEncontradaError(requests.exceptions.RequestException):
+    """A Empregare respondeu 404 (vaga removida/expirada)."""
+
+
+class AcessoBloqueadoError(requests.exceptions.RequestException):
+    """A Empregare respondeu 403 (requisição bloqueada)."""
+
+
+class PaginaBloqueadaError(Exception):
+    """A resposta foi uma página de desafio/bloqueio anti-bot."""
+
+
+class FalhaParsingError(Exception):
+    """O HTML foi obtido, mas não pôde ser interpretado."""
+
+
 def baixar_html(url: str) -> str:
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    response = session.get(url, timeout=15, allow_redirects=True)
+    # Proteção contra SSRF (ver http_segura.py): URL e cada redirecionamento
+    # validados, só domínios da Empregare, conexão pinada a IPs públicos.
+    session = criar_sessao_segura(HEADERS)
+    response = baixar_html_seguro(url, session)
     if response.status_code == 404:
-        raise requests.exceptions.RequestException("404 - vaga não encontrada (removida/expirada)")
+        raise VagaNaoEncontradaError("404 - vaga não encontrada (removida/expirada)")
     if response.status_code == 403:
-        raise requests.exceptions.RequestException("403 - requisição bloqueada (anti-bot)")
+        raise AcessoBloqueadoError("403 - requisição bloqueada (anti-bot)")
     response.raise_for_status()
     return response.text
 
@@ -152,12 +170,38 @@ def _extrair_bloco_texto(soup, termos_busca: list) -> list:
 
 
 def extrair_vaga(url: str, debug: bool = False) -> dict:
+    """Interface legada (uso por linha de comando): em falha, imprime e devolve {}.
+
+    O serviço HTTP NÃO deve usar esta função: ela esconde a causa da falha.
+    Use ``extrair_vaga_estrito``, que propaga a exceção tipada.
+    """
     try:
-        html = baixar_html(url)
+        return extrair_vaga_estrito(url, debug=debug)
     except requests.exceptions.RequestException as e:
         print(f"Erro ao acessar a URL: {e}")
         return {}
+    except (PaginaBloqueadaError, FalhaParsingError) as e:
+        print(f"Erro ao extrair a vaga: {e}")
+        return {}
 
+
+def extrair_vaga_estrito(url: str, debug: bool = False) -> dict:
+    """Baixa e interpreta a vaga; qualquer falha é propagada como exceção.
+
+    Levanta: erros de ``http_segura`` / ``requests`` (acesso), ``VagaNaoEncontradaError``,
+    ``AcessoBloqueadoError``, ``PaginaBloqueadaError`` e ``FalhaParsingError``.
+    """
+    html = baixar_html(url)
+
+    try:
+        return _interpretar_html(url, html, debug)
+    except PaginaBloqueadaError:
+        raise
+    except Exception as exc:
+        raise FalhaParsingError("Falha ao interpretar o HTML da vaga.") from exc
+
+
+def _interpretar_html(url: str, html: str, debug: bool) -> dict:
     soup = BeautifulSoup(html, 'html.parser')
     texto_completo = soup.get_text(separator=' ', strip=True)
 
@@ -168,7 +212,7 @@ def extrair_vaga(url: str, debug: bool = False) -> dict:
     if _pagina_bloqueada(texto_completo):
         if debug:
             print("[debug] BLOQUEIO DETECTADO: página de desafio/bloqueio anti-bot.")
-        return {}
+        raise PaginaBloqueadaError("Página de desafio/bloqueio anti-bot.")
 
     job_ld = _extrair_json_ld(soup)
 

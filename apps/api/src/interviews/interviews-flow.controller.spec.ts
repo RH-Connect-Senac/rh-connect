@@ -19,6 +19,7 @@ jest.mock('../auth/guards/jwt-auth.guard', () => ({
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { AiRateLimitGuard } from '../interviews-ai/ai-rate-limit.guard';
 import { InterviewQuestionsController } from './interview-questions.controller';
 import type { InterviewQuestionsService } from './interview-questions.service';
 import { InterviewsController } from './interviews.controller';
@@ -104,6 +105,18 @@ describe('rotas da Fase 2', () => {
     expect(guard.canActivate(contextFor(handler, 'ADMIN'))).toBe(false);
     expect(guard.canActivate(contextFor(handler, 'EVALUATOR'))).toBe(false);
     expect(guard.canActivate(contextFor(handler, null))).toBe(false);
+  });
+
+  it('generate (único que chama a IA) tem cota de IA no método; as demais rotas não', () => {
+    for (const [name, handler] of ROUTES) {
+      if (name === 'generate') {
+        expect(Reflect.getMetadata('__guards__', handler)).toEqual([
+          AiRateLimitGuard,
+        ]);
+        continue;
+      }
+      expect(Reflect.getMetadata('__guards__', handler)).toBeUndefined();
+    }
   });
 
   it('generate, submit e cancel respondem 200 (idempotentes)', () => {

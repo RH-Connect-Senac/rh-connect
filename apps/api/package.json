@@ -20,6 +20,12 @@
     "test:e2e": "jest --config ./test/jest-e2e.config.js",
     "test:e2e:run": "dotenv -e .env.test -- jest --config ./test/jest-e2e.config.js",
     "db:test:migrate": "dotenv -e .env.test -- npx prisma migrate deploy",
+    "test:integration:guard": "jest --config ./test/integration/jest-integration-guard.config.js",
+    "db:integration:check": "dotenv -e .env.integration -- ts-node test/integration/scripts/check-integration-db.ts",
+    "db:integration:migrate": "dotenv -e .env.integration -- ts-node test/integration/scripts/migrate-integration-db.ts",
+    "db:integration:prisma-check": "dotenv -e .env.integration -- ts-node test/integration/scripts/prisma-check-integration-db.ts",
+    "test:integration": "dotenv -e .env.integration -- jest --config ./test/integration/jest-integration.config.js --runInBand",
+    "test:integration:persistence": "dotenv -e .env.integration -- jest --config ./test/integration/jest-integration-persistence.config.js --runInBand",
     "seed:cachola": "ts-node prisma/seed-cachola.ts",
     "seed:orango": "ts-node prisma/seed-orango.ts",
     "seed:accounts": "ts-node prisma/seed-accounts.ts"

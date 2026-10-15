@@ -99,6 +99,14 @@ def test_client_com_multiplas_keys_faz_round_robin_a_b_c_a(monkeypatch, reset_ke
 
 
 def test_fallback_sem_groq_api_keys_usa_groq_api_key(monkeypatch, reset_key_pool):
+    # `GroqService.__init__` chama `load_dotenv()` (producao, nao alterado).
+    # Sem isolar isso, o `delenv` abaixo e desfeito: `load_dotenv()` preenche
+    # GROQ_API_KEYS de volta a partir do `.env` REAL da maquina, e a
+    # precedencia de GROQ_API_KEYS sobre GROQ_API_KEY faz o teste usar a key
+    # real. Mesmo isolamento de
+    # `test_nenhuma_key_configurada_levanta_groq_configuration_error`.
+    monkeypatch.setattr(groq_service, "load_dotenv", lambda *args, **kwargs: None)
+
     monkeypatch.delenv("GROQ_API_KEYS", raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "fake-key-single")
 
