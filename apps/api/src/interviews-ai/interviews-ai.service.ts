@@ -95,7 +95,11 @@ export class InterviewsAiService {
     return this.postToPython('/questions', payload);
   }
 
-  evaluate(payload: Record<string, unknown>) {
+  // Devolve o corpo BRUTO do Python, tipado como `unknown`: ele ainda NÃO foi
+  // validado. Quem precisar do conteúdo deve passá-lo por `normalizeAiEvaluation`
+  // (ai-evaluation.normalizer.ts, contrato em ai-evaluation.types.ts); esta
+  // camada não normaliza, não converte e não persiste nada.
+  evaluate(payload: Record<string, unknown>): Promise<unknown> {
     return this.postToPython('/evaluate', payload);
   }
 
@@ -103,7 +107,7 @@ export class InterviewsAiService {
     path: string,
     payload: Record<string, unknown>,
     timeoutMs: number = this.timeoutMs,
-  ) {
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -165,7 +169,9 @@ export class InterviewsAiService {
     // Falha do serviço de IA/provider: o detalhe técnico fica no log; o cliente recebe
     // uma mensagem de produto (o status HTTP continua o mesmo).
     if (status >= 500) {
-      this.logger.error(`Serviço de IA respondeu ${status}: ${detail ?? '(sem corpo)'}`);
+      this.logger.error(
+        `Serviço de IA respondeu ${status}: ${detail ?? '(sem corpo)'}`,
+      );
       return status === 504
         ? new GatewayTimeoutException(
             'A operação está demorando mais que o esperado. Tente novamente.',
@@ -238,7 +244,10 @@ export class InterviewsAiService {
       .get<string>('INTERVIEW_AI_SERVICE_URL')
       ?.trim();
 
-    return (configuredUrl || DEFAULT_INTERVIEW_AI_SERVICE_URL).replace(/\/+$/, '');
+    return (configuredUrl || DEFAULT_INTERVIEW_AI_SERVICE_URL).replace(
+      /\/+$/,
+      '',
+    );
   }
 
   private resolveTimeoutMs() {
