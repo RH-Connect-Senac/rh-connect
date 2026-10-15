@@ -36,7 +36,7 @@ describe("Landing: eyebrows usam LandingSectionBadge", () => {
     expect(SCREEN).toContain("<LandingSectionBadge>Como funciona</LandingSectionBadge>");
     expect(SCREEN).toContain("<LandingSectionBadge>Benefícios</LandingSectionBadge>");
     expect(SCREEN).toContain('<LandingSectionBadge align="left">Relatório de desempenho</LandingSectionBadge>');
-    expect(SCREEN).toContain("<LandingSectionBadge>Para quem é</LandingSectionBadge>");
+    expect(SCREEN).toContain("<LandingSectionBadge>Público-alvo</LandingSectionBadge>");
     expect(FAQ).toContain("<LandingSectionBadge>Perguntas frequentes</LandingSectionBadge>");
   });
 

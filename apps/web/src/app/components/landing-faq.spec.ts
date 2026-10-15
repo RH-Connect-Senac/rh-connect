@@ -110,8 +110,8 @@ describe("Landing: posição do FAQ, âncoras e footer", () => {
   const FOOTER = code(read("landing-footer.tsx"));
   const FAQ = code(read("landing-faq.tsx"));
 
-  it("FAQ entra depois de 'Para quem é' e antes do CTA central", () => {
-    const forWho = LANDING.indexOf('id="para-quem"');
+  it("FAQ entra depois de 'Público-alvo' e antes do CTA central", () => {
+    const forWho = LANDING.indexOf('id="publico-alvo"');
     const faq = LANDING.indexOf("<LandingFaq");
     const cta = LANDING.indexOf("Comece a se preparar agora");
     expect(forWho).toBeGreaterThan(-1);
@@ -123,11 +123,11 @@ describe("Landing: posição do FAQ, âncoras e footer", () => {
   it("header continua com as 4 âncoras originais (sem FAQ)", () => {
     const header = LANDING.slice(LANDING.indexOf("<header"), LANDING.indexOf("</header>"));
     expect(header).not.toContain("#faq");
-    for (const anchor of ["#como-funciona", "#beneficios", "#para-quem", "#sobre"]) expect(header).toContain(anchor);
+    for (const anchor of ["#como-funciona", "#beneficios", "#publico-alvo", "#sobre"]) expect(header).toContain(anchor);
   });
 
   it("seções com âncora compensam o header sticky (scroll-mt)", () => {
-    for (const id of ["como-funciona", "beneficios", "para-quem", "sobre"]) {
+    for (const id of ["como-funciona", "beneficios", "publico-alvo", "sobre"]) {
       const tag = LANDING.slice(LANDING.indexOf(`id="${id}"`), LANDING.indexOf(">", LANDING.indexOf(`id="${id}"`) + 10) + 40);
       expect(tag).toContain("scroll-mt");
     }
