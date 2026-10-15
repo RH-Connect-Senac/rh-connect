@@ -53,3 +53,40 @@ def test_prompt_nao_pede_para_citar_trechos_e_proibe_aspas_duplas():
     prompt = _prompt()
     assert "cite um fato ou trecho" not in prompt
     assert "nao use aspas duplas (use aspas simples)" in prompt
+
+
+def test_avaliacao_pede_limite_de_tokens_maior_que_o_padrao_da_groq(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from groq_service import _EVALUATION_MAX_TOKENS
+
+    answers = [
+        {"questionId": 1, "questionText": "P1?", "answer": "Resposta detalhada o bastante para a pergunta."}
+    ]
+    payload = {
+        "scores": {c: 7 for c in EVALUATION_CRITERIA},
+        "strengths": [], "improvements": [], "recommendations": [], "summary": "ok",
+        "questionsEvaluation": [{"questionId": 1, "score": 7, "reason": "r"}],
+    }
+    captured: list[dict] = []
+
+    class _Completions:
+        def create(self, **kwargs):
+            captured.append(kwargs)
+            message = SimpleNamespace(content=json.dumps(payload))
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions()))
+    monkeypatch.setenv("GROQ_MODEL", "fake-model")
+    monkeypatch.setattr(
+        GroqService,
+        "_execute_with_rate_limit_fallback",
+        lambda self, call_groq, **kwargs: call_groq(client),
+    )
+
+    GroqService().evaluate_interview(CONTEXT, answers)
+
+    assert _EVALUATION_MAX_TOKENS >= 4096
+    assert captured[0]["max_tokens"] == _EVALUATION_MAX_TOKENS
+    assert captured[0]["temperature"] == 0.2

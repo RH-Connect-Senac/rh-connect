@@ -92,6 +92,12 @@ _MAX_STRUCTURAL_EVALUATION_ATTEMPTS = 2
 # geracoes sem comprometer a validade do JSON.
 _QUESTIONS_TEMPERATURE = 0.7
 
+# Limite de tokens da resposta da avaliacao. Sem esse parametro a Groq cortava
+# a saida em 2048 tokens (finish_reason=length), o que gerava JSON truncado
+# (400 json_validate_failed) ou questionsEvaluation incompleto. A avaliacao
+# devolve 7 criterios + 5 avaliacoes por pergunta + listas, e precisa de folga.
+_EVALUATION_MAX_TOKENS = 4096
+
 # "Angulos" sorteados a cada geracao, um por pergunta, dentro do tipo ja
 # exigido pelo parser (Tecnica, Tecnica, Comportamental, Comportamental,
 # Carreira). Sao formatos de pergunta genericos, sem tecnologia nem area
@@ -447,6 +453,7 @@ class GroqService:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
+                max_tokens=_EVALUATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
             )
 
@@ -1004,7 +1011,8 @@ class GroqService:
             "e da vaga, sem exigir nomes de ferramentas, frameworks, metodos ou siglas que nao "
             "estejam na vaga ou na pergunta.\n"
             "- Mantenha os textos curtos: reason em 1 ou 2 frases, no maximo 2 itens em positives e "
-            "em improvements por pergunta, suggestion em 1 frase e summary em ate 3 frases, "
+            "em improvements por pergunta, suggestion em 1 frase, strengths, improvements e "
+            "recommendations gerais com no maximo 4 itens curtos cada e summary em ate 3 frases, "
             "reconhecendo o que houve de bom (se houver) e a principal oportunidade de melhoria.\n\n"
             "Regras obrigatorias:\n"
             "- Retorne somente JSON valido.\n"
