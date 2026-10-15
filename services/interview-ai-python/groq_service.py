@@ -411,6 +411,10 @@ class GroqService:
 
         model = self._model()
         prompt = self._build_evaluation_prompt(context, normalized_answers)
+        # EXPERIMENTO: seed opcional (GROQ_EVALUATION_SEED) para tentar tornar a
+        # nota estavel entre execucoes da mesma resposta. Sem a variavel, nada muda.
+        seed = self._evaluation_seed()
+        seed_kwargs = {"seed": seed} if seed is not None else {}
 
         def _call_groq(client: Groq):
             # Bloco 6: o log de observabilidade por tentativa que existia
@@ -457,6 +461,7 @@ class GroqService:
                 temperature=0.2,
                 max_tokens=_EVALUATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
+                **seed_kwargs,
             )
 
         # Retry estrutural (no maximo 1 vez, so aqui - nao dentro de
@@ -775,6 +780,16 @@ class GroqService:
         if not model:
             raise GroqConfigurationError("GROQ_MODEL nao configurado.")
         return model
+
+    def _evaluation_seed(self) -> int | None:
+        raw = os.getenv("GROQ_EVALUATION_SEED", "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("GROQ_EVALUATION_SEED invalido - ignorado")
+            return None
 
     def _request_timeout(self) -> int:
         raw_timeout = os.getenv("REQUEST_TIMEOUT_SECONDS", "20")
