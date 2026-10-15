@@ -7,7 +7,7 @@ Uso (somente biblioteca padrao; dados 100% ficticios):
 
 Saida: ./baseline_<label>/questions_1..5.json e evaluate_<perfil>.json
 """
-import argparse, json, pathlib, urllib.request
+import argparse, json, pathlib, time, urllib.error, urllib.request
 
 CONTEXT = {
     "title": "Desenvolvedor Back-end Júnior",
@@ -63,10 +63,24 @@ PROFILES = {
 }
 
 
-def post(base, path, payload):
-    req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)
+def post(base, path, payload, retries=2):
+    """Chama o servico; em erro HTTP mostra a mensagem do servidor e tenta de novo."""
+    data = json.dumps(payload).encode()
+    last = None
+    for attempt in range(1, retries + 2):
+        req = urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            last = {"_erro_http": exc.code, "_mensagem": body}
+            print(f"   ! {path} tentativa {attempt}: HTTP {exc.code} - {body.strip()[:300]}")
+        except Exception as exc:  # timeout, conexao...
+            last = {"_erro": str(exc)}
+            print(f"   ! {path} tentativa {attempt}: {exc}")
+        time.sleep(3)
+    return last
 
 
 def main():
@@ -80,13 +94,16 @@ def main():
     for i in range(1, a.n_questions + 1):
         r = post(a.base_url, "/questions", {"context": CONTEXT})
         (out / f"questions_{i}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[perguntas {i}] ok")
+        print(f"[perguntas {i}] {'FALHOU' if '_erro_http' in r or '_erro' in r else 'ok'}")
 
     for name, answers in PROFILES.items():
         payload = {"context": CONTEXT, "answers": [{**q, "answer": ans} for q, ans in zip(QUESTIONS, answers)]}
         r = post(a.base_url, "/evaluate", payload)
         (out / f"evaluate_{name}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[avaliacao {name}] overallScore={r.get('overallScore')} scores={r.get('scores')}")
+        if "_erro_http" in r or "_erro" in r:
+            print(f"[avaliacao {name}] FALHOU")
+        else:
+            print(f"[avaliacao {name}] overallScore={r.get('overallScore')} scores={r.get('scores')}")
 
 
 if __name__ == "__main__":
