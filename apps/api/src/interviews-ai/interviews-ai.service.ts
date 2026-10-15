@@ -17,8 +17,11 @@ const DEFAULT_TIMEOUT_MS = 20000;
 // Timeout próprio da extração de vaga (só POST /job-context). Deve ser MAIOR que o
 // orçamento total do extrator Python (ORCAMENTO_TOTAL_SEGUNDOS = 15 s em http_segura.py),
 // para que o Python responda 504 TEMPO_ESGOTADO antes de o Nest abortar. Não altera o
-// timeout de perguntas/avaliação (INTERVIEW_AI_TIMEOUT_MS).
+// timeout de perguntas (INTERVIEW_AI_TIMEOUT_MS); a avaliação segue o mesmo valor
+// enquanto INTERVIEW_AI_EVALUATION_TIMEOUT_MS não for configurada.
 const DEFAULT_JOB_CONTEXT_TIMEOUT_MS = 20000;
+// Maior atraso que `setTimeout` aceita; acima disso o Node dispara em ~1 ms.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 // Códigos de erro estáveis devolvidos por POST /job-context do serviço Python.
 // Cada um vira uma exceção HTTP com mensagem fixa e segura: o texto vindo do
@@ -80,11 +83,15 @@ export class InterviewsAiService {
   private readonly serviceUrl: string;
   private readonly timeoutMs: number;
   private readonly jobContextTimeoutMs: number;
+  // Timeout próprio de POST /evaluate (R3.3a-2). Sem INTERVIEW_AI_EVALUATION_TIMEOUT_MS
+  // (ou com valor inválido) é IGUAL a `timeoutMs`: nenhum valor novo é inventado.
+  private readonly evaluationTimeoutMs: number;
 
   constructor(private readonly configService: ConfigService) {
     this.serviceUrl = this.resolveServiceUrl();
     this.timeoutMs = this.resolveTimeoutMs();
     this.jobContextTimeoutMs = this.resolveJobContextTimeoutMs();
+    this.evaluationTimeoutMs = this.resolveEvaluationTimeoutMs();
   }
 
   getJobContext(payload: Record<string, unknown>) {
@@ -99,8 +106,12 @@ export class InterviewsAiService {
   // validado. Quem precisar do conteúdo deve passá-lo por `normalizeAiEvaluation`
   // (ai-evaluation.normalizer.ts, contrato em ai-evaluation.types.ts); esta
   // camada não normaliza, não converte e não persiste nada.
+  //
+  // Usa o timeout próprio da avaliação (`evaluationTimeoutMs`). Estourar o prazo
+  // cancela só a espera do Nest: o Python NÃO é interrompido e pode seguir
+  // chamando a Groq até o fim (ver docs/back-end/timeout-avaliacao-ia.md).
   evaluate(payload: Record<string, unknown>): Promise<unknown> {
-    return this.postToPython('/evaluate', payload);
+    return this.postToPython('/evaluate', payload, this.evaluationTimeoutMs);
   }
 
   private async postToPython(
@@ -132,7 +143,13 @@ export class InterviewsAiService {
       }
 
       if (error instanceof Error && error.name === 'AbortError') {
-        this.logger.error(`Timeout ao acessar o serviço de IA (${path})`);
+        this.logger.error(
+          `Timeout ao acessar o serviço de IA (${path})${
+            path === '/evaluate'
+              ? '; o serviço Python pode continuar processando a avaliação'
+              : ''
+          }`,
+        );
         throw new GatewayTimeoutException(
           'A operação está demorando mais que o esperado. Tente novamente.',
         );
@@ -272,5 +289,35 @@ export class InterviewsAiService {
     }
 
     return DEFAULT_JOB_CONTEXT_TIMEOUT_MS;
+  }
+
+  // Ausente ou em branco: segue o timeout geral (comportamento anterior). Valor
+  // presente porém inválido (não numérico, não inteiro, <= 0 ou acima do máximo do
+  // timer) NUNCA é aceito em silêncio: avisa e também segue o timeout geral.
+  private resolveEvaluationTimeoutMs() {
+    const rawValue = this.configService.get<string>(
+      'INTERVIEW_AI_EVALUATION_TIMEOUT_MS',
+    );
+    if (rawValue === undefined || rawValue === null) {
+      return this.timeoutMs;
+    }
+    const raw = String(rawValue).trim();
+    if (raw === '') {
+      return this.timeoutMs;
+    }
+
+    const configuredTimeout = Number(raw);
+    if (
+      Number.isSafeInteger(configuredTimeout) &&
+      configuredTimeout > 0 &&
+      configuredTimeout <= MAX_TIMER_DELAY_MS
+    ) {
+      return configuredTimeout;
+    }
+
+    this.logger.warn(
+      'INTERVIEW_AI_EVALUATION_TIMEOUT_MS inválida (esperado inteiro entre 1 e 2147483647 ms); usando o timeout geral INTERVIEW_AI_TIMEOUT_MS.',
+    );
+    return this.timeoutMs;
   }
 }
