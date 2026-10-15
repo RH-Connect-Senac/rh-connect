@@ -92,9 +92,9 @@ def test_avaliacao_pede_limite_de_tokens_maior_que_o_padrao_da_groq(monkeypatch)
     assert captured[0]["temperature"] == 0.2
 
 
-def test_criterios_resumem_todas_as_respostas_e_notas_sao_diferenciadas():
+def test_prompt_calibra_pelo_nivel_da_vaga_sem_premiar_texto_generico():
     prompt = _prompt()
-    assert "resume o desempenho em TODAS as respostas recebidas" in prompt
-    assert "nao repita a mesma nota em todas as perguntas" in prompt
-    assert "em vez de citar o nome de um metodo de narrativa" in prompt
-    assert "em vez de apenas 'menciona X'" in prompt
+    assert "Seja proporcional ao nivel da vaga" in prompt
+    assert "recebe 5 ou 6" in prompt
+    # o filtro de relevancia continua valendo
+    assert "Avalie o conteudo, nao o tamanho nem a formalidade" in prompt
